@@ -215,6 +215,247 @@ body {
 }
 .filter-select-top:focus { border-color: var(--accent); }
 
+/* ══════════════════════════════════════════════════════════════
+   Choices.js — Category & ASIN Multi-Select Redesign
+   ══════════════════════════════════════════════════════════════ */
+
+/* Wrapper sizing */
+.filter-group-multi { position: relative; }
+.filter-group-multi .choices {
+    display: inline-block;
+    min-width: 160px;
+    max-width: 260px;
+    font-family: 'Inter', sans-serif;
+}
+.filter-group-asin .choices {
+    min-width: 155px;
+    max-width: 240px;
+}
+
+/* ── Inner container (the "input" box) ── */
+.filter-group-multi .choices .choices__inner {
+    background: #ffffff;
+    border: 1.5px solid var(--border);
+    border-radius: 8px;
+    padding: 4px 6px 4px 8px;
+    min-height: 34px;
+    max-height: 34px;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    flex-wrap: nowrap;
+    gap: 4px;
+    cursor: pointer;
+    transition: border-color 0.18s, box-shadow 0.18s;
+    box-shadow: 0 1px 3px rgba(8,145,178,0.04);
+}
+.filter-group-multi .choices.is-open .choices__inner,
+.filter-group-multi .choices:focus-within .choices__inner {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(8,145,178,0.10);
+    max-height: none;
+    flex-wrap: wrap;
+}
+
+/* ── Placeholder text ── */
+.filter-group-multi .choices .choices__placeholder {
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 500;
+    opacity: 0.85;
+}
+
+/* ── Selected chips (multi items) ── */
+.filter-group-multi .choices .choices__list--multiple {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    align-items: center;
+    padding: 0;
+    margin: 0;
+}
+.filter-group-multi .choices .choices__list--multiple .choices__item {
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    border: none;
+    border-radius: 5px;
+    padding: 2px 6px 2px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #ffffff;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    line-height: 1.4;
+    box-shadow: 0 1px 4px rgba(8,145,178,0.25);
+    white-space: nowrap;
+    max-width: 110px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.filter-group-multi .choices .choices__list--multiple .choices__item.is-highlighted {
+    background: linear-gradient(135deg, #0e7490, var(--accent));
+    box-shadow: 0 1px 6px rgba(8,145,178,0.35);
+}
+/* Remove × button inside chip */
+.filter-group-multi .choices .choices__list--multiple .choices__item [data-button] {
+    background: rgba(255,255,255,0.25);
+    border: none;
+    border-radius: 3px;
+    color: #fff;
+    font-size: 9px;
+    font-weight: 800;
+    width: 14px;
+    height: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    padding: 0;
+    flex-shrink: 0;
+    transition: background 0.15s;
+    line-height: 1;
+}
+.filter-group-multi .choices .choices__list--multiple .choices__item [data-button]:hover {
+    background: rgba(255,255,255,0.45);
+}
+
+/* ── Search input inside inner ── */
+.filter-group-multi .choices .choices__input {
+    background: transparent;
+    border: none;
+    outline: none;
+    padding: 2px 4px;
+    font-size: 12px;
+    font-family: 'Inter', sans-serif;
+    color: var(--text);
+    min-width: 36px;
+    flex: 1;
+    line-height: 1.4;
+    margin: 0;
+}
+.filter-group-multi .choices .choices__input::placeholder { color: var(--muted); opacity: 0.7; }
+
+/* ── Dropdown list container ── */
+.filter-group-multi .choices .choices__list--dropdown,
+.filter-group-multi .choices .choices__list[aria-expanded] {
+    background: #ffffff;
+    border: 1.5px solid var(--border);
+    border-radius: 10px;
+    box-shadow: 0 8px 24px rgba(8,145,178,0.10), 0 2px 8px rgba(0,0,0,0.06);
+    overflow: hidden;
+    z-index: 999;
+    margin-top: 4px;
+    min-width: 200px;
+}
+
+/* Search field inside dropdown */
+.filter-group-multi .choices .choices__list--dropdown .choices__input,
+.filter-group-multi .choices .choices__list[aria-expanded] .choices__input {
+    background: var(--surface2);
+    border: none;
+    border-bottom: 1px solid var(--border);
+    border-radius: 0;
+    padding: 8px 12px;
+    font-size: 12px;
+    font-family: 'Inter', sans-serif;
+    color: var(--text);
+    width: 100%;
+    outline: none;
+}
+.filter-group-multi .choices .choices__list--dropdown .choices__input::placeholder { color: var(--muted); }
+
+/* ── Dropdown items ── */
+.filter-group-multi .choices .choices__list--dropdown .choices__item,
+.filter-group-multi .choices .choices__list[aria-expanded] .choices__item {
+    padding: 8px 12px;
+    font-size: 12px;
+    font-family: 'Inter', sans-serif;
+    color: var(--text2);
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    /* Hide the default Choices.js "Press to select" itemSelectText */
+    justify-content: flex-start;
+}
+
+/* Suppress the "Press to select" span that Choices.js appends */
+.filter-group-multi .choices .choices__list--dropdown .choices__item .choices__item--selectable,
+.filter-group-multi .choices .choices__list--dropdown .choices__item[data-select-text]::after,
+.filter-group-multi .choices .choices__list--dropdown .choices__item .choices__item--choice::after {
+    display: none !important;
+    content: none !important;
+}
+/* Choices.js appends itemSelectText via data-select-text attribute and ::after */
+.filter-group-multi .choices__list--dropdown .choices__item[data-select-text]::after { display: none !important; }
+
+/* Custom checkbox via ::before */
+.filter-group-multi .choices .choices__list--dropdown .choices__item::before,
+.filter-group-multi .choices .choices__list[aria-expanded] .choices__item::before {
+    content: '';
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+    border: 1.5px solid var(--border);
+    background: #fff;
+    flex-shrink: 0;
+    transition: all 0.12s;
+}
+.filter-group-multi .choices .choices__list--dropdown .choices__item.is-selected::before {
+    background: var(--accent);
+    border-color: var(--accent);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'%3E%3Cpath d='M2 5l2.5 2.5L8 3' stroke='white' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: center;
+}
+
+/* Hover: clean cyan tint, NO extra text */
+.filter-group-multi .choices .choices__list--dropdown .choices__item.is-highlighted {
+    background: rgba(8,145,178,0.07) !important;
+    color: var(--accent) !important;
+}
+.filter-group-multi .choices .choices__list--dropdown .choices__item.is-highlighted::before {
+    border-color: var(--accent);
+}
+.filter-group-multi .choices .choices__list--dropdown .choices__item.is-selected {
+    background: rgba(8,145,178,0.04);
+    color: var(--accent);
+    font-weight: 600;
+}
+.filter-group-multi .choices .choices__list--dropdown .choices__item.is-selected.is-highlighted {
+    background: rgba(8,145,178,0.10) !important;
+}
+
+/* No results / no choices */
+.filter-group-multi .choices .choices__list--dropdown .has-no-results,
+.filter-group-multi .choices .choices__list--dropdown .has-no-choices {
+    color: var(--muted);
+    font-size: 12px;
+    padding: 12px;
+    text-align: center;
+    font-style: italic;
+}
+
+/* Scrollbar inside dropdown */
+.filter-group-multi .choices .choices__list--dropdown .choices__list {
+    max-height: 220px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+}
+.filter-group-multi .choices .choices__list--dropdown .choices__list::-webkit-scrollbar { width: 4px; }
+.filter-group-multi .choices .choices__list--dropdown .choices__list::-webkit-scrollbar-track { background: transparent; }
+.filter-group-multi .choices .choices__list--dropdown .choices__list::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 2px;
+}
+
+/* Ensure Choices components don't break the topbar height when closed */
+.topbar .choices { height: auto; }
+.topbar .filter-group-multi .choices:not(.is-open) .choices__inner { max-height: 34px; }
+
 /* ── Compare Filter (vs Previous Period) ── */
 .topbar-filter-compare {
     flex-direction: row !important;
@@ -1641,4 +1882,3 @@ body {
     background: var(--accent);
     color: white;
 }
-

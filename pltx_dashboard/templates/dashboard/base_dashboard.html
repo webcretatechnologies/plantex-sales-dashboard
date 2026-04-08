@@ -15,6 +15,7 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
     <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
     <link rel="stylesheet" href="/static/css/dashboard.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/choices.js/public/assets/styles/choices.min.css">
     {% block extra_head %}{% endblock %}
 </head>
 
@@ -143,25 +144,25 @@
                         {% endif %}
                     </select>
                 </div>
-                <div class="topbar-filter-group">
-                    <span class="filter-label">Category</span>
-                    <input list="categorySelect" name="category" value="{{ request.GET.category }}" class="filter-select-top" placeholder="All Categories" onchange="this.form.submit()" style="width: 140px; box-sizing: border-box; background: var(--surface); color: var(--text);">
-                    <datalist id="categorySelect">
-                        <option value="">All Categories</option>
+                <div class="topbar-filter-group filter-group-multi">
+                    <span class="filter-label">
+                        <span class="material-icons-round" style="font-size:11px;vertical-align:middle;margin-right:3px;">category</span>Category
+                    </span>
+                    <select id="categorySelect" name="category" class="filter-select-top" multiple onchange="this.form.submit()">
                         {% for c in payload.filters.categories %}
-                        <option value="{{ c }}">{{ c }}</option>
+                        <option value="{{ c }}" {% if selected_filters.categories and c in selected_filters.categories %}selected{% endif %}>{{ c }}</option>
                         {% endfor %}
-                    </datalist>
+                    </select>
                 </div>
-                <div class="topbar-filter-group">
-                    <span class="filter-label">ASIN</span>
-                    <input list="asinSelect" name="asin" value="{{ request.GET.asin }}" class="filter-select-top" placeholder="All ASINs" onchange="this.form.submit()" style="width: 140px; box-sizing: border-box; background: var(--surface); color: var(--text);">
-                    <datalist id="asinSelect">
-                        <option value="">All ASINs</option>
+                <div class="topbar-filter-group filter-group-multi filter-group-asin">
+                    <span class="filter-label">
+                        <span class="material-icons-round" style="font-size:11px;vertical-align:middle;margin-right:3px;">qr_code</span>ASIN
+                    </span>
+                    <select id="asinSelect" name="asin" class="filter-select-top" multiple onchange="this.form.submit()">
                         {% for a in payload.filters.asins %}
-                        <option value="{{ a }}">{{ a }}</option>
+                        <option value="{{ a }}" {% if selected_filters.asins and a in selected_filters.asins %}selected{% endif %}>{{ a }}</option>
                         {% endfor %}
-                    </datalist>
+                    </select>
                 </div>
             </form>
 
@@ -191,6 +192,7 @@
     <script>
         window.DASHBOARD_VIEW_TYPE = "{% block view_type %}business{% endblock %}";
         window.DASHBOARD_PAYLOAD = {{ payload_json|safe|default:"null" }};
+        window.SELECTED_FILTERS = {{ selected_filters_json|safe|default:'{}' }};
 
         let fpInstance;
         document.addEventListener("DOMContentLoaded", function() {
@@ -215,6 +217,44 @@
                     }
                 }
             });
+
+            // Initialize searchable multi-selects using Choices.js
+            try {
+                if (typeof Choices !== 'undefined') {
+                    var catEl = document.getElementById('categorySelect');
+                    var asinEl = document.getElementById('asinSelect');
+                    if (catEl) {
+                        new Choices(catEl, {
+                            removeItemButton: true,
+                            searchEnabled: true,
+                            shouldSort: false,
+                            placeholder: true,
+                            placeholderValue: 'All Categories',
+                            itemSelectText: '',
+                            position: 'bottom',
+                            searchPlaceholderValue: 'Search categories...',
+                            noResultsText: 'No categories found',
+                            noChoicesText: 'No categories available'
+                        });
+                    }
+                    if (asinEl) {
+                        new Choices(asinEl, {
+                            removeItemButton: true,
+                            searchEnabled: true,
+                            shouldSort: false,
+                            placeholder: true,
+                            placeholderValue: 'All ASINs',
+                            itemSelectText: '',
+                            position: 'bottom',
+                            searchPlaceholderValue: 'Search ASINs...',
+                            noResultsText: 'No ASINs found',
+                            noChoicesText: 'No ASINs available'
+                        });
+                    }
+                }
+            } catch (e) {
+                console.warn('Choices init failed', e);
+            }
         });
 
         function handleDateRangeChange(selectElement) {
@@ -260,6 +300,7 @@
             document.getElementById('dashboardFilterForm').submit();
         }
     </script>
+    <script src="https://cdn.jsdelivr.net/npm/choices.js/public/assets/scripts/choices.min.js"></script>
     <script src="/static/js/dashboard.js"></script>
     {% block dashboard_scripts %}{% endblock %}
 </body>

@@ -26,8 +26,8 @@ def init_rbac():
     main_user, created = Users.objects.get_or_create(
         email=email,
         defaults={
-            'fname': 'Main',
-            'lname': 'User',
+            'fname': 'Devarth',
+            'lname': 'Nanavaty',
             'pswd': 'Drn11@2003',
             'cpswd': 'Drn11@2003',
         }

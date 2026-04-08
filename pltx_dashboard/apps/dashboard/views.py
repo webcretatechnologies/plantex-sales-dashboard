@@ -49,17 +49,45 @@ def get_dashboard_context(request):
     else:
         user_features = [f.code_name for f in user.role.features.all()] if user.role else []
 
-    filters = request.GET.dict()
+    # Build filters from QueryDict preserving repeated params as lists
+    filters = {}
+    for k in request.GET.keys():
+        vals = request.GET.getlist(k)
+        if len(vals) == 1:
+            filters[k] = vals[0]
+        else:
+            filters[k] = vals
+
+    # selected_filters is used by templates to pre-select multi-select controls (always lists)
+    selected_filters = {
+        'categories': request.GET.getlist('category'),
+        'asins': request.GET.getlist('asin'),
+    }
     qs = ProcessedDashboardData.objects.filter(user=data_owner).values()
     if not qs:
-        return {'logged_user': user, 'user_features': user_features, 'payload': None}
+        return {
+            'logged_user': user,
+            'user_features': user_features,
+            'payload': None,
+            'filters': filters,
+            'selected_filters': selected_filters,
+            'selected_filters_json': json.dumps(selected_filters)
+        }
         
     df = pd.DataFrame(list(qs))
     spend_qs = SpendData.objects.filter(user=data_owner).values()
     spend_df = pd.DataFrame(list(spend_qs)) if spend_qs else pd.DataFrame()
     
     payload = get_dashboard_payload(df, spend_df, filters, data_owner)
-    return {'logged_user': user, 'user_features': user_features, 'payload': payload, 'payload_json': json.dumps(payload, cls=DashboardEncoder)}
+    return {
+        'logged_user': user,
+        'user_features': user_features,
+        'payload': payload,
+        'payload_json': json.dumps(payload, cls=DashboardEncoder),
+        'filters': filters,
+        'selected_filters': selected_filters,
+        'selected_filters_json': json.dumps(selected_filters)
+    }
 
 
 @require_feature('business_dashboard')

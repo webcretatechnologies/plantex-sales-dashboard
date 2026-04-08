@@ -63,11 +63,20 @@ def apply_global_filters(df, filters):
     if portfolio:
         df = df[df['portfolio'] == portfolio]
     if category:
-        df = df[df['category'] == category]
+        if isinstance(category, (list, tuple)):
+            df = df[df['category'].isin(category)]
+        else:
+            df = df[df['category'] == category]
     if subcategory:
-        df = df[df['subcategory'] == subcategory]
+        if isinstance(subcategory, (list, tuple)):
+            df = df[df['subcategory'].isin(subcategory)]
+        else:
+            df = df[df['subcategory'] == subcategory]
     if asin_filter:
-        df = df[df['asin'] == asin_filter]
+        if isinstance(asin_filter, (list, tuple)):
+            df = df[df['asin'].isin(asin_filter)]
+        else:
+            df = df[df['asin'] == asin_filter]
 
     return df
 
@@ -436,13 +445,25 @@ def get_dashboard_payload(df, spend_df, filters, user=None):
             
         # Apply same category/portfolio filters to previous period, but different dates
         df_unfiltered_prev = df[(pd.to_datetime(df['date']) >= prev_start) & (pd.to_datetime(df['date']) <= prev_end)]
-        # Apply non-date filters to prev period too
+        # Apply non-date filters to prev period too (support lists)
         if filters.get('category'):
-            df_unfiltered_prev = df_unfiltered_prev[df_unfiltered_prev['category'] == filters['category']]
+            cat = filters['category']
+            if isinstance(cat, (list, tuple)):
+                df_unfiltered_prev = df_unfiltered_prev[df_unfiltered_prev['category'].isin(cat)]
+            else:
+                df_unfiltered_prev = df_unfiltered_prev[df_unfiltered_prev['category'] == cat]
         if filters.get('portfolio'):
-            df_unfiltered_prev = df_unfiltered_prev[df_unfiltered_prev['portfolio'] == filters['portfolio']]
+            port = filters['portfolio']
+            if isinstance(port, (list, tuple)):
+                df_unfiltered_prev = df_unfiltered_prev[df_unfiltered_prev['portfolio'].isin(port)]
+            else:
+                df_unfiltered_prev = df_unfiltered_prev[df_unfiltered_prev['portfolio'] == port]
         if filters.get('subcategory'):
-            df_unfiltered_prev = df_unfiltered_prev[df_unfiltered_prev['subcategory'] == filters['subcategory']]
+            sub = filters['subcategory']
+            if isinstance(sub, (list, tuple)):
+                df_unfiltered_prev = df_unfiltered_prev[df_unfiltered_prev['subcategory'].isin(sub)]
+            else:
+                df_unfiltered_prev = df_unfiltered_prev[df_unfiltered_prev['subcategory'] == sub]
         platform = filters.get('platform')
         if platform and platform != 'All':
             if 'platform' in df_unfiltered_prev.columns:
