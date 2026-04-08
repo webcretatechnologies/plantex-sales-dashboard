@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Login — Sales Intelligence</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{
+  min-height:100vh;display:flex;align-items:center;justify-content:center;
+  font-family:'DM Sans',sans-serif;
+  background:#0a0a0f;color:#e2e8f0;
+  background-image:
+    radial-gradient(circle at 20% 50%, rgba(99,102,241,.08) 0%, transparent 50%),
+    radial-gradient(circle at 80% 20%, rgba(34,211,238,.06) 0%, transparent 40%);
+}
+body::before{
+  content:'';position:fixed;inset:0;z-index:0;
+  background-image:
+    linear-gradient(rgba(99,102,241,.04) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(99,102,241,.04) 1px,transparent 1px);
+  background-size:60px 60px;
+  pointer-events:none;
+}
+.auth-card{
+  position:relative;z-index:1;
+  width:100%;max-width:420px;
+  background:rgba(17,17,27,.85);
+  backdrop-filter:blur(20px);
+  border:1.5px solid rgba(99,102,241,.15);
+  border-radius:20px;
+  padding:44px 36px 36px;
+  box-shadow:0 24px 80px rgba(0,0,0,.45);
+}
+.auth-brand{
+  font-family:'Syne',sans-serif;font-size:14px;font-weight:800;
+  text-transform:uppercase;letter-spacing:3px;
+  background:linear-gradient(135deg,#6366f1,#22d3ee);
+  -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;
+  margin-bottom:6px;
+}
+.auth-title{font-family:'Syne',sans-serif;font-size:26px;font-weight:700;margin-bottom:6px;}
+.auth-sub{font-size:13px;color:#64748b;margin-bottom:28px;}
+.form-group{margin-bottom:18px;}
+.form-group label{display:block;font-size:12px;font-weight:600;color:#94a3b8;margin-bottom:6px;text-transform:uppercase;letter-spacing:1px;}
+.form-group input{
+  width:100%;padding:12px 14px;
+  background:rgba(15,15,25,.9);
+  border:1.5px solid rgba(99,102,241,.18);
+  border-radius:10px;color:#e2e8f0;
+  font-size:14px;font-family:'DM Sans',sans-serif;
+  transition:border-color .2s,box-shadow .2s;outline:none;
+}
+.form-group input:focus{border-color:rgba(99,102,241,.6);box-shadow:0 0 0 3px rgba(99,102,241,.1);}
+.form-group input.error-input{border-color:rgba(239,68,68,.6);}
+.error-text{font-size:11px;color:#ef4444;margin-top:4px;}
+.btn-primary{
+  width:100%;padding:13px;border:none;border-radius:12px;cursor:pointer;
+  font-family:'Syne',sans-serif;font-size:14px;font-weight:700;color:#fff;
+  background:linear-gradient(135deg,#6366f1,#4f46e5);
+  box-shadow:0 4px 20px rgba(99,102,241,.3);
+  transition:transform .15s,box-shadow .15s;
+  margin-top:6px;
+}
+.btn-primary:hover{transform:translateY(-1px);box-shadow:0 6px 28px rgba(99,102,241,.45);}
+.auth-footer{text-align:center;margin-top:22px;font-size:13px;color:#64748b;}
+.auth-footer a{color:#6366f1;text-decoration:none;font-weight:600;}
+.auth-footer a:hover{text-decoration:underline;}
+.alert-box{
+  padding:10px 14px;border-radius:10px;font-size:12px;margin-bottom:16px;
+  border:1px solid rgba(239,68,68,.3);background:rgba(239,68,68,.08);color:#fca5a5;
+}
+.alert-success{
+  border-color:rgba(16,185,129,.3);background:rgba(16,185,129,.08);color:#6ee7b7;
+}
+</style>
+</head>
+<body>
+<div class="auth-card">
+  <div class="auth-brand">⚡ Sales Intelligence</div>
+  <div class="auth-title">Welcome Back</div>
+  <div class="auth-sub">Sign in to access your dashboard</div>
+
+  {% if messages %}
+    {% for msg in messages %}
+      <div class="alert-box {% if msg.tags == 'info' or msg.tags == 'success' %}alert-success{% endif %}">{{ msg }}</div>
+    {% endfor %}
+  {% endif %}
+
+  <form method="POST" action="{% url 'account-login' %}">
+    {% csrf_token %}
+
+    <div class="form-group">
+      <label for="email">Email</label>
+      <input type="email" id="email" name="email" placeholder="you@company.com"
+             value="{{ email|default:'' }}" class="{% if errors.email %}error-input{% endif %}">
+      {% if errors.email %}<div class="error-text">{{ errors.email }}</div>{% endif %}
+    </div>
+
+    <div class="form-group">
+      <label for="pswd">Password</label>
+      <input type="password" id="pswd" name="pswd" placeholder="••••••••"
+             class="{% if errors.pswd %}error-input{% endif %}">
+      {% if errors.pswd %}<div class="error-text">{{ errors.pswd }}</div>{% endif %}
+    </div>
+
+    <button type="submit" class="btn-primary">Sign In →</button>
+  </form>
+
+
+</div>
+</body>
+</html>

@@ -1,0 +1,667 @@
+{% extends 'dashboard/base_dashboard.html' %}
+{% load dashboard_extras %}
+
+{% block page_title %}Category Dashboard{% endblock %}
+{% block dashboard_title %}Category Dashboard{% endblock %}
+{% block user_role %}Category Manager{% endblock %}
+{% block view_type %}category{% endblock %}
+
+{% block dashboard_content %}
+
+<!-- ════════════ ROW 1: KPI Cards (8) ════════════ -->
+<div class="biz-kpi-row">
+    <!-- Category Revenue -->
+    <div class="ceo-kpi-card" id="cat-kpi-revenue">
+        <div class="ceo-kpi-header">
+            <span class="ceo-kpi-label">Category Revenue</span>
+            <div class="ceo-kpi-icon blue"><span class="material-icons-round" style="font-size:16px">trending_up</span></div>
+        </div>
+        <div class="ceo-kpi-value">{{ payload.kpis.revenue|fmt_rupee }}</div>
+        <div class="ceo-kpi-change {% if payload.kpis.mom_growth >= 0 %}up{% else %}down{% endif %}">
+            {% if payload.kpis.mom_growth >= 0 %}▲{% else %}▼{% endif %} {{ payload.kpis.mom_growth|abs_val|floatformat:1 }}% <span class="sub">vs prev. period</span>
+        </div>
+    </div>
+
+    <!-- MOM Growth -->
+    <div class="ceo-kpi-card" id="cat-kpi-mom">
+        <div class="ceo-kpi-header">
+            <span class="ceo-kpi-label">MOM Growth</span>
+            <div class="ceo-kpi-icon green"><span class="material-icons-round" style="font-size:16px">show_chart</span></div>
+        </div>
+        <div class="ceo-kpi-value {% if payload.kpis.mom_growth >= 0 %}accent-green{% else %}accent-red{% endif %}">{{ payload.kpis.mom_growth|floatformat:1 }}%</div>
+        <div class="ceo-kpi-change {% if payload.kpis.mom_growth >= 0 %}up{% else %}down{% endif %}">
+            {% if payload.kpis.mom_growth >= 0 %}▲{% else %}▼{% endif %} {{ payload.kpis.prev_mom|abs_val }}pp <span class="sub">vs prev. period</span>
+        </div>
+    </div>
+
+    <!-- YOY Growth -->
+    <div class="ceo-kpi-card" id="cat-kpi-yoy">
+        <div class="ceo-kpi-header">
+            <span class="ceo-kpi-label">YOY Growth</span>
+            <div class="ceo-kpi-icon green"><span class="material-icons-round" style="font-size:16px">stacked_line_chart</span></div>
+        </div>
+        <div class="ceo-kpi-value {% if payload.kpis.yoy_growth >= 0 %}accent-green{% else %}accent-red{% endif %}">{{ payload.kpis.yoy_growth|floatformat:1 }}%</div>
+        <div class="ceo-kpi-change {% if payload.kpis.yoy_growth >= 0 %}up{% else %}down{% endif %}">
+            {% if payload.kpis.yoy_growth >= 0 %}▲{% else %}▼{% endif %} {{ payload.kpis.prev_yoy|abs_val }}pp <span class="sub">vs last year</span>
+        </div>
+    </div>
+
+    <!-- Contribution -->
+    <div class="ceo-kpi-card" id="cat-kpi-contribution">
+        <div class="ceo-kpi-header">
+            <span class="ceo-kpi-label">Contribution</span>
+            <div class="ceo-kpi-icon purple"><span class="material-icons-round" style="font-size:16px">pie_chart</span></div>
+        </div>
+        <div class="ceo-kpi-value">{{ payload.kpis.contribution_margin|floatformat:1 }}%</div>
+        <div class="ceo-kpi-change {% if payload.kpis.contribution_margin_change >= 0 %}up{% else %}down{% endif %}">
+            {% if payload.kpis.contribution_margin_change >= 0 %}▲{% else %}▼{% endif %} {{ payload.kpis.contribution_margin_change|abs_val }}pp <span class="sub">vs prev. period</span>
+        </div>
+    </div>
+
+    <!-- Gross Margin -->
+    <div class="ceo-kpi-card" id="cat-kpi-gm">
+        <div class="ceo-kpi-header">
+            <span class="ceo-kpi-label">Gross Margin</span>
+            <div class="ceo-kpi-icon amber"><span class="material-icons-round" style="font-size:16px">account_balance_wallet</span></div>
+        </div>
+        <div class="ceo-kpi-value">{{ payload.kpis.gross_margin_pct|floatformat:1 }}%</div>
+        <div class="ceo-kpi-change up">
+            ▲ 1.8pp <span class="sub">vs prev. period</span>
+        </div>
+    </div>
+
+    <!-- Orders -->
+    <div class="ceo-kpi-card" id="cat-kpi-orders">
+        <div class="ceo-kpi-header">
+            <span class="ceo-kpi-label">Orders</span>
+            <div class="ceo-kpi-icon cyan"><span class="material-icons-round" style="font-size:16px">shopping_cart</span></div>
+        </div>
+        <div class="ceo-kpi-value">{{ payload.kpis.orders|fmt_num }}</div>
+        <div class="ceo-kpi-change {% if payload.kpis.orders_change >= 0 %}up{% else %}down{% endif %}">
+            {% if payload.kpis.orders_change >= 0 %}▲{% else %}▼{% endif %} {{ payload.kpis.orders_change|abs_val|floatformat:1 }}% <span class="sub">vs prev.</span>
+        </div>
+    </div>
+
+    <!-- Units Sold -->
+    <div class="ceo-kpi-card" id="cat-kpi-units">
+        <div class="ceo-kpi-header">
+            <span class="ceo-kpi-label">Units Sold</span>
+            <div class="ceo-kpi-icon blue"><span class="material-icons-round" style="font-size:16px">inventory_2</span></div>
+        </div>
+        <div class="ceo-kpi-value">{{ payload.kpis.units|fmt_num }}</div>
+        <div class="ceo-kpi-change {% if payload.kpis.units_change >= 0 %}up{% else %}down{% endif %}">
+            {% if payload.kpis.units_change >= 0 %}▲{% else %}▼{% endif %} {{ payload.kpis.units_change|abs_val|floatformat:1 }}% <span class="sub">vs prev.</span>
+        </div>
+    </div>
+
+    <!-- Return Rate -->
+    <div class="ceo-kpi-card" id="cat-kpi-return">
+        <div class="ceo-kpi-header">
+            <span class="ceo-kpi-label">Return Rate</span>
+            <div class="ceo-kpi-icon cyan"><span class="material-icons-round" style="font-size:16px">assignment_return</span></div>
+        </div>
+        <div class="ceo-kpi-value">{{ payload.returns_ratings.rate }}%</div>
+        <div class="ceo-kpi-change {% if payload.returns_ratings.change < 0 %}down{% else %}up{% endif %}">
+            {% if payload.returns_ratings.change < 0 %}▼{% else %}▲{% endif %} {{ payload.returns_ratings.change|abs_val }}pp <span class="sub">vs prev.</span>
+        </div>
+    </div>
+</div>
+
+<!-- ════════════ ROW 2: Category Trend | Category Share by Platform | Cluster Performance ════════════ -->
+<div class="biz-row-chart">
+    <!-- Category Trend -->
+    <div class="ceo-card" id="cat-card-trend">
+        <div class="ceo-card-header">
+            <div>
+                <span class="ceo-card-title">Category Trend</span>
+                <div style="font-size:11px;color:var(--muted);margin-top:2px;">Revenue and growth trend over time</div>
+            </div>
+            <div class="ceo-trend-filters">
+                <button class="ceo-trend-tab active" data-period="daily" id="cat-btn-daily">Daily</button>
+                <button class="ceo-trend-tab" data-period="weekly" id="cat-btn-weekly">Weekly</button>
+                <button class="ceo-trend-tab" data-period="monthly" id="cat-btn-monthly">Monthly</button>
+            </div>
+        </div>
+        <div class="ceo-trend-legend">
+            <div class="ceo-trend-legend-item"><div class="ceo-legend-line solid"></div><span>This Period</span></div>
+            <div class="ceo-trend-legend-item"><div class="ceo-legend-line dashed"></div><span>Last Period</span></div>
+        </div>
+        <div class="ceo-card-body">
+            <div class="ceo-chart-wrap tall"><canvas id="salesTrendChart"></canvas></div>
+        </div>
+    </div>
+
+    <!-- Category Share by Platform -->
+    <div class="ceo-card" id="cat-card-platform">
+        <div class="ceo-card-header">
+            <div>
+                <span class="ceo-card-title">Category Share by Platform</span>
+                <div style="font-size:11px;color:var(--muted);margin-top:2px;">Revenue share by sales channel</div>
+            </div>
+        </div>
+        <div class="ceo-card-body">
+            <div class="ceo-donut-container">
+                <div class="ceo-donut-wrap">
+                    <canvas id="platformSplitChart"></canvas>
+                    <div class="ceo-donut-center">
+                        <div class="ceo-donut-center-value">{{ payload.kpis.revenue|fmt_rupee }}</div>
+                        <div class="ceo-donut-center-label">Total Revenue</div>
+                    </div>
+                </div>
+                <div class="ceo-platform-legend" id="platformLegend">
+                    {% for name, data in payload.platforms.items %}
+                    <div class="ceo-platform-item">
+                        <span class="ceo-platform-dot {% if name == 'Amazon' %}amazon{% elif name == 'Flipkart' %}flipkart{% else %}jiomart{% endif %}"></span>
+                        <span class="ceo-platform-name">{{ name }}</span>
+                        <span class="ceo-platform-pct">{{ data.pct }}%</span>
+                        <span class="ceo-platform-rev">{{ data.revenue|fmt_rupee }}</span>
+                        <span class="ceo-platform-growth up">(▲{{ data.growth }}%)</span>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Cluster Performance -->
+    <div class="ceo-card" id="cat-card-cluster">
+        <div class="ceo-card-header">
+            <div>
+                <span class="ceo-card-title">Cluster Performance</span>
+                <div style="font-size:11px;color:var(--muted);margin-top:2px;">Top clusters by revenue</div>
+            </div>
+            <button class="ceo-view-all-btn" onclick="openModal('clusterModal')" id="cat-btn-cluster-viewall">View All</button>
+        </div>
+        <div class="ceo-card-body no-pad">
+            <table class="ceo-table">
+                <thead>
+                    <tr>
+                        <th>Cluster</th>
+                        <th class="num">Revenue</th>
+                        <th class="num">Growth</th>
+                        <th class="num">Contribution</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for cl in payload.cluster_performance|slice:":5" %}
+                    <tr>
+                        <td style="font-weight:600;">{{ cl.cluster }}</td>
+                        <td class="num">{{ cl.revenue|fmt_rupee }}</td>
+                        <td class="num {% if cl.growth >= 0 %}growth-up{% else %}growth-down{% endif %}">
+                            {% if cl.growth >= 0 %}▲{% else %}▼{% endif %} {{ cl.growth|abs_val }}%
+                        </td>
+                        <td class="num">{{ cl.contribution }}%</td>
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="4" class="empty">No data available</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- ════════════ ROW 3: Top Products | Underperforming Products | Category Health ════════════ -->
+<div class="biz-row-3-equal">
+    <!-- Top 5 Performing Products -->
+    <div class="ceo-card" id="cat-card-top-products">
+        <div class="ceo-card-header">
+            <div>
+                <span class="ceo-card-title">Top Performing Products</span>
+                <div style="font-size:11px;color:var(--muted);margin-top:2px;">By growth vs previous period</div>
+            </div>
+            <button class="ceo-view-all-btn" onclick="openModal('topProductsModal')" id="cat-btn-top-viewall">View All</button>
+        </div>
+        <div class="ceo-card-body no-pad">
+            <div class="biz-product-scroll">
+                <table class="ceo-table">
+                    <thead>
+                        <tr>
+                            <th>SKU</th>
+                            <th>Product Name</th>
+                            <th>Cluster</th>
+                            <th class="num">Revenue</th>
+                            <th class="num">Growth</th>
+                            <th class="num">Units</th>
+                            <th class="num">Rating</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for prod in payload.cat_top_products %}
+                        <tr>
+                            <td>
+                                <div class="ceo-sku-cell">
+                                    <div class="ceo-sku-thumb">📦</div>
+                                    <span>{{ prod.sku }}</span>
+                                </div>
+                            </td>
+                            <td>{{ prod.product_name }}</td>
+                            <td>{{ prod.cluster }}</td>
+                            <td class="num">{{ prod.revenue|fmt_rupee }}</td>
+                            <td class="num growth-up">▲ {{ prod.growth }}%</td>
+                            <td class="num">{{ prod.units_sold|fmt_num }}</td>
+                            <td class="num"><span class="cat-rating-star">★</span>{{ prod.rating }}</td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="7" class="empty">No data available</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Top 5 Underperforming Products -->
+    <div class="ceo-card" id="cat-card-under-products">
+        <div class="ceo-card-header">
+            <div>
+                <span class="ceo-card-title">Underperforming Products</span>
+                <div style="font-size:11px;color:var(--muted);margin-top:2px;">Declining products to investigate</div>
+            </div>
+            <button class="ceo-view-all-btn" onclick="openModal('underProductsModal')" id="cat-btn-under-viewall">View All</button>
+        </div>
+        <div class="ceo-card-body no-pad">
+            <table class="ceo-table">
+                <thead>
+                    <tr>
+                        <th>SKU</th>
+                        <th>Product Name</th>
+                        <th class="num">Revenue</th>
+                        <th class="num">Drop %</th>
+                        <th class="num">Impact (₹)</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for prod in payload.cat_under_products %}
+                    <tr>
+                        <td>
+                            <div class="ceo-sku-cell">
+                                <div class="ceo-sku-thumb">📦</div>
+                                <span>{{ prod.sku }}</span>
+                            </div>
+                        </td>
+                        <td>{{ prod.product_name }}</td>
+                        <td class="num">{{ prod.revenue|fmt_rupee }}</td>
+                        <td class="num growth-down">▼ {{ prod.drop_pct|abs_val }}%</td>
+                        <td class="num" style="color:var(--danger);">-{{ prod.impact|fmt_rupee }}</td>
+                        <td><button class="cat-investigate-btn">Investigate</button></td>
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="6" class="empty">No data available</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Category Health -->
+    <div class="ceo-card" id="cat-card-health">
+        <div class="ceo-card-header">
+            <div>
+                <span class="ceo-card-title">Category Health</span>
+            </div>
+            <button class="ceo-view-all-btn" id="cat-btn-health-viewall">View All</button>
+        </div>
+        <div class="ceo-card-body">
+            <div class="cat-health-grid">
+                <div class="cat-health-pill green">
+                    <span class="cat-health-pill-label">Active SKUs</span>
+                    <strong>{{ payload.category_health.active_skus }}</strong>
+                    <span class="cat-health-pill-change up">▲ {{ payload.category_health.active_change }} new</span>
+                </div>
+                <div class="cat-health-pill red">
+                    <span class="cat-health-pill-label">OOS SKUs</span>
+                    <strong>{{ payload.category_health.oos }}</strong>
+                    <span class="cat-health-pill-change up">▲ {{ payload.category_health.oos_change }}</span>
+                </div>
+                <div class="cat-health-pill amber">
+                    <span class="cat-health-pill-label">Low Stock</span>
+                    <strong>{{ payload.category_health.low_stock }}</strong>
+                    <span class="cat-health-pill-change up">▲ {{ payload.category_health.low_stock_change }}</span>
+                </div>
+                <div class="cat-health-pill purple">
+                    <span class="cat-health-pill-label">At Risk (Rating)</span>
+                    <strong>{{ payload.category_health.at_risk_rating }}</strong>
+                    <span class="cat-health-pill-change up">▲ {{ payload.category_health.at_risk_change }}</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ════════════ ROW 4: OOS Impact | Inventory Position | Returns & Ratings | Growth Opportunities ════════════ -->
+<div class="biz-row-4">
+    <!-- OOS Impact -->
+    <div class="ceo-card" id="cat-card-oos">
+        <div class="ceo-card-header">
+            <div>
+                <span class="ceo-card-title">OOS Impact</span>
+                <div style="font-size:11px;color:var(--muted);margin-top:2px;">Potential revenue loss due to out-of-stock</div>
+            </div>
+        </div>
+        <div class="ceo-card-body">
+            <div class="biz-metric-row">
+                <div class="biz-metric-item">
+                    <div class="biz-metric-label">Lost Sales (MTD)</div>
+                    <div class="biz-metric-value danger">{{ payload.oos_impact.lost_sales|fmt_rupee }}</div>
+                </div>
+                <div class="biz-metric-item">
+                    <div class="biz-metric-label">SKUs Affected</div>
+                    <div class="biz-metric-value">{{ payload.oos_impact.skus_affected }}</div>
+                </div>
+                <div class="biz-metric-item">
+                    <div class="biz-metric-label">Orders Lost</div>
+                    <div class="biz-metric-value">{{ payload.oos_impact.orders_lost|fmt_num }}</div>
+                </div>
+            </div>
+            <div class="biz-oos-alert">
+                <span class="material-icons-round" style="font-size:14px;color:var(--danger);">favorite</span>
+                Restock recommended for high impact SKUs
+            </div>
+        </div>
+    </div>
+
+    <!-- Inventory Position -->
+    <div class="ceo-card" id="cat-card-inv-pos">
+        <div class="ceo-card-header">
+            <div>
+                <span class="ceo-card-title">Inventory Position</span>
+                <div style="font-size:11px;color:var(--muted);margin-top:2px;">Stock status by days of cover</div>
+            </div>
+        </div>
+        <div class="ceo-card-body">
+            <div class="cat-inv-buckets">
+                {% for bucket in payload.inventory_position %}
+                <div class="cat-inv-bucket {{ bucket.color }}">
+                    <span class="cat-inv-bucket-label">{{ bucket.label }}</span>
+                    <strong>{{ bucket.revenue|fmt_rupee }}</strong>
+                    <div class="cat-inv-bucket-bar">
+                        <div class="cat-inv-bucket-fill {{ bucket.color }}" style="width:{{ bucket.pct }}%;"></div>
+                    </div>
+                    <span class="cat-inv-bucket-pct">{{ bucket.pct }}%</span>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Returns & Ratings -->
+    <div class="ceo-card" id="cat-card-returns">
+        <div class="ceo-card-header">
+            <div>
+                <span class="ceo-card-title">Returns & Ratings</span>
+                <div style="font-size:11px;color:var(--muted);margin-top:2px;">Analyze product quality and customer feedback</div>
+            </div>
+            <button class="ceo-view-all-btn" onclick="openModal('returnsModal')" id="cat-btn-returns-viewall">View All</button>
+        </div>
+        <div class="ceo-card-body">
+            <div class="cat-returns-top">
+                <div class="cat-returns-stat">
+                    <div class="biz-metric-label">Return Rate</div>
+                    <div class="biz-metric-value" style="font-size:22px;">{{ payload.returns_ratings.rate }}%</div>
+                    <div class="biz-metric-sub {% if payload.returns_ratings.change < 0 %}down{% else %}up{% endif %}">
+                        {% if payload.returns_ratings.change < 0 %}▼{% else %}▲{% endif %} {{ payload.returns_ratings.change|abs_val }}pp
+                    </div>
+                </div>
+                <div class="cat-returns-stat" style="border-left:2px solid var(--border-light); padding-left:14px;">
+                    <div class="biz-metric-label">Top Return Reason</div>
+                    <div style="font-weight:700;color:var(--text);font-size:13px;margin-top:4px;">{{ payload.returns_ratings.reasons.0.label }}</div>
+                    <div style="font-size:11px;color:var(--muted);">{{ payload.returns_ratings.reasons.0.pct }}% of returns</div>
+                </div>
+            </div>
+            <div class="cat-returns-chart-mini">
+                {% for reason in payload.returns_ratings.reasons %}
+                <div class="cat-reason-bar-row">
+                    <span class="cat-reason-label">{{ reason.label }}</span>
+                    <div class="cat-reason-bar-wrap">
+                        <div class="cat-reason-bar" style="width:{{ reason.pct }}%;"></div>
+                    </div>
+                    <span class="cat-reason-pct">{{ reason.pct }}%</span>
+                </div>
+                {% endfor %}
+            </div>
+            <div class="cat-rating-row">
+                <div class="cat-rating-item">
+                    <div class="biz-metric-label">Avg. Rating</div>
+                    <div class="cat-rating-val"><span class="cat-rating-star-lg">★</span> {{ payload.returns_ratings.avg_rating }}</div>
+                    <div class="biz-metric-sub up">▲ {{ payload.returns_ratings.avg_rating_change }}</div>
+                </div>
+                <div class="cat-rating-item" style="border-left:2px solid var(--border-light);padding-left:14px;">
+                    <div class="biz-metric-label">Ratings < 3.5</div>
+                    <div class="cat-rating-val" style="color:var(--danger);">{{ payload.returns_ratings.low_rating_count }} SKUs</div>
+                    <div class="biz-metric-sub" style="color:var(--muted);">Needs attention</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Growth Opportunities -->
+    <div class="ceo-card" id="cat-card-growth">
+        <div class="ceo-card-header">
+            <div>
+                <span class="ceo-card-title">Growth Opportunities</span>
+                <div style="font-size:11px;color:var(--muted);margin-top:2px;">Categories/keywords driving demand</div>
+            </div>
+            <button class="ceo-view-all-btn" onclick="openModal('growthModal')" id="cat-btn-growth-viewall">View All</button>
+        </div>
+        <div class="ceo-card-body no-pad">
+            <div class="biz-product-scroll" style="max-height:320px;">
+                <table class="ceo-table">
+                    <thead>
+                        <tr>
+                            <th>Search Term</th>
+                            <th>Category</th>
+                            <th class="num">Volume</th>
+                            <th class="num">Growth</th>
+                            <th>Opportunity</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for opp in payload.growth_opportunities|slice:":5" %}
+                        <tr>
+                            <td style="font-weight:600;">{{ opp.search_term }}</td>
+                            <td>{{ opp.category }}</td>
+                            <td class="num">{{ opp.search_volume|fmt_num }}</td>
+                            <td class="num {% if opp.growth >= 0 %}growth-up{% else %}growth-down{% endif %}">
+                                {% if opp.growth >= 0 %}▲{% else %}▼{% endif %} {{ opp.growth|abs_val|floatformat:0 }}%
+                            </td>
+                            <td>
+                                <span class="ceo-priority-badge {% if opp.opportunity == 'High' %}high{% elif opp.opportunity == 'Medium' %}medium{% else %}low{% endif %}">{{ opp.opportunity }}</span>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="5" class="empty">No data available</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ════════════ VIEW ALL MODALS ════════════ -->
+
+<!-- Cluster Performance Modal -->
+<div class="tbl-overlay" id="clusterModal">
+    <div class="tbl-overlay-inner">
+        <div class="tbl-overlay-header">
+            <span class="tbl-overlay-title">Cluster Performance — Full View</span>
+            <button class="tbl-overlay-close" onclick="closeModal('clusterModal')">✕ Close</button>
+        </div>
+        <div class="tbl-overlay-scroll">
+            <table class="ceo-table" style="min-width:500px;">
+                <thead>
+                    <tr>
+                        <th>Cluster</th>
+                        <th class="num">Revenue</th>
+                        <th class="num">Growth</th>
+                        <th class="num">Contribution</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for cl in payload.cluster_performance %}
+                    <tr>
+                        <td style="font-weight:600;">{{ cl.cluster }}</td>
+                        <td class="num">{{ cl.revenue|fmt_rupee }}</td>
+                        <td class="num {% if cl.growth >= 0 %}growth-up{% else %}growth-down{% endif %}">
+                            {% if cl.growth >= 0 %}▲{% else %}▼{% endif %} {{ cl.growth|abs_val }}%
+                        </td>
+                        <td class="num">{{ cl.contribution }}%</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Top Products Modal -->
+<div class="tbl-overlay" id="topProductsModal">
+    <div class="tbl-overlay-inner">
+        <div class="tbl-overlay-header">
+            <span class="tbl-overlay-title">All Performing Products</span>
+            <button class="tbl-overlay-close" onclick="closeModal('topProductsModal')">✕ Close</button>
+        </div>
+        <div class="tbl-overlay-scroll">
+            <table class="ceo-table" style="min-width:700px;">
+                <thead>
+                    <tr>
+                        <th>SKU</th>
+                        <th>Product Name</th>
+                        <th>Cluster</th>
+                        <th class="num">Revenue</th>
+                        <th class="num">Growth</th>
+                        <th class="num">Units</th>
+                        <th class="num">Rating</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for prod in payload.cat_all_top_products %}
+                    <tr>
+                        <td><div class="ceo-sku-cell"><div class="ceo-sku-thumb">📦</div><span>{{ prod.sku }}</span></div></td>
+                        <td>{{ prod.product_name }}</td>
+                        <td>{{ prod.cluster }}</td>
+                        <td class="num">{{ prod.revenue|fmt_rupee }}</td>
+                        <td class="num growth-up">▲ {{ prod.growth }}%</td>
+                        <td class="num">{{ prod.units_sold|fmt_num }}</td>
+                        <td class="num"><span class="cat-rating-star">★</span>{{ prod.rating }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Underperforming Products Modal -->
+<div class="tbl-overlay" id="underProductsModal">
+    <div class="tbl-overlay-inner">
+        <div class="tbl-overlay-header">
+            <span class="tbl-overlay-title">Underperforming Products — Full View</span>
+            <button class="tbl-overlay-close" onclick="closeModal('underProductsModal')">✕ Close</button>
+        </div>
+        <div class="tbl-overlay-scroll">
+            <table class="ceo-table" style="min-width:600px;">
+                <thead>
+                    <tr>
+                        <th>SKU</th>
+                        <th>Product Name</th>
+                        <th class="num">Revenue</th>
+                        <th class="num">Drop %</th>
+                        <th class="num">Impact (₹)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for prod in payload.cat_all_under_products %}
+                    <tr>
+                        <td><div class="ceo-sku-cell"><div class="ceo-sku-thumb">📦</div><span>{{ prod.sku }}</span></div></td>
+                        <td>{{ prod.product_name }}</td>
+                        <td class="num">{{ prod.revenue|fmt_rupee }}</td>
+                        <td class="num growth-down">▼ {{ prod.drop_pct|abs_val }}%</td>
+                        <td class="num" style="color:var(--danger);">-{{ prod.impact|fmt_rupee }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Returns Modal -->
+<div class="tbl-overlay" id="returnsModal">
+    <div class="tbl-overlay-inner">
+        <div class="tbl-overlay-header">
+            <span class="tbl-overlay-title">Returns & Ratings — Full View</span>
+            <button class="tbl-overlay-close" onclick="closeModal('returnsModal')">✕ Close</button>
+        </div>
+        <div class="tbl-overlay-scroll" style="padding:20px;">
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px;margin-bottom:24px;">
+                <div>
+                    <div style="font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;">Return Rate</div>
+                    <div style="font-size:28px;font-weight:800;color:var(--text);">{{ payload.returns_ratings.rate }}%</div>
+                </div>
+                <div>
+                    <div style="font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;">Avg. Rating</div>
+                    <div style="font-size:28px;font-weight:800;color:var(--text);"><span class="cat-rating-star-lg">★</span> {{ payload.returns_ratings.avg_rating }}</div>
+                </div>
+                <div>
+                    <div style="font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;">Ratings < 3.5</div>
+                    <div style="font-size:28px;font-weight:800;color:var(--danger);">{{ payload.returns_ratings.low_rating_count }} SKUs</div>
+                </div>
+            </div>
+            <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:12px;">Return Reasons Breakdown</div>
+            <table class="ceo-table" style="min-width:400px;">
+                <thead><tr><th>Reason</th><th class="num">Percentage</th></tr></thead>
+                <tbody>
+                    {% for reason in payload.returns_ratings.reasons %}
+                    <tr>
+                        <td style="font-weight:500;">{{ reason.label }}</td>
+                        <td class="num">{{ reason.pct }}%</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Growth Opportunities Modal -->
+<div class="tbl-overlay" id="growthModal">
+    <div class="tbl-overlay-inner">
+        <div class="tbl-overlay-header">
+            <span class="tbl-overlay-title">Growth Opportunities — Full View</span>
+            <button class="tbl-overlay-close" onclick="closeModal('growthModal')">✕ Close</button>
+        </div>
+        <div class="tbl-overlay-scroll">
+            <table class="ceo-table" style="min-width:600px;">
+                <thead>
+                    <tr>
+                        <th>Search Term</th>
+                        <th>Category</th>
+                        <th class="num">Volume</th>
+                        <th class="num">Growth</th>
+                        <th>Opportunity</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for opp in payload.growth_opportunities %}
+                    <tr>
+                        <td style="font-weight:600;">{{ opp.search_term }}</td>
+                        <td>{{ opp.category }}</td>
+                        <td class="num">{{ opp.search_volume|fmt_num }}</td>
+                        <td class="num {% if opp.growth >= 0 %}growth-up{% else %}growth-down{% endif %}">
+                            {% if opp.growth >= 0 %}▲{% else %}▼{% endif %} {{ opp.growth|abs_val|floatformat:0 }}%
+                        </td>
+                        <td>
+                            <span class="ceo-priority-badge {% if opp.opportunity == 'High' %}high{% elif opp.opportunity == 'Medium' %}medium{% else %}low{% endif %}">{{ opp.opportunity }}</span>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+{% endblock %}

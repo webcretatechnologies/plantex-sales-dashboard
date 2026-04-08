@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SellerLens — Upload Data</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/dashboard.css">
+</head>
+<body>
+<div style="position:sticky;top:0;z-index:50;background:rgba(10,10,15,.96);backdrop-filter:blur(12px);border-bottom:1px solid #1e2e4a;padding:0 24px;display:flex;align-items:center;gap:14px;height:50px;">
+  <span style="font-family:'Syne',sans-serif;font-size:15px;font-weight:800;background:linear-gradient(135deg,#4ab8d4,#00d4ff);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">⚡ SellerLens</span>
+  <span style="flex:1"></span>
+  <span style="font-size:12px;color:#64748b;font-family:'DM Sans',sans-serif;">{{ logged_user.fname }} {{ logged_user.lname }}</span>
+  <a href="{% url 'account-logout' %}" style="text-decoration:none;border:1.5px solid rgba(239,68,68,.3);background:#162035;color:#ef4444;padding:5px 12px;font-size:12px;border-radius:8px;font-family:'Syne',sans-serif;font-weight:600;">Logout</a>
+</div>
+<div id="loader">
+  <div class="loader-brand">Sales Intelligence</div>
+  <div class="loader-title">Daily Sales<br>Dashboard</div>
+  <label class="upload-zone" id="uploadZone" for="csvInput">
+    <div class="upload-icon">📂</div>
+    <div class="upload-main">Drop daily CSV files here</div>
+    <div class="upload-sub">Files named DD-MM-YYYY.csv · Select multiple dates at once</div>
+    <input type="file" id="csvInput" accept=".csv" multiple style="display:none">
+  </label>
+  <div id="fileList" class="file-list"></div>
+  <div class="or-divider"><span>Google Sheet URLs (optional)</span></div>
+  <div class="gsheet-section">
+    <div class="gsheet-label">Category Mapping — ASIN → Portfolio / Category / Subcategory</div>
+    <input class="gsheet-input" id="catUrl" placeholder="Paste published CSV URL from Google Sheets...">
+    <div class="gsheet-label" style="margin-top:8px">Spends — Date / Ad Account / Ad Type / ASIN / Spend</div>
+    <input class="gsheet-input" id="spendUrl" placeholder="Paste published CSV URL from Google Sheets...">
+    <div style="font-size:12px;color:var(--muted);margin-top:6px">
+      Or upload Excel:
+      <label style="color:var(--accent);cursor:pointer;margin-left:8px">📋 Category Excel<input type="file" id="catFile" accept=".xlsx,.csv" style="display:none"></label>
+      <label style="color:var(--accent3);cursor:pointer;margin-left:14px">💰 Spends Excel (up to 15)<input type="file" id="spendFile" accept=".xlsx,.csv" multiple style="display:none"></label>
+    </div>
+  </div>
+  <div class="or-divider" style="width:min(520px,90vw)"><span>Price Data (optional)</span></div>
+  <div class="gsheet-section">
+    <div class="gsheet-label">ASIN Prices — columns: ASIN, Price (Excel or CSV)</div>
+    <div style="display:flex;align-items:center;gap:10px;margin-top:4px">
+      <label style="display:flex;align-items:center;gap:8px;background:var(--surface);border:1.5px solid var(--border);border-radius:10px;padding:9px 14px;cursor:pointer;width:100%;transition:border-color .2s" id="priceFileLabel" for="priceFile">
+        <span style="font-size:18px">💲</span>
+        <span id="priceFileText" style="font-size:12px;color:var(--muted)">Upload ASIN Price file (Excel/CSV)…</span>
+        <input type="file" id="priceFile" accept=".xlsx,.csv" style="display:none">
+      </label>
+    </div>
+    <div style="font-size:11px;color:var(--muted);margin-top:4px">Format: two columns — ASIN | Price. Used for ASP-level business review (0-500 / 501-1000 / 1000+)</div>
+  </div>
+  <button id="loadBtn" onclick="loadDashboard()" disabled>Load Dashboard →</button>
+  <div id="statusMsg"></div>
+</div>
+{% csrf_token %}
+<script src="/static/js/upload.js?v=3"></script>
+</body>
+</html>

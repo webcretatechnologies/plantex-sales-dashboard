@@ -1,0 +1,36 @@
+from django.db import models
+
+
+class Feature(models.Model):
+    name = models.CharField(max_length=255, unique=True)
+    code_name = models.CharField(max_length=255, unique=True)
+
+    def __str__(self):
+        return self.name
+
+class Role(models.Model):
+    name = models.CharField(max_length=255)
+    created_by = models.ForeignKey('Users', on_delete=models.CASCADE, related_name='created_roles', null=True, blank=True)
+    features = models.ManyToManyField(Feature, blank=True)
+
+    def __str__(self):
+        return self.name
+
+class Users(models.Model):
+    fname = models.CharField(max_length=255, null=False, blank=False)
+    lname = models.CharField(max_length=255, null=False, blank=False)
+    email = models.EmailField(unique=True)
+    pswd = models.CharField(max_length=20, null=False, blank=False)
+    cpswd = models.CharField(max_length=20, null=False, blank=False)
+
+    # RBAC and sub-user fields
+    is_main_user = models.BooleanField(default=False)
+    created_by = models.ForeignKey('self', on_delete=models.CASCADE, related_name='sub_users', null=True, blank=True)
+    role = models.ForeignKey(Role, on_delete=models.SET_NULL, null=True, blank=True)
+
+    class Meta:
+        verbose_name = 'User'
+        verbose_name_plural = 'Users'
+
+    def __str__(self):
+        return f"{self.fname} {self.lname}"

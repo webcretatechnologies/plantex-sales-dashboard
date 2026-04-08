@@ -1,0 +1,179 @@
+{% load dashboard_extras %}
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Plantex — {% block page_title %}Sales Dashboard{% endblock %}</title>
+    <meta name="description" content="Plantex real-time business overview and performance insights dashboard">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap"
+        rel="stylesheet">
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/dashboard.css">
+    {% block extra_head %}{% endblock %}
+</head>
+
+<body class="has-sidebar">
+
+    <!-- Sidebar Navigation -->
+    <div class="app-sidebar">
+        <div class="sidebar-brand">
+            <span class="brand-text">plante<span class="brand-x">x</span></span>
+        </div>
+        <nav class="sidebar-nav">
+            {% if 'ceo_dashboard' in user_features %}
+            <a href="{% url 'ceo-dashboard' %}"
+                class="nav-item {% if request.resolver_match.url_name == 'ceo-dashboard' %}active{% endif %}"
+                id="nav-ceo">
+                <span class="material-icons-round nav-icon">dashboard</span>
+                CEO Dashboard
+            </a>
+            {% endif %}
+            {% if 'business_dashboard' in user_features %}
+            <a href="{% url 'business-dashboard' %}"
+                class="nav-item {% if request.resolver_match.url_name == 'business-dashboard' %}active{% endif %}"
+                id="nav-business">
+                <span class="material-icons-round nav-icon">business</span>
+                Business
+            </a>
+            {% endif %}
+            {% if 'category_dashboard' in user_features %}
+            <a href="{% url 'category-dashboard' %}"
+                class="nav-item {% if request.resolver_match.url_name == 'category-dashboard' %}active{% endif %}"
+                id="nav-category">
+                <span class="material-icons-round nav-icon">category</span>
+                Category
+            </a>
+            {% endif %}
+            {% if 'upload_data' in user_features %}
+            <a href="{% url 'dashboard-upload' %}"
+                class="nav-item {% if request.resolver_match.url_name == 'dashboard-upload' %}active{% endif %}"
+                id="nav-upload">
+                <span class="material-icons-round nav-icon">upload_file</span>
+                Upload Data
+            </a>
+            {% endif %}
+
+            {% if logged_user.is_main_user %}
+            <div class="nav-sep"></div>
+            <div class="nav-heading"
+                style="padding: 10px 20px; font-size: 11px; text-transform: uppercase; color: #a1a1aa; font-weight: 600; letter-spacing: 0.5px;">
+                Administration</div>
+            <a href="{% url 'user-management' %}"
+                class="nav-item {% if request.resolver_match.url_name == 'user-management' %}active{% endif %}">
+                <span class="material-icons-round nav-icon">people</span>
+                User Management
+            </a>
+            <a href="{% url 'role-management' %}"
+                class="nav-item {% if request.resolver_match.url_name == 'role-management' %}active{% endif %}">
+                <span class="material-icons-round nav-icon">admin_panel_settings</span>
+                Role Management
+            </a>
+            {% endif %}
+
+            <div class="nav-sep"></div>
+            <a href="#" class="nav-item disabled" id="nav-reports">
+                <span class="material-icons-round nav-icon">summarize</span>
+                Reports
+            </a>
+        </nav>
+        <div class="sidebar-footer">
+            <div class="sidebar-status">
+                <span class="status-dot"></span>
+                Data updated<br><span class="status-time">2 min ago</span>
+            </div>
+            <button class="sidebar-refresh-btn" onclick="window.location.reload()">
+                <span class="material-icons-round" style="font-size:14px">refresh</span> Refresh
+            </button>
+        </div>
+    </div>
+
+    <!-- Main App Content -->
+    <div class="app-main">
+        <div class="topbar">
+            <div class="topbar-title">{% block dashboard_title %}Dashboard{% endblock %}</div>
+            <div class="topbar-subtitle">Real-time business overview & performance insights</div>
+            <div class="topbar-spacer"></div>
+
+            <form method="GET" action="" class="topbar-filters" id="dashboardFilterForm">
+                <div class="topbar-filter-group">
+                    <span class="filter-label">Date Range</span>
+                    <select class="filter-select-top" id="dateRangeSelect" name="date_range">
+                        <option>MTD (1 - {{ payload.kpis.active_asins }} ASINs)</option>
+                    </select>
+                </div>
+                <div class="topbar-filter-group">
+                    <span class="filter-label">Platform</span>
+                    <select class="filter-select-top" id="platformSelect" name="platform" onchange="this.form.submit()">
+                        <option value="">All</option>
+                        {% if payload.filters.platforms %}
+                        {% for p in payload.filters.platforms %}
+                        <option value="{{ p }}" {% if request.GET.platform == p %}selected{% endif %}>{{ p }}</option>
+                        {% endfor %}
+                        {% else %}
+                        <option value="Amazon" {% if request.GET.platform == 'Amazon' %}selected{% endif %}>Amazon
+                        </option>
+                        <option value="Flipkart" {% if request.GET.platform == 'Flipkart' %}selected{% endif %}>Flipkart
+                        </option>
+                        <option value="JioMart" {% if request.GET.platform == 'JioMart' %}selected{% endif %}>JioMart
+                        </option>
+                        {% endif %}
+                    </select>
+                </div>
+                <div class="topbar-filter-group">
+                    <span class="filter-label">Category</span>
+                    <select class="filter-select-top" id="categorySelect" name="category" onchange="this.form.submit()">
+                        <option value="">All Categories</option>
+                        {% for c in payload.filters.categories %}
+                        <option value="{{ c }}" {% if request.GET.category == c %}selected{% endif %}>{{ c }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="topbar-filter-group topbar-filter-compare">
+                    <span class="filter-compare-vs">vs</span>
+                    <span class="material-icons-round" style="font-size:16px;color:var(--muted);">calendar_today</span>
+                    <select class="filter-select-top" id="compareSelect" name="compare" onchange="this.form.submit()">
+                        <option value="previous_period" {% if request.GET.compare == 'previous_period' or not request.GET.compare %}selected{% endif %}>Previous Period</option>
+                        <option value="previous_month" {% if request.GET.compare == 'previous_month' %}selected{% endif %}>Previous Month</option>
+                        <option value="previous_year" {% if request.GET.compare == 'previous_year' %}selected{% endif %}>Previous Year</option>
+                    </select>
+                    <span class="material-icons-round"
+                        style="font-size:16px;color:var(--muted);cursor:pointer;">content_copy</span>
+                </div>
+            </form>
+
+            <div class="topbar-sep"></div>
+            <div class="user-profile">
+                <span class="bell-icon">
+                    <span class="material-icons-round" style="font-size:18px">notifications</span>
+                    <span class="bell-count">5</span>
+                </span>
+                <div class="user-avatar">{{ logged_user.fname|default:"U"|truncatechars:1 }}{{
+                    logged_user.lname|default:"N"|truncatechars:1 }}</div>
+                <div class="user-info">
+                    <span class="user-name">{{ logged_user.fname }} {{ logged_user.lname }}</span>
+                    <span class="user-role">{% block user_role %}Business Head{% endblock %}</span>
+                </div>
+            </div>
+            <a href="{% url 'account-logout' %}" class="btn-logout">
+                <span class="material-icons-round" style="font-size:16px">logout</span>
+            </a>
+        </div>
+
+        <div class="dash-body">
+            {% block dashboard_content %}{% endblock %}
+        </div>
+    </div>
+
+    <script>
+        window.DASHBOARD_VIEW_TYPE = "{% block view_type %}business{% endblock %}";
+        window.DASHBOARD_PAYLOAD = {{ payload_json|safe|default:"null" }};
+    </script>
+    <script src="/static/js/dashboard.js"></script>
+    {% block dashboard_scripts %}{% endblock %}
+</body>
+
+</html>
