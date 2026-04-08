@@ -5,6 +5,10 @@
 
 {% block extra_head %}
 <style>
+    /* Hide dashboard filters */
+    .topbar-filters, .sidebar-status, .sidebar-refresh-btn { 
+        display: none !important; 
+    }
     .management-container {
         display: grid;
         grid-template-columns: 1fr 400px;
@@ -268,6 +272,7 @@
                     {% endfor %}
                 </div>
                 <div class="role-actions">
+                    {% if r.name != 'Admin' %}
                     <button class="action-btn btn-edit" onclick="editRole(this)">
                         <span class="material-icons-round" style="font-size: 16px;">edit</span>
                         Edit Role
@@ -281,6 +286,11 @@
                             Delete
                         </button>
                     </form>
+                    {% else %}
+                    <div style="text-align: center; width: 100%; color: var(--muted); font-size: 12px; padding: 8px;">
+                        <span class="material-icons-round" style="font-size: 14px; vertical-align: middle;">lock</span> System Default Role
+                    </div>
+                    {% endif %}
                 </div>
             </div>
             {% empty %}

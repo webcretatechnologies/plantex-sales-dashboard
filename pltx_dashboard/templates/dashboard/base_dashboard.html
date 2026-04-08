@@ -12,6 +12,8 @@
         href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap"
         rel="stylesheet">
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
     <link rel="stylesheet" href="/static/css/dashboard.css">
     {% block extra_head %}{% endblock %}
 </head>
@@ -101,9 +103,27 @@
             <form method="GET" action="" class="topbar-filters" id="dashboardFilterForm">
                 <div class="topbar-filter-group">
                     <span class="filter-label">Date Range</span>
-                    <select class="filter-select-top" id="dateRangeSelect" name="date_range">
-                        <option>MTD (1 - {{ payload.kpis.active_asins }} ASINs)</option>
+                    <select class="filter-select-top" id="dateRangeSelect" name="date_range" onchange="handleDateRangeChange(this)">
+                        <option value="">All Time</option>
+                        <option value="yesterday" {% if request.GET.date_range == 'yesterday' %}selected{% endif %}>Yesterday</option>
+                        <option value="last_7_days" {% if request.GET.date_range == 'last_7_days' %}selected{% endif %}>Last 7 Days</option>
+                        <option value="last_15_days" {% if request.GET.date_range == 'last_15_days' %}selected{% endif %}>Last 15 Days</option>
+                        <option value="last_month" {% if request.GET.date_range == 'last_month' %}selected{% endif %}>Last Month</option>
+                        <option value="last_3_months" {% if request.GET.date_range == 'last_3_months' %}selected{% endif %}>Last 3 Months</option>
+                        <option value="last_6_months" {% if request.GET.date_range == 'last_6_months' %}selected{% endif %}>Last 6 Months</option>
+                        <option value="last_1_year" {% if request.GET.date_range == 'last_1_year' %}selected{% endif %}>Last 1 Year</option>
+                        <option value="custom" {% if request.GET.date_range == 'custom' %}selected{% endif %}>Custom Dates</option>
                     </select>
+                </div>
+                
+                <div class="topbar-filter-group custom-date-group" id="customDateGroup" style="display: {% if request.GET.date_range == 'custom' %}flex{% else %}none{% endif %}; margin-left: 4px;">
+                    <span class="filter-label">&nbsp;</span>
+                    <div style="display: flex; flex-direction: row; align-items: center; gap: 8px;">
+                        <input type="text" id="flatpickrRange" placeholder="Select Dates..." style="width: 220px; background: #ffffff; border: 1px solid #cbd5e1; border-radius: 6px; padding: 7px 12px; font-size: 13px; font-family: 'Inter', sans-serif; color: #0f172a; outline: none; cursor: pointer; transition: border-color 0.2s;" onfocus="this.style.borderColor='#3b82f6'">
+                        <input type="hidden" id="customStartDate" name="start_date" value="{{ request.GET.start_date }}">
+                        <input type="hidden" id="customEndDate" name="end_date" value="{{ request.GET.end_date }}">
+                        <button type="button" style="padding: 7px 16px; background: #2563eb; color: #ffffff; border: none; border-radius: 6px; font-family: 'Inter', sans-serif; font-weight: 600; font-size: 12px; cursor: pointer; transition: all 0.2s; box-shadow: 0 2px 4px rgba(37,99,235,0.2);" onmouseover="this.style.background='#1d4ed8'; this.style.transform='translateY(-1px)';" onmouseout="this.style.background='#2563eb'; this.style.transform='translateY(0)';" onclick="submitCustomDate()">Apply</button>
+                    </div>
                 </div>
                 <div class="topbar-filter-group">
                     <span class="filter-label">Platform</span>
@@ -125,23 +145,23 @@
                 </div>
                 <div class="topbar-filter-group">
                     <span class="filter-label">Category</span>
-                    <select class="filter-select-top" id="categorySelect" name="category" onchange="this.form.submit()">
+                    <input list="categorySelect" name="category" value="{{ request.GET.category }}" class="filter-select-top" placeholder="All Categories" onchange="this.form.submit()" style="width: 140px; box-sizing: border-box; background: var(--surface); color: var(--text);">
+                    <datalist id="categorySelect">
                         <option value="">All Categories</option>
                         {% for c in payload.filters.categories %}
-                        <option value="{{ c }}" {% if request.GET.category == c %}selected{% endif %}>{{ c }}</option>
+                        <option value="{{ c }}">{{ c }}</option>
                         {% endfor %}
-                    </select>
+                    </datalist>
                 </div>
-                <div class="topbar-filter-group topbar-filter-compare">
-                    <span class="filter-compare-vs">vs</span>
-                    <span class="material-icons-round" style="font-size:16px;color:var(--muted);">calendar_today</span>
-                    <select class="filter-select-top" id="compareSelect" name="compare" onchange="this.form.submit()">
-                        <option value="previous_period" {% if request.GET.compare == 'previous_period' or not request.GET.compare %}selected{% endif %}>Previous Period</option>
-                        <option value="previous_month" {% if request.GET.compare == 'previous_month' %}selected{% endif %}>Previous Month</option>
-                        <option value="previous_year" {% if request.GET.compare == 'previous_year' %}selected{% endif %}>Previous Year</option>
-                    </select>
-                    <span class="material-icons-round"
-                        style="font-size:16px;color:var(--muted);cursor:pointer;">content_copy</span>
+                <div class="topbar-filter-group">
+                    <span class="filter-label">ASIN</span>
+                    <input list="asinSelect" name="asin" value="{{ request.GET.asin }}" class="filter-select-top" placeholder="All ASINs" onchange="this.form.submit()" style="width: 140px; box-sizing: border-box; background: var(--surface); color: var(--text);">
+                    <datalist id="asinSelect">
+                        <option value="">All ASINs</option>
+                        {% for a in payload.filters.asins %}
+                        <option value="{{ a }}">{{ a }}</option>
+                        {% endfor %}
+                    </datalist>
                 </div>
             </form>
 
@@ -171,6 +191,74 @@
     <script>
         window.DASHBOARD_VIEW_TYPE = "{% block view_type %}business{% endblock %}";
         window.DASHBOARD_PAYLOAD = {{ payload_json|safe|default:"null" }};
+
+        let fpInstance;
+        document.addEventListener("DOMContentLoaded", function() {
+            var defaultStart = "{{ request.GET.start_date|default:'' }}";
+            var defaultEnd = "{{ request.GET.end_date|default:'' }}";
+            var defaultDates = [];
+            if (defaultStart && defaultEnd) {
+                defaultDates = [defaultStart, defaultEnd];
+            }
+            
+            fpInstance = flatpickr("#flatpickrRange", {
+                mode: "range",
+                dateFormat: "Y-m-d",
+                defaultDate: defaultDates,
+                onChange: function(selectedDates, dateStr, instance) {
+                    if (selectedDates.length === 2) {
+                        document.getElementById('customStartDate').value = instance.formatDate(selectedDates[0], "Y-m-d");
+                        document.getElementById('customEndDate').value = instance.formatDate(selectedDates[1], "Y-m-d");
+                    } else {
+                        document.getElementById('customStartDate').value = '';
+                        document.getElementById('customEndDate').value = '';
+                    }
+                }
+            });
+        });
+
+        function handleDateRangeChange(selectElement) {
+            if (selectElement.value === 'custom') {
+                document.getElementById('customDateGroup').style.display = 'flex';
+                if(fpInstance) fpInstance.open();
+            } else {
+                document.getElementById('customDateGroup').style.display = 'none';
+                document.getElementById('customStartDate').value = '';
+                document.getElementById('customEndDate').value = '';
+                document.getElementById('dashboardFilterForm').submit();
+            }
+        }
+
+        function submitCustomDate() {
+            var startDate = document.getElementById('customStartDate').value;
+            var endDate = document.getElementById('customEndDate').value;
+            
+            if (!startDate || !endDate) {
+                alert("Please select both start and end dates.");
+                return;
+            }
+            
+            var sDate = new Date(startDate);
+            var eDate = new Date(endDate);
+            
+            if (sDate.getTime() === eDate.getTime()) {
+                alert("Start date and end date should not be the same.");
+                return;
+            }
+            
+            if (sDate > eDate) {
+                alert("Start date should not be after the end date.");
+                return;
+            }
+
+            if (eDate < sDate) {
+                alert("End date should not be before the start date.");
+                return;
+            }
+            
+            // Submits the form if all conditions are met
+            document.getElementById('dashboardFilterForm').submit();
+        }
     </script>
     <script src="/static/js/dashboard.js"></script>
     {% block dashboard_scripts %}{% endblock %}

@@ -5,6 +5,10 @@
 
 {% block extra_head %}
 <style>
+    /* Hide dashboard filters */
+    .topbar-filters, .sidebar-status, .sidebar-refresh-btn { 
+        display: none !important; 
+    }
     .management-container {
         display: grid;
         grid-template-columns: 1fr 350px;

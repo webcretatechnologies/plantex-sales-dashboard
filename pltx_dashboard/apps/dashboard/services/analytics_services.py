@@ -7,6 +7,41 @@ import datetime
 def apply_global_filters(df, filters):
     if df.empty:
         return df
+
+    date_range = filters.get('date_range')
+    if date_range and date_range != 'custom':
+        max_dt = pd.to_datetime(df['date']).max()
+        if pd.notnull(max_dt):
+            today = max_dt.date()
+            if date_range == 'yesterday':
+                start = today - datetime.timedelta(days=1)
+                end = start
+            elif date_range == 'last_7_days':
+                start = today - datetime.timedelta(days=6)
+                end = today
+            elif date_range == 'last_15_days':
+                start = today - datetime.timedelta(days=14)
+                end = today
+            elif date_range == 'last_month':
+                first_day_current = today.replace(day=1)
+                end = first_day_current - datetime.timedelta(days=1)
+                start = end.replace(day=1)
+            elif date_range == 'last_3_months':
+                start = today - datetime.timedelta(days=90)
+                end = today
+            elif date_range == 'last_6_months':
+                start = today - datetime.timedelta(days=180)
+                end = today
+            elif date_range == 'last_1_year':
+                start = today - datetime.timedelta(days=365)
+                end = today
+            else:
+                start = end = None
+            
+            if start and end:
+                filters['start_date'] = start.isoformat()
+                filters['end_date'] = end.isoformat()
+
     if filters.get('start_date'):
         df = df[df['date'] >= pd.to_datetime(filters['start_date']).date()]
     if filters.get('end_date'):
@@ -385,13 +420,20 @@ def get_dashboard_payload(df, spend_df, filters, user=None):
 
     # Calculate previous period data for comparison
     df_prev = pd.DataFrame()
-    compare = filters.get('compare', 'previous_period')  # default to previous_period
+    compare_start_date = filters.get('compare_start_date')
+    compare_end_date = filters.get('compare_end_date')
+    
     if not df_filtered.empty:
-        max_dt = pd.to_datetime(df_filtered['date']).max()
-        min_dt = pd.to_datetime(df_filtered['date']).min()
-        delta = max_dt - min_dt + datetime.timedelta(days=1)
-        prev_end = min_dt - datetime.timedelta(days=1)
-        prev_start = prev_end - delta + datetime.timedelta(days=1)
+        if compare_start_date and compare_end_date:
+            prev_start = pd.to_datetime(compare_start_date)
+            prev_end = pd.to_datetime(compare_end_date)
+        else:
+            max_dt = pd.to_datetime(df_filtered['date']).max()
+            min_dt = pd.to_datetime(df_filtered['date']).min()
+            delta = max_dt - min_dt + datetime.timedelta(days=1)
+            prev_end = min_dt - datetime.timedelta(days=1)
+            prev_start = prev_end - delta + datetime.timedelta(days=1)
+            
         # Apply same category/portfolio filters to previous period, but different dates
         df_unfiltered_prev = df[(pd.to_datetime(df['date']) >= prev_start) & (pd.to_datetime(df['date']) <= prev_end)]
         # Apply non-date filters to prev period too

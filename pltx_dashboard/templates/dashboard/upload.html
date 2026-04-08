@@ -1,57 +1,419 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SellerLens — Upload Data</title>
-<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/css/dashboard.css">
-</head>
-<body>
-<div style="position:sticky;top:0;z-index:50;background:rgba(10,10,15,.96);backdrop-filter:blur(12px);border-bottom:1px solid #1e2e4a;padding:0 24px;display:flex;align-items:center;gap:14px;height:50px;">
-  <span style="font-family:'Syne',sans-serif;font-size:15px;font-weight:800;background:linear-gradient(135deg,#4ab8d4,#00d4ff);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">⚡ SellerLens</span>
-  <span style="flex:1"></span>
-  <span style="font-size:12px;color:#64748b;font-family:'DM Sans',sans-serif;">{{ logged_user.fname }} {{ logged_user.lname }}</span>
-  <a href="{% url 'account-logout' %}" style="text-decoration:none;border:1.5px solid rgba(239,68,68,.3);background:#162035;color:#ef4444;padding:5px 12px;font-size:12px;border-radius:8px;font-family:'Syne',sans-serif;font-weight:600;">Logout</a>
-</div>
-<div id="loader">
-  <div class="loader-brand">Sales Intelligence</div>
-  <div class="loader-title">Daily Sales<br>Dashboard</div>
-  <label class="upload-zone" id="uploadZone" for="csvInput">
-    <div class="upload-icon">📂</div>
-    <div class="upload-main">Drop daily CSV files here</div>
-    <div class="upload-sub">Files named DD-MM-YYYY.csv · Select multiple dates at once</div>
-    <input type="file" id="csvInput" accept=".csv" multiple style="display:none">
-  </label>
-  <div id="fileList" class="file-list"></div>
-  <div class="or-divider"><span>Google Sheet URLs (optional)</span></div>
-  <div class="gsheet-section">
-    <div class="gsheet-label">Category Mapping — ASIN → Portfolio / Category / Subcategory</div>
-    <input class="gsheet-input" id="catUrl" placeholder="Paste published CSV URL from Google Sheets...">
-    <div class="gsheet-label" style="margin-top:8px">Spends — Date / Ad Account / Ad Type / ASIN / Spend</div>
-    <input class="gsheet-input" id="spendUrl" placeholder="Paste published CSV URL from Google Sheets...">
-    <div style="font-size:12px;color:var(--muted);margin-top:6px">
-      Or upload Excel:
-      <label style="color:var(--accent);cursor:pointer;margin-left:8px">📋 Category Excel<input type="file" id="catFile" accept=".xlsx,.csv" style="display:none"></label>
-      <label style="color:var(--accent3);cursor:pointer;margin-left:14px">💰 Spends Excel (up to 15)<input type="file" id="spendFile" accept=".xlsx,.csv" multiple style="display:none"></label>
+{% extends 'dashboard/base_dashboard.html' %}
+
+{% block page_title %}Upload Data{% endblock %}
+
+{% block dashboard_title %}Data Integration Hub{% endblock %}
+{% block view_type %}upload{% endblock %}
+
+{% block extra_head %}
+<style>
+    /* Hide filters and refresh from topbar/sidebar since they don't apply to upload page */
+    .topbar-filters, .sidebar-status, .sidebar-refresh-btn { 
+        display: none !important; 
+    }
+    
+    /* Modern Premium Upload Design */
+    .upload-container {
+        max-width: 1300px;
+        margin: 0 auto;
+        padding: 40px 20px 80px;
+        font-family: 'Inter', -apple-system, sans-serif;
+    }
+
+    .upload-header {
+        text-align: center;
+        margin-bottom: 48px;
+    }
+    
+    .upload-header h1 {
+        font-size: 32px;
+        font-weight: 800;
+        color: var(--text);
+        margin-bottom: 12px;
+        letter-spacing: -0.5px;
+    }
+    
+    .upload-header p {
+        font-size: 15px;
+        color: var(--muted);
+        max-width: 540px;
+        margin: 0 auto;
+        line-height: 1.6;
+    }
+
+    .upload-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 32px;
+    }
+    @media (max-width: 1024px) {
+        .upload-grid {
+            grid-template-columns: 1fr;
+        }
+    }
+
+    /* Cards Setup */
+    .upload-card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 20px;
+        padding: 36px 40px;
+        position: relative;
+        overflow: hidden;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.02), 0 1px 3px rgba(0, 0, 0, 0.03);
+    }
+    
+    .upload-card:hover {
+        border-color: #cbd5e1;
+        box-shadow: 0 12px 32px rgba(0, 0, 0, 0.06), 0 4px 8px rgba(0, 0, 0, 0.03);
+        transform: translateY(-2px);
+    }
+    
+    .upload-card::before {
+        content: '';
+        position: absolute;
+        top: 0; left: 0; right: 0; height: 4px;
+        background: linear-gradient(90deg, #3b82f6, #06b6d4, #10b981);
+        opacity: 0;
+        transition: opacity 0.3s ease;
+    }
+    
+    .upload-card:hover::before {
+        opacity: 1;
+    }
+
+    .upload-card-title {
+        font-size: 20px;
+        font-weight: 700;
+        color: var(--text);
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 28px;
+    }
+    
+    .upload-card-title .material-icons-round {
+        color: #2563eb;
+        background: #eff6ff;
+        padding: 10px;
+        border-radius: 12px;
+        font-size: 22px;
+    }
+
+    /* Dropzone Styling */
+    .modern-dropzone {
+        border: 2px dashed #cbd5e1;
+        border-radius: 16px;
+        padding: 48px 24px;
+        text-align: center;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        background: #f8fafc;
+        display: block;
+    }
+
+    .modern-dropzone:hover, .modern-dropzone.dragover {
+        border-color: #3b82f6;
+        background: #eff6ff;
+    }
+
+    .modern-dropzone .drop-icon {
+        font-size: 48px;
+        color: #94a3b8;
+        margin-bottom: 16px;
+        transition: all 0.3s;
+    }
+
+    .modern-dropzone:hover .drop-icon {
+        color: #3b82f6;
+        transform: scale(1.05);
+    }
+
+    .modern-dropzone .drop-text {
+        font-size: 17px;
+        font-weight: 600;
+        color: var(--text);
+        margin-bottom: 8px;
+    }
+    
+    .modern-dropzone .drop-subtext {
+        font-size: 14px;
+        color: var(--muted);
+    }
+
+    #fileList {
+        margin-top: 20px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+
+    .file-pill {
+        display: inline-flex;
+        align-items: center;
+        background: #ffffff;
+        color: #0f172a;
+        font-weight: 500;
+        border: 1px solid #cbd5e1;
+        padding: 8px 14px;
+        border-radius: 24px;
+        font-size: 13px;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.02);
+    }
+    
+    .file-pill::before {
+        content: 'description';
+        font-family: 'Material Icons Round';
+        font-size: 16px;
+        color: #3b82f6;
+        margin-right: 6px;
+    }
+
+    /* Inputs Styling */
+    .input-group {
+        margin-bottom: 24px;
+    }
+    
+    .input-group:last-child {
+        margin-bottom: 0;
+    }
+
+    .input-label {
+        display: block;
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--text2);
+        margin-bottom: 10px;
+    }
+
+    .modern-input {
+        width: 100%;
+        background: #ffffff;
+        border: 1px solid #cbd5e1;
+        border-radius: 10px;
+        padding: 14px 18px;
+        color: var(--text);
+        font-size: 15px;
+        font-family: inherit;
+        transition: all 0.2s;
+        box-shadow: inset 0 1px 2px rgba(0,0,0,0.02);
+    }
+
+    .modern-input::placeholder {
+        color: #94a3b8;
+    }
+
+    .modern-input:focus {
+        outline: none;
+        border-color: #3b82f6;
+        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+    }
+
+    /* Alternative File Upload Labels */
+    .alt-upload-group {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        margin-top: 16px;
+        flex-wrap: wrap;
+        padding-top: 16px;
+        border-top: 1px dashed var(--border);
+    }
+
+    .alt-upload-label {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        background: #f8fafc;
+        border: 1px solid #cbd5e1;
+        padding: 10px 16px;
+        border-radius: 10px;
+        font-size: 14px;
+        font-weight: 500;
+        color: var(--text2);
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+
+    .alt-upload-label:hover {
+        background: #ffffff;
+        border-color: #94a3b8;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+    }
+
+    .alt-upload-label .material-icons-round {
+        font-size: 18px;
+    }
+
+    .price-upload-wrapper {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        background: #f8fafc;
+        border: 1px solid #cbd5e1;
+        border-radius: 12px;
+        padding: 16px 20px;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+
+    .price-upload-wrapper:hover {
+        border-color: #10b981;
+        background: #f0fdf4;
+    }
+
+    .price-upload-icon {
+        color: #10b981;
+        font-size: 24px;
+        background: #ffffff;
+        padding: 8px;
+        border-radius: 8px;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+    }
+
+    /* Actions */
+    .upload-actions {
+        margin-top: 48px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 20px;
+    }
+
+    .btn-process {
+        background: linear-gradient(135deg, #2563eb, #3b82f6);
+        color: #ffffff;
+        border: none;
+        border-radius: 14px;
+        padding: 18px 48px;
+        font-size: 17px;
+        font-weight: 700;
+        font-family: inherit;
+        cursor: pointer;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        display: inline-flex;
+        align-items: center;
+        gap: 14px;
+        box-shadow: 0 6px 20px rgba(37, 99, 235, 0.25);
+    }
+
+    .btn-process:hover:not(:disabled) {
+        transform: translateY(-3px);
+        box-shadow: 0 10px 25px rgba(37, 99, 235, 0.35);
+    }
+
+    .btn-process:disabled {
+        background: #f1f5f9;
+        color: #94a3b8;
+        cursor: not-allowed;
+        box-shadow: none;
+        transform: none;
+    }
+
+    #statusMsg {
+        font-size: 15px;
+        color: #1e293b;
+        background: #ffffff;
+        padding: 14px 28px;
+        border-radius: 10px;
+        border-left: 4px solid #3b82f6;
+        display: block;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+        font-weight: 500;
+    }
+    
+    #statusMsg:empty {
+        display: none;
+    }
+</style>
+{% endblock %}
+
+{% block dashboard_content %}
+<div class="upload-container">
+    <div class="upload-header">
+        <h1>Data Integration Hub</h1>
+        <p>Seamlessly upload your daily sales reports, category mappings, and pricing matrices to power your analytics engine.</p>
     </div>
-  </div>
-  <div class="or-divider" style="width:min(520px,90vw)"><span>Price Data (optional)</span></div>
-  <div class="gsheet-section">
-    <div class="gsheet-label">ASIN Prices — columns: ASIN, Price (Excel or CSV)</div>
-    <div style="display:flex;align-items:center;gap:10px;margin-top:4px">
-      <label style="display:flex;align-items:center;gap:8px;background:var(--surface);border:1.5px solid var(--border);border-radius:10px;padding:9px 14px;cursor:pointer;width:100%;transition:border-color .2s" id="priceFileLabel" for="priceFile">
-        <span style="font-size:18px">💲</span>
-        <span id="priceFileText" style="font-size:12px;color:var(--muted)">Upload ASIN Price file (Excel/CSV)…</span>
-        <input type="file" id="priceFile" accept=".xlsx,.csv" style="display:none">
-      </label>
+
+    <div class="upload-grid">
+        <!-- Daily Sales Card -->
+        <div class="upload-card">
+            <div class="upload-card-title">
+                <span class="material-icons-round">analytics</span>
+                Daily Sales Reports
+            </div>
+            <label class="modern-dropzone" id="uploadZone" for="csvInput">
+                <div class="material-icons-round drop-icon">cloud_upload</div>
+                <div class="drop-text">Drag & drop your daily CSV files here</div>
+                <div class="drop-subtext">Supported format: DD-MM-YYYY.csv · Select multiple dates at once</div>
+                <input type="file" id="csvInput" accept=".csv" multiple style="display:none">
+            </label>
+            <div id="fileList"></div>
+        </div>
+
+        <!-- Mappings & Spends Card -->
+        <div class="upload-card">
+            <div class="upload-card-title">
+                <span class="material-icons-round">account_tree</span>
+                Categories & Spends (Optional)
+            </div>
+            
+            <div class="input-group">
+                <span class="input-label">Category Mapping (ASIN → Portfolio / Category / Subcategory)</span>
+                <input type="text" class="modern-input" id="catUrl" placeholder="Paste published CSV URL from Google Sheets...">
+            </div>
+            
+            <div class="input-group">
+                <span class="input-label">Marketing Spends (Date / Ad Account / Ad Type / ASIN / Spend)</span>
+                <input type="text" class="modern-input" id="spendUrl" placeholder="Paste published CSV URL from Google Sheets...">
+            </div>
+
+            <div class="alt-upload-group">
+                <span style="font-size: 13px; color: #64748b;">Or upload directly:</span>
+                <label class="alt-upload-label">
+                    <span class="material-icons-round" style="font-size: 16px; color: #8b5cf6;">table_chart</span>
+                    Category Excel
+                    <input type="file" id="catFile" accept=".xlsx,.csv" style="display:none">
+                </label>
+                <label class="alt-upload-label">
+                    <span class="material-icons-round" style="font-size: 16px; color: #f59e0b;">attach_money</span>
+                    Spends Excel
+                    <input type="file" id="spendFile" accept=".xlsx,.csv" multiple style="display:none">
+                </label>
+            </div>
+        </div>
+
+        <!-- Prices Card -->
+        <div class="upload-card">
+            <div class="upload-card-title">
+                <span class="material-icons-round">sell</span>
+                Pricing Data (Optional)
+            </div>
+            
+            <div class="input-group">
+                <span class="input-label">ASIN Prices (Columns: ASIN, Price) - Used for ASP-level business reviews</span>
+                <label class="price-upload-wrapper" id="priceFileLabel" for="priceFile">
+                    <span class="material-icons-round price-upload-icon">payments</span>
+                    <span id="priceFileText" style="flex: 1; font-size: 14px; color: #cbd5e1;">Upload ASIN Price mapping (Excel/CSV)...</span>
+                    <input type="file" id="priceFile" accept=".xlsx,.csv" style="display:none">
+                </label>
+            </div>
+        </div>
     </div>
-    <div style="font-size:11px;color:var(--muted);margin-top:4px">Format: two columns — ASIN | Price. Used for ASP-level business review (0-500 / 501-1000 / 1000+)</div>
-  </div>
-  <button id="loadBtn" onclick="loadDashboard()" disabled>Load Dashboard →</button>
-  <div id="statusMsg"></div>
+
+    <div class="upload-actions">
+        <button id="loadBtn" class="btn-process" onclick="loadDashboard()" disabled>
+            <span class="material-icons-round">auto_awesome</span>
+            Process Data & Update Dashboard
+        </button>
+        <div id="statusMsg"></div>
+    </div>
+    
+    {% csrf_token %}
 </div>
-{% csrf_token %}
-<script src="/static/js/upload.js?v=3"></script>
-</body>
-</html>
+{% endblock %}
+
+{% block dashboard_scripts %}
+<script src="/static/js/upload.js?v=4"></script>
+{% endblock %}
