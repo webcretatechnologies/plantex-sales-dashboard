@@ -164,6 +164,9 @@
                         {% endfor %}
                     </select>
                 </div>
+                <button type="button" class="btn-reset" onclick="window.location.href=window.location.pathname" title="Reset filters">
+                    <span class="material-icons-round">restart_alt</span>
+                </button>
             </form>
 
             <div class="topbar-sep"></div>
@@ -172,8 +175,7 @@
                     <span class="material-icons-round" style="font-size:18px">notifications</span>
                     <span class="bell-count">5</span>
                 </span>
-                <div class="user-avatar">{{ logged_user.fname|default:"U"|truncatechars:1 }}{{
-                    logged_user.lname|default:"N"|truncatechars:1 }}</div>
+                <div class="user-avatar">{{ logged_user.fname|default:"U"|truncatechars:1 }}{{ logged_user.lname|default:"N"|truncatechars:1 }}</div>
                 <div class="user-info">
                     <span class="user-name">{{ logged_user.fname }} {{ logged_user.lname }}</span>
                     <span class="user-role">{% block user_role %}Business Head{% endblock %}</span>
