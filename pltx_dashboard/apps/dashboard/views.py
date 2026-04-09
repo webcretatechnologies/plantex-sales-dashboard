@@ -5,7 +5,7 @@ import pandas as pd
 import json
 import numpy as np
 from apps.dashboard.services.analytics_services import get_dashboard_payload
-from apps.accounts.decorators import require_feature
+from apps.accounts.decorators import require_feature, _first_allowed_dashboard_for
 from apps.accounts.models import Feature
 class DashboardEncoder(json.JSONEncoder):
     """Handles numpy/pandas types that the default encoder chokes on."""
@@ -35,7 +35,12 @@ def get_logged_in_user(request):
 
 
 def dashboard_view(request):
-    return redirect('business-dashboard')
+    # Redirect the user to the first dashboard they have access to.
+    user = get_logged_in_user(request)
+    if not user:
+        return redirect('account-login')
+    route = _first_allowed_dashboard_for(user)
+    return redirect(route)
 
 def get_dashboard_context(request):
     user = get_logged_in_user(request)

@@ -1,6 +1,31 @@
 from functools import wraps
 from django.shortcuts import redirect
-from .models import Users
+from .models import Users, Feature
+
+
+def _first_allowed_dashboard_for(user):
+    """Return the name of the first dashboard route the user can access.
+
+    Priority order: category -> ceo -> business -> upload. Falls back to
+    'account-login' if nothing available.
+    """
+    if not user:
+        return 'account-login'
+    if user.is_main_user:
+        return 'business-dashboard'
+    if not user.role:
+        return 'account-login'
+    feature_codes = set(f.code_name for f in user.role.features.all())
+    if 'category_dashboard' in feature_codes:
+        return 'category-dashboard'
+    if 'ceo_dashboard' in feature_codes:
+        return 'ceo-dashboard'
+    if 'business_dashboard' in feature_codes:
+        return 'business-dashboard'
+    if 'upload_data' in feature_codes:
+        return 'dashboard-upload'
+    return 'account-login'
+
 
 def require_feature(feature_code):
     def decorator(view_func):
@@ -11,30 +36,32 @@ def require_feature(feature_code):
             user_id = request.session.get('user_id')
             if not user_id:
                 return redirect('account-login')
-            
+
             try:
                 user = Users.objects.get(id=user_id)
             except Users.DoesNotExist:
                 return redirect('account-login')
 
+            # attach for convenience
+            request.user = user
+
+            # main users have all features
             if user.is_main_user:
-                return view_func(request, *args, **kwargs)
+                return view_func(arg, *args, **kwargs)
 
             # Sub-user logic
             if not user.role:
-                return redirect('dashboard-home') # Or some error page
-            
+                return redirect(_first_allowed_dashboard_for(user))
+
             has_feature = user.role.features.filter(code_name=feature_code).exists()
             if not has_feature:
-                # Redirect to dashboard home if they lack access
-                # For dashboard home itself, maybe we shouldn't redirect there if it's protected?
-                # Usually home is accessible or routes to a permitted dashboard.
-                # Here we just redirect to general dashboard
-                return redirect('dashboard-home')
+                # Redirect to the first dashboard the user does have access to
+                return redirect(_first_allowed_dashboard_for(user))
 
             return view_func(arg, *args, **kwargs)
         return _wrapped_view
     return decorator
+
 
 def main_user_required(view_func):
     @wraps(view_func)
@@ -47,7 +74,7 @@ def main_user_required(view_func):
         try:
             user = Users.objects.get(id=user_id)
             if not user.is_main_user:
-                return redirect('dashboard-home')
+                return redirect(_first_allowed_dashboard_for(user))
             request.user = user  # convenience
             return view_func(arg, *args, **kwargs)
         except Users.DoesNotExist:
