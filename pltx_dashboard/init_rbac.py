@@ -12,6 +12,8 @@ def init_rbac():
         {'name': 'Business Dashboard', 'code_name': 'business_dashboard'},
         {'name': 'Category Dashboard', 'code_name': 'category_dashboard'},
         {'name': 'Data Upload', 'code_name': 'upload_data'},
+        {'name': 'User Management', 'code_name': 'user_management'},
+        {'name': 'Role Management', 'code_name': 'role_management'},
     ]
 
     for fd in features_data:

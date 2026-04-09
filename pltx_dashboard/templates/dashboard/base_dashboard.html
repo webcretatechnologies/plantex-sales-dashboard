@@ -60,22 +60,29 @@
             </a>
             {% endif %}
 
-            {% if logged_user.is_main_user %}
+            {% if logged_user.is_main_user or 'user_management' in user_features or 'role_management' in user_features %}
             <div class="nav-sep"></div>
             <div class="nav-heading"
                 style="padding: 10px 20px; font-size: 11px; text-transform: uppercase; color: #a1a1aa; font-weight: 600; letter-spacing: 0.5px;">
                 Administration</div>
+            
+            {% if logged_user.is_main_user or 'user_management' in user_features %}
             <a href="{% url 'user-management' %}"
                 class="nav-item {% if request.resolver_match.url_name == 'user-management' %}active{% endif %}">
                 <span class="material-icons-round nav-icon">people</span>
                 User Management
             </a>
+            {% endif %}
+
+            {% if logged_user.is_main_user or 'role_management' in user_features %}
             <a href="{% url 'role-management' %}"
                 class="nav-item {% if request.resolver_match.url_name == 'role-management' %}active{% endif %}">
                 <span class="material-icons-round nav-icon">admin_panel_settings</span>
                 Role Management
             </a>
             {% endif %}
+            {% endif %}
+
 
             <div class="nav-sep"></div>
             <a href="#" class="nav-item disabled" id="nav-reports">
