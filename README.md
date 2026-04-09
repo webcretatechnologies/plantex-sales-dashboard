@@ -61,3 +61,43 @@ celery -A pltx_dashboard worker -l info
 ```
 
 Navigate to `http://127.0.0.1:8000/` and test real-time dashboard analytics out right now!
+
+---
+
+## 📊 Understanding the Analytics (Layman's Guide)
+
+The Plantex Dashboard simplifies complex e-commerce data into actionable insights. Here is a breakdown of the key metrics used across our dashboards in simple terms:
+
+### 💰 Financial & Profitability Metrics
+- **Total Revenue**: The total amount of money earned from your product sales before any expenses.
+  - *Formula:* Sum of all sold product prices.
+- **Gross Margin (%)**: Shows what percentage of your revenue is profit after paying for the product's cost (COGS).
+  - *Layman:* "For every ₹100 you earn, how much is left after you pay for the product itself?"
+  - *Formula:* `((Revenue - Product Cost) / Revenue) * 100`
+- **Contribution Margin**: A "Real Profit" indicator that shows how much profit is left after paying for both the product cost and advertising spend.
+  - *Layman:* "This is your actual profit margin after the two biggest expenses (Stock + Ads) are cleared."
+  - *Formula:* `Gross Margin % - TACOS %`
+
+### 📈 Growth & Performance
+- **MOM Growth (Month-over-Month)**: Compares your current performance to the previous period to see if you are growing.
+  - *Formula:* `((Current Value - Previous Value) / Previous Value) * 100`
+- **AOV (Average Order Value)**: The average amount a customer spends in a single order.
+  - *Layman:* "How much, on average, are customers paying per checkout?"
+  - *Formula:* `Total Revenue / Total Orders`
+- **Conversion Rate (CVR)**: The percentage of people who visited your product page and ended up buying something.
+  - *Layman:* "Higher CVR means your listing is convincing and the price is right!"
+  - *Formula:* `(Orders / Pageviews) * 100`
+
+### 🎯 Advertising Efficiency
+- **TACOS (Total Advertising Cost of Sales)**: Measures how much of your total revenue is eaten up by advertising.
+  - *Layman:* "A TACOS of 15% means you spend ₹15 on ads for every ₹100 you make in total sales. Lower is usually better!"
+  - *Formula:* `(Total Ad Spend / Total Revenue) * 100`
+- **ROAS (Return on Ad Spend)**: Measures how many rupees you earn for every ₹1 spent on ads.
+  - *Layman:* "If ROAS is 5x, it means your ads are turning ₹1 into ₹5 in sales."
+  - *Formula:* `Total Revenue / Total Ad Spend`
+
+### 📦 Inventory Health
+- **Days of Cover**: An estimate of how many days your current stock will last based on how fast you are selling.
+  - *Layman:* "Used to predict when you will run out of stock so you can re-order in time."
+- **OOS (Out of Stock) Impact**: Calculates potential revenue lost because products were unavailable while customers were looking for them.
+  - *Layman:* "Tells you exactly how much money you 'left on the table' because you didn't have stock."
