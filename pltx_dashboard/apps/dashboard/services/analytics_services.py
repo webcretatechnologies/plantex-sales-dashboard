@@ -252,7 +252,8 @@ def generate_spend_table(spend_df):
     grp = spend_df.groupby(['date', 'asin', 'ad_account', 'ad_type'])['spend'].sum().reset_index()
     grp['date'] = grp['date'].astype(str)
     grp = grp.sort_values(by='spend', ascending=False)
-    return grp.to_dict('records')
+    # Limit to top 200 rows to keep the payload size manageable
+    return grp.head(200).to_dict('records')
 
 
 def generate_bi_data(df):
@@ -369,8 +370,8 @@ def generate_bi_data(df):
         {
             'color': '#fb7185', 'pri': 'Scaling Signal', 'title': 'Spend Saturation',
             'body': (f"ROAS {roas:.1f}x — not budget-capped. Safe to scale." if roas > 4 and tspend > 0 else
-                     f"Moderate ROAS. Check impression share." if roas > 2 and tspend > 0 else
-                     f"Low ROAS — audit before scaling." if roas > 0 and tspend > 0 else "No spend."),
+                     "Moderate ROAS. Check impression share." if roas > 2 and tspend > 0 else
+                     "Low ROAS — audit before scaling." if roas > 0 and tspend > 0 else "No spend."),
             'alert': 'ok' if roas > 4 else 'warn' if roas > 2 else 'error' if roas > 0 and tspend > 0 else None,
             'alert_text': 'Scale up' if roas > 4 else 'Check caps' if roas > 2 else 'Audit first' if roas > 0 and tspend > 0 else None,
             'export_count': 0
@@ -402,7 +403,7 @@ def _safe_growth(current, previous):
     return 0.0
 
 
-def get_dashboard_payload(df, spend_df, filters, user=None):
+def get_dashboard_payload(df, spend_df, filters, user=None, cached_filter_metadata=None):
     df_filtered = apply_global_filters(df, filters)
     
     if not df_filtered.empty:
@@ -415,8 +416,12 @@ def get_dashboard_payload(df, spend_df, filters, user=None):
     else:
         df_sales_only = df_filtered
 
-    valid_sales_dates = set(df_sales_only['date'].astype(str)) if not df_sales_only.empty else set()
-    filters_metadata = get_available_filters(df, valid_sales_dates)
+    # Use cached filter metadata if available (avoids recomputing from full dataset)
+    if cached_filter_metadata:
+        filters_metadata = cached_filter_metadata
+    else:
+        valid_sales_dates = set(df_sales_only['date'].astype(str)) if not df_sales_only.empty else set()
+        filters_metadata = get_available_filters(df, valid_sales_dates)
 
     valid_asins = set(df_filtered['asin'].unique()) if not df_filtered.empty else set()
     spend_filtered = pd.DataFrame()
@@ -799,9 +804,9 @@ def apply_business_logic(payload, df, df_prev, filters=None):
     under_perf = sorted([p for p in prod_growth if p['growth'] < 0], key=lambda x: x['growth'])
 
     payload['cat_top_products'] = top_perf[:5]
-    payload['cat_all_top_products'] = top_perf
+    payload['cat_all_top_products'] = top_perf[:100]
     payload['cat_under_products'] = under_perf[:5]
-    payload['cat_all_under_products'] = under_perf
+    payload['cat_all_under_products'] = under_perf[:100]
 
     # ═══════════════════════════════════════════════════════
     # WATERFALL / PROFITABILITY
@@ -855,7 +860,7 @@ def apply_business_logic(payload, df, df_prev, filters=None):
     
     alerts = []
     if oos > 0:
-        alerts.append({'severity': 'critical', 'icon': '🔴', 'title': f'{oos} SKUs OOS', 'subtitle': f'lost sales impact'})
+        alerts.append({'severity': 'critical', 'icon': '🔴', 'title': f'{oos} SKUs OOS', 'subtitle': 'lost sales impact'})
     if mom_growth < -10 and prev_revenue > 0:
         alerts.append({'severity': 'warning', 'icon': '🟡', 'title': f'Revenue declining {mom_growth:.1f}%', 'subtitle': 'vs previous period'})
     payload['critical_alerts'] = alerts

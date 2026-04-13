@@ -1,10 +1,14 @@
 from celery import shared_task
 from .models import UploadedFile
 from apps.accounts.models import Users
-from .services import process_category_file, process_price_file, process_spend_file, process_sales_file, generate_dashboard_data
+from .services import (
+    process_category_file, process_price_file, process_spend_file, process_sales_file,
+    process_flipkart_sales_file, process_flipkart_inventory_file,
+    process_flipkart_pca_file, process_flipkart_pla_file,
+    generate_dashboard_data
+)
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
-import os
 
 @shared_task
 def process_file_task(uploaded_file_id, file_type, user_id, date_str, is_last):
@@ -31,6 +35,14 @@ def process_file_task(uploaded_file_id, file_type, user_id, date_str, is_last):
             process_spend_file(uploaded.file.path, user)
         elif file_type == 'sales':
             process_sales_file(uploaded.file.path, date_str, user)
+        elif file_type == 'flipkart_sales':
+            process_flipkart_sales_file(uploaded.file.path, user)
+        elif file_type == 'flipkart_inventory':
+            process_flipkart_inventory_file(uploaded.file.path, user)
+        elif file_type == 'flipkart_pca':
+            process_flipkart_pca_file(uploaded.file.path, user)
+        elif file_type == 'flipkart_pla':
+            process_flipkart_pla_file(uploaded.file.path, user)
         
         if is_last:
             async_to_sync(channel_layer.group_send)(
@@ -66,3 +78,4 @@ def process_file_task(uploaded_file_id, file_type, user_id, date_str, is_last):
                     'status': 'error'
                 }
             )
+

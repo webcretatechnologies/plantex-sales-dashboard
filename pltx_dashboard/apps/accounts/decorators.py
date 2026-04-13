@@ -1,6 +1,6 @@
 from functools import wraps
 from django.shortcuts import redirect
-from .models import Users, Feature
+from .models import Users
 
 
 def _first_allowed_dashboard_for(user):

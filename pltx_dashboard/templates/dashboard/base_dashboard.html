@@ -65,7 +65,7 @@
             <div class="nav-heading"
                 style="padding: 10px 20px; font-size: 11px; text-transform: uppercase; color: #a1a1aa; font-weight: 600; letter-spacing: 0.5px;">
                 Administration</div>
-            
+
             {% if logged_user.is_main_user or 'user_management' in user_features %}
             <a href="{% url 'user-management' %}"
                 class="nav-item {% if request.resolver_match.url_name == 'user-management' %}active{% endif %}">
@@ -111,7 +111,8 @@
             <form method="GET" action="" class="topbar-filters" id="dashboardFilterForm">
                 <div class="topbar-filter-group">
                     <span class="filter-label">Date Range</span>
-                    <select class="filter-select-top" id="dateRangeSelect" name="date_range" onchange="handleDateRangeChange(this)">
+                    <select class="filter-select-top" id="dateRangeSelect" name="date_range"
+                        onchange="handleDateRangeChange(this)">
                         <option value="">All Time</option>
                         <option value="yesterday" {% if request.GET.date_range == 'yesterday' %}selected{% endif %}>Yesterday</option>
                         <option value="last_7_days" {% if request.GET.date_range == 'last_7_days' %}selected{% endif %}>Last 7 Days</option>
@@ -123,14 +124,22 @@
                         <option value="custom" {% if request.GET.date_range == 'custom' %}selected{% endif %}>Custom Dates</option>
                     </select>
                 </div>
-                
-                <div class="topbar-filter-group custom-date-group" id="customDateGroup" style="display: {% if request.GET.date_range == 'custom' %}flex{% else %}none{% endif %}; margin-left: 4px;">
+
+                <div class="topbar-filter-group custom-date-group" id="customDateGroup"
+                    style="display: {% if request.GET.date_range == 'custom' %}flex{% else %}none{% endif %}; margin-left: 4px;">
                     <span class="filter-label">&nbsp;</span>
                     <div style="display: flex; flex-direction: row; align-items: center; gap: 8px;">
-                        <input type="text" id="flatpickrRange" placeholder="Select Dates..." style="width: 220px; background: #ffffff; border: 1px solid #cbd5e1; border-radius: 6px; padding: 7px 12px; font-size: 13px; font-family: 'Inter', sans-serif; color: #0f172a; outline: none; cursor: pointer; transition: border-color 0.2s;" onfocus="this.style.borderColor='#3b82f6'">
-                        <input type="hidden" id="customStartDate" name="start_date" value="{{ request.GET.start_date }}">
+                        <input type="text" id="flatpickrRange" placeholder="Select Dates..."
+                            style="width: 220px; background: #ffffff; border: 1px solid #cbd5e1; border-radius: 6px; padding: 7px 12px; font-size: 13px; font-family: 'Inter', sans-serif; color: #0f172a; outline: none; cursor: pointer; transition: border-color 0.2s;"
+                            onfocus="this.style.borderColor='#3b82f6'">
+                        <input type="hidden" id="customStartDate" name="start_date"
+                            value="{{ request.GET.start_date }}">
                         <input type="hidden" id="customEndDate" name="end_date" value="{{ request.GET.end_date }}">
-                        <button type="button" style="padding: 7px 16px; background: #2563eb; color: #ffffff; border: none; border-radius: 6px; font-family: 'Inter', sans-serif; font-weight: 600; font-size: 12px; cursor: pointer; transition: all 0.2s; box-shadow: 0 2px 4px rgba(37,99,235,0.2);" onmouseover="this.style.background='#1d4ed8'; this.style.transform='translateY(-1px)';" onmouseout="this.style.background='#2563eb'; this.style.transform='translateY(0)';" onclick="submitCustomDate()">Apply</button>
+                        <button type="button"
+                            style="padding: 7px 16px; background: #2563eb; color: #ffffff; border: none; border-radius: 6px; font-family: 'Inter', sans-serif; font-weight: 600; font-size: 12px; cursor: pointer; transition: all 0.2s; box-shadow: 0 2px 4px rgba(37,99,235,0.2);"
+                            onmouseover="this.style.background='#1d4ed8'; this.style.transform='translateY(-1px)';"
+                            onmouseout="this.style.background='#2563eb'; this.style.transform='translateY(0)';"
+                            onclick="submitCustomDate()">Apply</button>
                     </div>
                 </div>
                 <div class="topbar-filter-group">
@@ -142,20 +151,19 @@
                         <option value="{{ p }}" {% if request.GET.platform == p %}selected{% endif %}>{{ p }}</option>
                         {% endfor %}
                         {% else %}
-                        <option value="Amazon" {% if request.GET.platform == 'Amazon' %}selected{% endif %}>Amazon
-                        </option>
-                        <option value="Flipkart" {% if request.GET.platform == 'Flipkart' %}selected{% endif %}>Flipkart
-                        </option>
-                        <option value="JioMart" {% if request.GET.platform == 'JioMart' %}selected{% endif %}>JioMart
-                        </option>
+                        <option value="Amazon" {% if request.GET.platform == 'Amazon' %}selected{% endif %}>Amazon</option>
+                        <option value="Flipkart" {% if request.GET.platform == 'Flipkart' %}selected{% endif %}>Flipkart</option>
+                        <option value="JioMart" {% if request.GET.platform == 'JioMart' %}selected{% endif %}>JioMart</option>
                         {% endif %}
                     </select>
                 </div>
                 <div class="topbar-filter-group filter-group-multi">
                     <span class="filter-label">
-                        <span class="material-icons-round" style="font-size:11px;vertical-align:middle;margin-right:3px;">category</span>Category
+                        <span class="material-icons-round"
+                            style="font-size:11px;vertical-align:middle;margin-right:3px;">category</span>Category
                     </span>
-                    <select id="categorySelect" name="category" class="filter-select-top" multiple onchange="this.form.submit()">
+                    <select id="categorySelect" name="category" class="filter-select-top" multiple
+                        onchange="this.form.submit()">
                         {% for c in payload.filters.categories %}
                         <option value="{{ c }}" {% if selected_filters.categories and c in selected_filters.categories %}selected{% endif %}>{{ c }}</option>
                         {% endfor %}
@@ -163,25 +171,24 @@
                 </div>
                 <div class="topbar-filter-group filter-group-multi filter-group-asin">
                     <span class="filter-label">
-                        <span class="material-icons-round" style="font-size:11px;vertical-align:middle;margin-right:3px;">qr_code</span>ASIN
+                        <span class="material-icons-round"
+                            style="font-size:11px;vertical-align:middle;margin-right:3px;">qr_code</span>ASIN
                     </span>
-                    <select id="asinSelect" name="asin" class="filter-select-top" multiple onchange="this.form.submit()">
+                    <select id="asinSelect" name="asin" class="filter-select-top" multiple
+                        onchange="this.form.submit()">
                         {% for a in payload.filters.asins %}
                         <option value="{{ a }}" {% if selected_filters.asins and a in selected_filters.asins %}selected{% endif %}>{{ a }}</option>
                         {% endfor %}
                     </select>
                 </div>
-                <button type="button" class="btn-reset" onclick="window.location.href=window.location.pathname" title="Reset filters">
+                <button type="button" class="btn-reset" onclick="window.location.href=window.location.pathname"
+                    title="Reset filters">
                     <span class="material-icons-round">restart_alt</span>
                 </button>
             </form>
 
             <div class="topbar-sep"></div>
             <div class="user-profile">
-                <span class="bell-icon">
-                    <span class="material-icons-round" style="font-size:18px">notifications</span>
-                    <span class="bell-count">5</span>
-                </span>
                 <div class="user-avatar">{{ logged_user.fname|default:"U"|truncatechars:1 }}{{ logged_user.lname|default:"N"|truncatechars:1 }}</div>
                 <div class="user-info">
                     <span class="user-name">{{ logged_user.fname }} {{ logged_user.lname }}</span>
@@ -201,22 +208,22 @@
     <script>
         window.DASHBOARD_VIEW_TYPE = "{% block view_type %}business{% endblock %}";
         window.DASHBOARD_PAYLOAD = {{ payload_json|safe|default:"null" }};
-        window.SELECTED_FILTERS = {{ selected_filters_json|safe|default:'{}' }};
+        window.SELECTED_FILTERS = {{ selected_filters_json|safe|default:"{}" }};
 
         let fpInstance;
-        document.addEventListener("DOMContentLoaded", function() {
+        document.addEventListener("DOMContentLoaded", function () {
             var defaultStart = "{{ request.GET.start_date|default:'' }}";
             var defaultEnd = "{{ request.GET.end_date|default:'' }}";
             var defaultDates = [];
             if (defaultStart && defaultEnd) {
                 defaultDates = [defaultStart, defaultEnd];
             }
-            
+
             fpInstance = flatpickr("#flatpickrRange", {
                 mode: "range",
                 dateFormat: "Y-m-d",
                 defaultDate: defaultDates,
-                onChange: function(selectedDates, dateStr, instance) {
+                onChange: function (selectedDates, dateStr, instance) {
                     if (selectedDates.length === 2) {
                         document.getElementById('customStartDate').value = instance.formatDate(selectedDates[0], "Y-m-d");
                         document.getElementById('customEndDate').value = instance.formatDate(selectedDates[1], "Y-m-d");
@@ -269,7 +276,7 @@
         function handleDateRangeChange(selectElement) {
             if (selectElement.value === 'custom') {
                 document.getElementById('customDateGroup').style.display = 'flex';
-                if(fpInstance) fpInstance.open();
+                if (fpInstance) fpInstance.open();
             } else {
                 document.getElementById('customDateGroup').style.display = 'none';
                 document.getElementById('customStartDate').value = '';
@@ -281,20 +288,20 @@
         function submitCustomDate() {
             var startDate = document.getElementById('customStartDate').value;
             var endDate = document.getElementById('customEndDate').value;
-            
+
             if (!startDate || !endDate) {
                 alert("Please select both start and end dates.");
                 return;
             }
-            
+
             var sDate = new Date(startDate);
             var eDate = new Date(endDate);
-            
+
             if (sDate.getTime() === eDate.getTime()) {
                 alert("Start date and end date should not be the same.");
                 return;
             }
-            
+
             if (sDate > eDate) {
                 alert("Start date should not be after the end date.");
                 return;
@@ -304,7 +311,7 @@
                 alert("End date should not be before the start date.");
                 return;
             }
-            
+
             // Submits the form if all conditions are met
             document.getElementById('dashboardFilterForm').submit();
         }

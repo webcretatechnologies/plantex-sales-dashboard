@@ -1,5 +1,6 @@
 from django.contrib import admin
 from .models import SalesData, SpendData, CategoryMapping, PriceData, ProcessedDashboardData
+from .materialized_models import CeoDashboardCache, BusinessDashboardCache, CategoryDashboardCache, DashboardFilterCache
 
 @admin.register(SalesData)
 class SalesDataAdmin(admin.ModelAdmin):
@@ -25,3 +26,28 @@ class PriceDataAdmin(admin.ModelAdmin):
 class ProcessedDashboardDataAdmin(admin.ModelAdmin):
     list_display = ('user', 'date', 'asin', 'revenue', 'total_spend')
     list_filter = ('date', 'user')
+
+
+# ─── Materialized-view cache admin ───
+
+@admin.register(CeoDashboardCache)
+class CeoDashboardCacheAdmin(admin.ModelAdmin):
+    list_display = ('user', 'refreshed_at')
+    readonly_fields = ('user', 'payload_json', 'refreshed_at')
+
+@admin.register(BusinessDashboardCache)
+class BusinessDashboardCacheAdmin(admin.ModelAdmin):
+    list_display = ('user', 'refreshed_at')
+    readonly_fields = ('user', 'payload_json', 'refreshed_at')
+
+@admin.register(CategoryDashboardCache)
+class CategoryDashboardCacheAdmin(admin.ModelAdmin):
+    list_display = ('user', 'refreshed_at')
+    readonly_fields = ('user', 'payload_json', 'refreshed_at')
+
+@admin.register(DashboardFilterCache)
+class DashboardFilterCacheAdmin(admin.ModelAdmin):
+    list_display = ('user', 'filter_key', 'refreshed_at')
+    list_filter = ('filter_key',)
+    readonly_fields = ('user', 'filter_key', 'payload_json', 'refreshed_at')
+
