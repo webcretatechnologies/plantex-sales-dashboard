@@ -6,8 +6,8 @@ from .models import Users
 def _first_allowed_dashboard_for(user):
     """Return the name of the first dashboard route the user can access.
 
-    Priority order: category -> ceo -> business -> upload. Falls back to
-    'account-login' if nothing available.
+    Priority order: category -> ceo -> business -> upload -> replenishment. 
+    Falls back to 'account-login' if nothing available.
     """
     if not user:
         return 'account-login'
@@ -24,6 +24,8 @@ def _first_allowed_dashboard_for(user):
         return 'business-dashboard'
     if 'upload_data' in feature_codes:
         return 'dashboard-upload'
+    if 'replenishment' in feature_codes:
+        return 'replenishment-index'
     return 'account-login'
 
 

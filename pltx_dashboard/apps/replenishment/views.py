@@ -74,6 +74,9 @@ def generate_master_data(fc_mapping_path, pincode_path, product_details_path, in
     except Exception as e:
         raise Exception(f"Failed to generate master data from mapping files: {str(e)}")
 
+from apps.accounts.decorators import require_feature
+
+@require_feature('replenishment')
 def index(request):
     user = get_logged_in_user(request)
     if not user:
