@@ -49,7 +49,7 @@ class LoginView(View):
         request.session['user_email'] = user.email
 
         messages.success(request, 'Logged in successfully!')
-        next_url = request.GET.get('next', 'dashboard-upload')
+        next_url = request.GET.get('next', 'dashboard-home')
         return redirect(next_url)
 
 

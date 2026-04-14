@@ -5,6 +5,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="preconnect" href="https://cdn.shopify.com" crossorigin><link rel="icon" type="image/png" href="//www.plantex.in/cdn/shop/files/Plantex_Favicon.jpg?crop=center&height=32&v=1775624855&width=32"><link rel="preconnect" href="https://fonts.shopifycdn.com" crossorigin>
     <title>Plantex — {% block page_title %}Sales Dashboard{% endblock %}</title>
     <meta name="description" content="Plantex real-time business overview and performance insights dashboard">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
@@ -169,12 +170,14 @@
             </a>
             {% endif %}
 
+            {% if 'replenishment' in user_features %}
             <a href="{% url 'replenishment-index' %}"
                 class="nav-item {% if request.resolver_match.url_name == 'replenishment-index' %}active{% endif %}"
                 id="nav-replenishment">
                 <span class="material-icons-round nav-icon">inventory_2</span>
                 Replenishment
             </a>
+            {% endif %}
 
             {% if logged_user.is_main_user or 'user_management' in user_features or 'role_management' in user_features %}
             <div class="nav-sep"></div>
