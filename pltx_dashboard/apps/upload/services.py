@@ -1,20 +1,19 @@
 import pandas as pd
 import datetime
 
+from apps.dashboard.utils import clean_currency, clean_number
+
 from apps.dashboard.models import (
     SalesData, SpendData, CategoryMapping, PriceData, ProcessedDashboardData,
     FlipkartSalesReport, FlipkartCurrentInventoryReport, PCADailyReport, PLAFSNReport
 )
+from django.db import connection
 
-
-def clean_currency(x):
-    """Removes commas and currency symbols to return a float."""
-    if isinstance(x, str):
-        x = x.replace('₹', '').replace(',', '').strip()
-    try:
-        return float(x)
-    except (ValueError, TypeError):
-        return 0.0
+def _get_upsert_kwargs(unique_fields, update_fields):
+    kwargs = {'update_conflicts': True, 'update_fields': update_fields}
+    if connection.vendor != 'mysql':
+        kwargs['unique_fields'] = unique_fields
+    return kwargs
 
 
 # ---------------------------------------------------------------------------
@@ -57,8 +56,10 @@ def process_category_file(file_obj, user):
     if new_mappings:
         CategoryMapping.objects.bulk_create(
             new_mappings,
-            update_conflicts=True,
-            update_fields=['portfolio', 'category', 'subcategory']
+            **_get_upsert_kwargs(
+                unique_fields=['user', 'asin'],
+                update_fields=['portfolio', 'category', 'subcategory']
+            )
         )
 
 
@@ -92,8 +93,10 @@ def process_price_file(file_obj, user):
     if new_prices:
         PriceData.objects.bulk_create(
             new_prices,
-            update_conflicts=True,
-            update_fields=['price']
+            **_get_upsert_kwargs(
+                unique_fields=['user', 'asin'],
+                update_fields=['price']
+            )
         )
 
 
@@ -153,8 +156,10 @@ def process_spend_file(file_obj, user):
         for i in range(0, len(new_spends), batch_size):
             SpendData.objects.bulk_create(
                 new_spends[i:i + batch_size],
-                update_conflicts=True,
-                update_fields=['spend']
+                **_get_upsert_kwargs(
+                    unique_fields=['user', 'date', 'asin', 'ad_account', 'ad_type'],
+                    update_fields=['spend']
+                )
             )
 
     print(f"[SpendData] Processed and upserted bulk batch of {len(new_spends)} records.")
@@ -192,9 +197,9 @@ def process_sales_file(file_obj, date_str, user):
                 user=user,
                 date=date_obj,
                 asin=asin,
-                pageviews=int(clean_currency(row.get('Page Views - Total', 0))),
-                units=int(clean_currency(row.get('Units Ordered', 0))),
-                orders=int(clean_currency(row.get('Total Order Items', 0))),
+                pageviews=clean_number(row.get('Page Views - Total', 0)),
+                units=clean_number(row.get('Units Ordered', 0)),
+                orders=clean_number(row.get('Total Order Items', 0)),
                 revenue=float(clean_currency(row.get('Ordered Product Sales', 0))),
             )
         )
@@ -202,8 +207,10 @@ def process_sales_file(file_obj, date_str, user):
     if new_sales:
         SalesData.objects.bulk_create(
             new_sales,
-            update_conflicts=True,
-            update_fields=['pageviews', 'units', 'orders', 'revenue']
+            **_get_upsert_kwargs(
+                unique_fields=['user', 'date', 'asin'],
+                update_fields=['pageviews', 'units', 'orders', 'revenue']
+            )
         )
 
     print(f"[SalesData] date={date_obj}, Processed and upserted bulk batch of {len(new_sales)} records.")
@@ -275,7 +282,7 @@ def process_flipkart_sales_file(file_obj, user):
                 fulfilment_type=str(row.get('Fulfilment Type', '') or '').strip(),
                 order_date=parse_dt(row.get('Order Date')),
                 order_approval_date=parse_dt(row.get('Order Approval Date')),
-                item_quantity=int(clean_currency(row.get('Item Quantity', 0))),
+                item_quantity=clean_number(row.get('Item Quantity', 0)),
                 order_shipped_from_state=str(row.get('Order Shipped From (State)', '') or '').strip(),
                 warehouse_id=str(row.get('Warehouse ID', '') or '').strip(),
                 price_before_discount=float(clean_currency(row.get('Price before discount', 0))),
@@ -348,8 +355,10 @@ def process_flipkart_sales_file(file_obj, user):
         for i in range(0, len(records), batch_size):
             FlipkartSalesReport.objects.bulk_create(
                 records[i:i + batch_size],
-                update_conflicts=True,
-                update_fields=update_fields
+                **_get_upsert_kwargs(
+                    unique_fields=['user', 'order_id', 'order_item_id'],
+                    update_fields=update_fields
+                )
             )
 
     print(f"[FlipkartSalesReport] Processed and upserted {len(records)} records.")
@@ -400,28 +409,28 @@ def process_flipkart_inventory_file(file_obj, user):
                 brand=str(row.get('Brand', '') or '').strip(),
                 flipkart_selling_price=float(clean_currency(row.get('Flipkart Selling Price', 0))),
                 live_on_website=str(row.get('Live on Website', '') or '').strip(),
-                sales_7d=int(clean_currency(row.get('Sales 7D', 0))),
-                sales_14d=int(clean_currency(row.get('Sales 14D', 0))),
-                sales_30d=int(clean_currency(row.get('Sales 30D', 0))),
-                sales_60d=int(clean_currency(row.get('Sales 60D', 0))),
-                sales_90d=int(clean_currency(row.get('Sales 90D', 0))),
-                b2b_scheduled=int(clean_currency(row.get('B2B Scheduled', 0))),
-                transfers_scheduled=int(clean_currency(row.get('Transfers Scheduled', 0))),
-                b2b_shipped=int(clean_currency(row.get('B2B Shipped', 0))),
-                transfers_shipped=int(clean_currency(row.get('Transfers Shipped', 0))),
-                b2b_receiving=int(clean_currency(row.get('B2B Receiving', 0))),
-                transfers_receiving=int(clean_currency(row.get('Transfers Receiving', 0))),
-                reserved_for_orders_and_recalls=int(clean_currency(row.get('Reserved for Orders and Recalls', 0))),
-                reserved_for_internal_processing=int(clean_currency(row.get('Reserved for Internal Processing', 0))),
-                returns_processing=int(clean_currency(row.get('Returns Processing', 0))),
-                orders_to_dispatch=int(clean_currency(row.get('Orders to Dispatch', 0))),
-                recalls_to_dispatch=int(clean_currency(row.get('Recalls to Dispatch', 0))),
-                damaged=int(clean_currency(row.get('Damaged', 0))),
-                qc_reject=int(clean_currency(row.get('QC Reject', 0))),
-                catalog_reject=int(clean_currency(row.get('Catalog Reject', 0))),
-                returns_reject=int(clean_currency(row.get('Returns Reject', 0))),
-                seller_return_reject=int(clean_currency(row.get('Seller Return Reject', 0))),
-                miscellaneous=int(clean_currency(row.get('Miscellaneous', 0))),
+                sales_7d=clean_number(row.get('Sales 7D', 0)),
+                sales_14d=clean_number(row.get('Sales 14D', 0)),
+                sales_30d=clean_number(row.get('Sales 30D', 0)),
+                sales_60d=clean_number(row.get('Sales 60D', 0)),
+                sales_90d=clean_number(row.get('Sales 90D', 0)),
+                b2b_scheduled=clean_number(row.get('B2B Scheduled', 0)),
+                transfers_scheduled=clean_number(row.get('Transfers Scheduled', 0)),
+                b2b_shipped=clean_number(row.get('B2B Shipped', 0)),
+                transfers_shipped=clean_number(row.get('Transfers Shipped', 0)),
+                b2b_receiving=clean_number(row.get('B2B Receiving', 0)),
+                transfers_receiving=clean_number(row.get('Transfers Receiving', 0)),
+                reserved_for_orders_and_recalls=clean_number(row.get('Reserved for Orders and Recalls', 0)),
+                reserved_for_internal_processing=clean_number(row.get('Reserved for Internal Processing', 0)),
+                returns_processing=clean_number(row.get('Returns Processing', 0)),
+                orders_to_dispatch=clean_number(row.get('Orders to Dispatch', 0)),
+                recalls_to_dispatch=clean_number(row.get('Recalls to Dispatch', 0)),
+                damaged=clean_number(row.get('Damaged', 0)),
+                qc_reject=clean_number(row.get('QC Reject', 0)),
+                catalog_reject=clean_number(row.get('Catalog Reject', 0)),
+                returns_reject=clean_number(row.get('Returns Reject', 0)),
+                seller_return_reject=clean_number(row.get('Seller Return Reject', 0)),
+                miscellaneous=clean_number(row.get('Miscellaneous', 0)),
                 length_in_cm=float(clean_currency(row.get('Length (in cm)', 0))),
                 breadth_in_cm=float(clean_currency(row.get('Breadth (in cm)', 0))),
                 height_in_cm=float(clean_currency(row.get('Height (in cm)', 0))),
@@ -447,8 +456,10 @@ def process_flipkart_inventory_file(file_obj, user):
         for i in range(0, len(records), batch_size):
             FlipkartCurrentInventoryReport.objects.bulk_create(
                 records[i:i + batch_size],
-                update_conflicts=True,
-                update_fields=update_fields
+                **_get_upsert_kwargs(
+                    unique_fields=['user', 'warehouse_id', 'sku'],
+                    update_fields=update_fields
+                )
             )
 
     print(f"[FlipkartInventory] Processed and upserted {len(records)} records.")
@@ -505,13 +516,13 @@ def process_flipkart_pca_file(file_obj, user):
                 ad_group_name=str(row.get('ad_group_name', '') or '').strip(),
                 date=row_date,
                 banner_group_spend=float(clean_currency(row.get('banner_group_spend', 0))),
-                views=int(clean_currency(row.get('views', 0))),
-                clicks=int(clean_currency(row.get('clicks', 0))),
+                views=clean_number(row.get('views', 0)),
+                clicks=clean_number(row.get('clicks', 0)),
                 ctr=float(clean_currency(row.get('CTR', 0))),
                 average_cpc=float(clean_currency(row.get('average_cpc', 0))),
                 direct_ppv=float(clean_currency(row.get('DIRECT PPV', 0))),
-                direct_units=int(clean_currency(row.get('DIRECT UNITS', 0))),
-                indirect_units=int(clean_currency(row.get('INDIRECT UNITS', 0))),
+                direct_units=clean_number(row.get('DIRECT UNITS', 0)),
+                indirect_units=clean_number(row.get('INDIRECT UNITS', 0)),
                 cvr=float(clean_currency(row.get('CVR', 0))),
                 direct_revenue=float(clean_currency(row.get('DIRECT REVENUE', 0))),
                 indirect_revenue=float(clean_currency(row.get('INDIRECT REVENUE', 0))),
@@ -531,8 +542,10 @@ def process_flipkart_pca_file(file_obj, user):
         for i in range(0, len(records), batch_size):
             PCADailyReport.objects.bulk_create(
                 records[i:i + batch_size],
-                update_conflicts=True,
-                update_fields=update_fields
+                **_get_upsert_kwargs(
+                    unique_fields=['user', 'campaign_id', 'ad_group_id', 'date'],
+                    update_fields=update_fields
+                )
             )
 
     print(f"[PCADailyReport] Processed and upserted {len(records)} records.")
@@ -585,13 +598,13 @@ def process_flipkart_pla_file(file_obj, user):
                 ad_group_name=str(row.get('AdGroup Name', '') or '').strip(),
                 advertised_fsn_id=fsn_id,
                 advertised_product_name=str(row.get('Advertised Product Name', '') or '').strip(),
-                views=int(clean_currency(row.get('Views', 0))),
-                clicks=int(clean_currency(row.get('Clicks', 0))),
+                views=clean_number(row.get('Views', 0)),
+                clicks=clean_number(row.get('Clicks', 0)),
                 ctr=float(clean_currency(row.get('CTR', 0))),
                 cvr=float(clean_currency(row.get('CVR', 0))),
                 ad_spend=float(clean_currency(row.get('Ad Spend', 0))),
-                units_sold_direct=int(clean_currency(row.get('Units Sold (Direct)', 0))),
-                units_sold_indirect=int(clean_currency(row.get('Units Sold (Indirect)', 0))),
+                units_sold_direct=clean_number(row.get('Units Sold (Direct)', 0)),
+                units_sold_indirect=clean_number(row.get('Units Sold (Indirect)', 0)),
                 direct_revenue=float(clean_currency(row.get('Direct Revenue', 0))),
                 indirect_revenue=float(clean_currency(row.get('Indirect Revenue', 0))),
                 roi_direct=float(clean_currency(row.get('ROI (Direct)', 0))),
@@ -610,8 +623,10 @@ def process_flipkart_pla_file(file_obj, user):
         for i in range(0, len(records), batch_size):
             PLAFSNReport.objects.bulk_create(
                 records[i:i + batch_size],
-                update_conflicts=True,
-                update_fields=update_fields
+                **_get_upsert_kwargs(
+                    unique_fields=['user', 'campaign_id', 'ad_group_id', 'advertised_fsn_id'],
+                    update_fields=update_fields
+                )
             )
 
     print(f"[PLAFSNReport] Processed and upserted {len(records)} records.")
@@ -702,9 +717,9 @@ def generate_dashboard_data(user):
                 category=str(row.get('category', ''))   or '',
                 subcategory=str(row.get('subcategory', '')) or '',
                 price=float(row.get('price', 0)),
-                pageviews=int(row.get('pageviews', 0)),
-                units=int(row.get('units', 0)),
-                orders=int(row.get('orders', 0)),
+                pageviews=clean_number(row.get('pageviews', 0)),
+                units=clean_number(row.get('units', 0)),
+                orders=clean_number(row.get('orders', 0)),
                 revenue=float(row.get('revenue', 0)),
                 spend_sp=spend_sp,
                 spend_sb=spend_sb,
@@ -716,7 +731,15 @@ def generate_dashboard_data(user):
     batch_size = 10_000
     for i in range(0, len(records), batch_size):
         ProcessedDashboardData.objects.bulk_create(
-            records[i:i + batch_size], ignore_conflicts=True
+            records[i:i + batch_size],
+            **_get_upsert_kwargs(
+                unique_fields=['user', 'date', 'asin'],
+                update_fields=[
+                    'portfolio', 'category', 'subcategory', 'price',
+                    'pageviews', 'units', 'orders', 'revenue',
+                    'spend_sp', 'spend_sb', 'spend_sd', 'total_spend'
+                ]
+            )
         )
 
     # Refresh materialized-view caches for all three dashboards

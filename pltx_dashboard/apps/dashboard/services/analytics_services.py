@@ -611,10 +611,7 @@ def apply_business_logic(payload, df, df_prev, filters=None):
         else:
             payload['charts']['trend']['prev_revenue'] = [0] * len(current_rev)
         
-    # ═══════════════════════════════════════════════════════
-    # CATEGORY PERFORMANCE (grouped by 'category' column)
-    # Used by CEO & Business dashboards
-    # ═══════════════════════════════════════════════════════
+    # CATEGORY PERFORMANCE
     cat_perf = []
     if not df.empty and 'category' in df.columns:
         total_rev = float(df['revenue'].sum())
@@ -631,10 +628,7 @@ def apply_business_logic(payload, df, df_prev, filters=None):
             })
     payload['category_performance'] = sorted(cat_perf, key=lambda x: x['revenue'], reverse=True)
 
-    # ═══════════════════════════════════════════════════════
-    # CLUSTER PERFORMANCE (grouped by 'subcategory' column)
-    # Used by Category dashboard
-    # ═══════════════════════════════════════════════════════
+    # CLUSTER PERFORMANCE
     cluster_perf = []
     if not df.empty and 'subcategory' in df.columns:
         total_rev = float(df['revenue'].sum())
@@ -651,10 +645,7 @@ def apply_business_logic(payload, df, df_prev, filters=None):
             })
     payload['cluster_performance'] = sorted(cluster_perf, key=lambda x: x['revenue'], reverse=True)
 
-    # ═══════════════════════════════════════════════════════
-    # INVENTORY HEALTH — SKU counts
-    # Used by CEO & Business dashboards
-    # ═══════════════════════════════════════════════════════
+    # INVENTORY HEALTH
     if not df.empty:
         asin_grp = df.groupby('asin').agg({
             'orders': 'sum', 'pageviews': 'sum', 'revenue': 'sum', 'units': 'sum'
@@ -746,18 +737,13 @@ def apply_business_logic(payload, df, df_prev, filters=None):
                                        'active_change': 0, 'oos_change': 0, 'low_stock_change': 0, 'at_risk_change': 0}
         payload['inventory_position'] = []
 
-    # ═══════════════════════════════════════════════════════
-    # RETURNS & RATINGS — No actual data in model, leave empty
-    # ═══════════════════════════════════════════════════════
+    # RETURNS & RATINGS
     payload['returns_ratings'] = {
         'rate': 0, 'change': 0, 'reasons': [],
         'avg_rating': 0, 'avg_rating_change': 0, 'low_rating_count': 0
     }
     payload['returns'] = payload['returns_ratings']
-
-    # ═══════════════════════════════════════════════════════
     # GROWTH OPPORTUNITIES
-    # ═══════════════════════════════════════════════════════
     opps = []
     if not df.empty and 'subcategory' in df.columns:
         curr_grp = df.groupby('subcategory')['pageviews'].sum().to_dict()
@@ -774,11 +760,7 @@ def apply_business_logic(payload, df, df_prev, filters=None):
             })
     payload['growth_opportunities'] = sorted(opps, key=lambda x: x['search_volume'], reverse=True)
     
-    # ═══════════════════════════════════════════════════════
     # TOP / UNDERPERFORMING PRODUCTS
-    # Sort top by REVENUE (highest revenue first)
-    # Sort under by DROP% (highest drop first, growth < 0)
-    # ═══════════════════════════════════════════════════════
     prod_growth = []
     if not df.empty and 'subcategory' in df.columns:
         curr_grp = df.groupby(['asin', 'subcategory']).agg({'revenue': 'sum', 'units': 'sum'}).reset_index()
@@ -808,9 +790,7 @@ def apply_business_logic(payload, df, df_prev, filters=None):
     payload['cat_under_products'] = under_perf[:5]
     payload['cat_all_under_products'] = under_perf[:100]
 
-    # ═══════════════════════════════════════════════════════
     # WATERFALL / PROFITABILITY
-    # ═══════════════════════════════════════════════════════
     payload['waterfall'] = [
         {'label': 'Revenue', 'value': revenue, 'type': 'total'},
         {'label': 'COGS', 'value': -cogs, 'type': 'sub'},
@@ -827,9 +807,7 @@ def apply_business_logic(payload, df, df_prev, filters=None):
         'orders_lost': int(oos * 2)
     }
     
-    # ═══════════════════════════════════════════════════════
-    # BUSINESS HEALTH SCORE — calculated from actual metrics
-    # ═══════════════════════════════════════════════════════
+    # BUSINESS HEALTH SCORE
     growth_score = min(100, max(0, 50 + mom_growth)) if prev_revenue > 0 else 50
     profitability_score = min(100, max(0, int(gross_margin_pct * 2))) if revenue > 0 else 0
     

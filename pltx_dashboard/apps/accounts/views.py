@@ -4,10 +4,6 @@ from django.views import View
 from .models import Users
 
 
-  # (Removing RegisterView as requested)
-
-
-
 class LoginView(View):
     def get(self, request):
         if request.session.get('user_id'):

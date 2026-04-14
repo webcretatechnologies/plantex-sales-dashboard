@@ -24,13 +24,17 @@ class Users(models.Model):
     cpswd = models.CharField(max_length=20, null=False, blank=False)
 
     # RBAC and sub-user fields
-    is_main_user = models.BooleanField(default=False)
+    # Removed boolean field for is_main_user, using a property instead
     created_by = models.ForeignKey('self', on_delete=models.CASCADE, related_name='sub_users', null=True, blank=True)
     role = models.ForeignKey(Role, on_delete=models.SET_NULL, null=True, blank=True)
 
     class Meta:
         verbose_name = 'User'
         verbose_name_plural = 'Users'
+
+    @property
+    def is_main_user(self):
+        return self.role is not None and self.role.name.lower() == 'admin'
 
     def __str__(self):
         return f"{self.fname} {self.lname}"

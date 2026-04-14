@@ -1,5 +1,8 @@
 from django.contrib import admin
-from .models import SalesData, SpendData, CategoryMapping, PriceData, ProcessedDashboardData
+from .models import (
+    SalesData, SpendData, CategoryMapping, PriceData, ProcessedDashboardData,
+    FlipkartSalesReport, FlipkartCurrentInventoryReport, PCADailyReport, PLAFSNReport
+)
 from .materialized_models import CeoDashboardCache, BusinessDashboardCache, CategoryDashboardCache, DashboardFilterCache
 
 @admin.register(SalesData)
@@ -26,6 +29,30 @@ class PriceDataAdmin(admin.ModelAdmin):
 class ProcessedDashboardDataAdmin(admin.ModelAdmin):
     list_display = ('user', 'date', 'asin', 'revenue', 'total_spend')
     list_filter = ('date', 'user')
+
+@admin.register(FlipkartSalesReport)
+class FlipkartSalesReportAdmin(admin.ModelAdmin):
+    list_display = ('user', 'order_id', 'order_item_id', 'order_date', 'final_invoice_amount')
+    list_filter = ('order_date', 'user')
+    search_fields = ('order_id', 'order_item_id', 'sku')
+
+@admin.register(FlipkartCurrentInventoryReport)
+class FlipkartCurrentInventoryReportAdmin(admin.ModelAdmin):
+    list_display = ('user', 'warehouse_id', 'sku', 'fsn', 'sales_30d')
+    list_filter = ('warehouse_id', 'user')
+    search_fields = ('sku', 'fsn', 'listing_id')
+
+@admin.register(PCADailyReport)
+class PCADailyReportAdmin(admin.ModelAdmin):
+    list_display = ('user', 'date', 'campaign_name', 'ad_group_name', 'direct_revenue')
+    list_filter = ('date', 'user', 'campaign_name')
+    search_fields = ('campaign_name', 'ad_group_name')
+
+@admin.register(PLAFSNReport)
+class PLAFSNReportAdmin(admin.ModelAdmin):
+    list_display = ('user', 'campaign_name', 'ad_group_name', 'advertised_fsn_id', 'direct_revenue')
+    list_filter = ('user', 'campaign_name')
+    search_fields = ('campaign_name', 'ad_group_name', 'advertised_fsn_id')
 
 
 # ─── Materialized-view cache admin ───

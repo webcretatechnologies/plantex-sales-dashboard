@@ -1,0 +1,152 @@
+{% extends 'dashboard/base_dashboard.html' %}
+{% load static %}
+
+{% block page_title %}Replenishment Report Generator{% endblock %}
+{% block view_type %}replenishment{% endblock %}
+
+{% block extra_head %}
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{% static 'replenishment/style.css' %}">
+<style>
+    /* Override some styles to fit within the dashboard layout */
+    .app-shell {
+        display: block;
+        height: auto;
+        background: transparent;
+    }
+    .main-content {
+        padding: 0;
+    }
+    .sidebar {
+        display: none; /* We use the main dashboard sidebar */
+    }
+    .panel {
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+</style>
+{% endblock %}
+
+{% block dashboard_title %}Replenishment Report Generator{% endblock %}
+{% block dashboard_subtitle %}{% endblock %}
+
+{% block topbar_filters %}{% endblock %}
+
+{% block dashboard_content %}
+<div class="replenishment-app">
+    <div class="app-shell">
+        <main class="main-content">
+            <div class="page-header">
+                <div class="page-header-text">
+                    <h1 class="page-title">Master Report Generator</h1>
+                    <p class="page-desc">Validate source files and generate the combined master report.</p>
+                </div>
+                <div class="pfa-status-badge" id="statusBadge">
+                <span class="pfa-status-dot" id="statusDot"></span>
+                <span id="statusText">Idle</span>
+            </div>
+            </div>
+
+            <div class="panel-grid">
+                <!-- Form Panel -->
+                <div class="panel input-panel">
+                    <div class="panel-label">01 — Inputs</div>
+                    <h2 class="panel-title">Source Files</h2>
+
+                    <form id="generatorForm" novalidate>
+                        <div class="field-grid">
+                            <!-- Action Reports -->
+                            <div class="field">
+                                <label class="field-label" for="fileSales">Sales Report</label>
+                                <input type="text" class="input-text" id="fileSales" placeholder="Files/Sales 1.csv" required>
+                            </div>
+                            <div class="field">
+                                <label class="field-label" for="fileStock">Stock Report</label>
+                                <input type="text" class="input-text" id="fileStock" placeholder="Files/FBA stock 1.xlsx" required>
+                            </div>
+                            <div class="field">
+                                <label class="field-label" for="fileLIS">LIS Report (Database)</label>
+                                <input type="text" class="input-text" id="fileLIS" placeholder="Files/Database.xlsx" required>
+                            </div>
+                            <div class="field">
+                                <label class="field-label" for="fileShipment">Shipment Report</label>
+                                <input type="text" class="input-text" id="fileShipment" placeholder="Files/Shipment 1.xlsx" required>
+                            </div>
+                            
+                            <!-- Master Files -->
+                            <div class="field">
+                                <label class="field-label" for="fileAssortment">Assortment Master/Product</label>
+                                <input type="text" class="input-text" id="fileAssortment" placeholder="Files/Product Details 1.xlsx" required>
+                            </div>
+                            <div class="field">
+                                <label class="field-label" for="fileFCCluster">FC Cluster Mapping</label>
+                                <input type="text" class="input-text" id="fileFCCluster" placeholder="Files/FC_Cluster_Mapping 3.xlsx" required>
+                            </div>
+                            <div class="field">
+                                <label class="field-label" for="filePincode">Pin Code Cluster</label>
+                                <input type="text" class="input-text" id="filePincode" placeholder="Files/PIN CODE and CLUSTER 1.csv" required>
+                            </div>
+                            <div class="field">
+                                <label class="field-label" for="fileInputSheet">Input Sheet</label>
+                                <input type="text" class="input-text" id="fileInputSheet" placeholder="Files/Input Sheet 1.xlsx" required>
+                            </div>
+                            <div class="field">
+                                <label class="field-label" for="fileBusiness">Business Report</label>
+                                <input type="text" class="input-text" id="fileBusiness" placeholder="Files/BusinessReport-02-04-26.csv" required>
+                            </div>
+                        </div>
+
+                        <button type="submit" class="btn-submit" id="validateBtn">
+                            <div class="spinner hidden" id="valSpinner"></div>
+                            <span id="btnLabel">Run Validation</span>
+                        </button>
+                    </form>
+                </div>
+
+                <!-- Results Panel -->
+                <div class="panel results-panel" id="resultsPanel">
+                    <div class="panel-label">02 — Result & Generate</div>
+                    <h2 class="panel-title">Status Report</h2>
+                    
+                    <div class="idle-state" id="idleState">
+                        <p class="idle-sub">Click <strong>Run Validation</strong> to begin.</p>
+                    </div>
+
+                    <div class="result-state hidden" id="resultState">
+                        <div class="result-hero">
+                            <span class="result-pill" id="errorCountBadge">—</span>
+                        </div>
+
+                        <p class="result-desc" id="outputStatusMessage"></p>
+                        
+                        <div id="reportsContainer" class="hidden" style="margin-top: 15px; display: flex; flex-direction: column; gap: 10px;"></div>
+
+                        <hr class="divider">
+
+                        <div class="hero-actions">
+                            <p class="idle-sub" style="margin-bottom: 15px;">After reviewing validation, you can generate the Master Merged Report.</p>
+                            <button type="button" class="btn-submit prime" id="generateBtn">
+                                <div class="spinner hidden" id="genSpinner"></div>
+                                <span id="genBtnLabel">Generate Master</span>
+                            </button>
+                        </div>
+                        
+                        <div class="action-row hidden" id="masterActions" style="margin-top: 15px;">
+                            <button class="btn-action success-bg" id="dlMasterCsv">Download Master (CSV)</button>
+                            <button class="btn-action success-bg" id="dlMasterExcel">Download Master (Excel)</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+</div>
+
+<div class="pfa-toast hidden" id="toast" role="alert">
+    <span class="pfa-toast-dot" id="toastDot"></span>
+    <span id="toastMessage"></span>
+</div>
+
+<script src="{% static 'replenishment/script.js' %}"></script>
+{% endblock %}
