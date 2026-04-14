@@ -45,6 +45,7 @@ INSTALLED_APPS = [
     'apps.accounts',
     'apps.upload',
     'apps.dashboard',
+    'apps.replenishment',
 ]
 
 MIDDLEWARE = [
@@ -102,7 +103,7 @@ CELERY_TIMEZONE = 'Asia/Kolkata'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql',
-        'NAME': 'pltx_dash_db',
+        'NAME': 'pltx_dashboard',
         'USER': 'root',
         'PASSWORD': '',
         'HOST': 'localhost',

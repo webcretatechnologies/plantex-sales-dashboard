@@ -16,6 +16,115 @@
     <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
     <link rel="stylesheet" href="/static/css/dashboard.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/choices.js/public/assets/styles/choices.min.css">
+    <style>
+        /* ── Export Calculated Data Section ── */
+        .download-export-section {
+            margin: 40px 0 24px;
+            padding: 0;
+        }
+        .export-card {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 24px;
+            background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 40%, #f0fdf4 100%);
+            border: 1px solid #bae6fd;
+            border-radius: 18px;
+            padding: 28px 36px;
+            box-shadow: 0 4px 16px rgba(14, 165, 233, 0.08), 0 1px 4px rgba(0,0,0,0.03);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .export-card:hover {
+            box-shadow: 0 8px 28px rgba(14, 165, 233, 0.14), 0 2px 6px rgba(0,0,0,0.04);
+            transform: translateY(-2px);
+        }
+        .export-card-left {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            flex: 1;
+        }
+        .export-icon-wrap {
+            width: 52px;
+            height: 52px;
+            border-radius: 14px;
+            background: linear-gradient(135deg, #0ea5e9, #06b6d4);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            box-shadow: 0 4px 12px rgba(14, 165, 233, 0.3);
+        }
+        .export-icon-wrap .material-icons-round {
+            font-size: 26px;
+            color: #ffffff;
+        }
+        .export-text { flex: 1; }
+        .export-title {
+            font-size: 17px;
+            font-weight: 700;
+            color: #0c4a6e;
+            margin-bottom: 4px;
+            letter-spacing: -0.3px;
+        }
+        .export-subtitle {
+            font-size: 13px;
+            color: #64748b;
+            line-height: 1.5;
+        }
+        .export-card-actions {
+            display: flex;
+            gap: 12px;
+            flex-shrink: 0;
+        }
+        .export-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 12px;
+            font-family: 'Inter', sans-serif;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+            white-space: nowrap;
+        }
+        .export-btn:hover {
+            transform: translateY(-2px);
+        }
+        .csv-btn {
+            background: linear-gradient(135deg, #059669, #10b981);
+            color: #ffffff;
+            box-shadow: 0 4px 14px rgba(5, 150, 105, 0.3);
+        }
+        .csv-btn:hover {
+            box-shadow: 0 6px 20px rgba(5, 150, 105, 0.4);
+        }
+        .excel-btn {
+            background: linear-gradient(135deg, #2563eb, #3b82f6);
+            color: #ffffff;
+            box-shadow: 0 4px 14px rgba(37, 99, 235, 0.3);
+        }
+        .excel-btn:hover {
+            box-shadow: 0 6px 20px rgba(37, 99, 235, 0.4);
+        }
+        @media (max-width: 768px) {
+            .export-card {
+                flex-direction: column;
+                align-items: flex-start;
+                padding: 20px 24px;
+            }
+            .export-card-actions {
+                width: 100%;
+            }
+            .export-btn {
+                flex: 1;
+                justify-content: center;
+            }
+        }
+    </style>
     {% block extra_head %}{% endblock %}
 </head>
 
@@ -59,6 +168,13 @@
                 Upload Data
             </a>
             {% endif %}
+
+            <a href="{% url 'replenishment-index' %}"
+                class="nav-item {% if request.resolver_match.url_name == 'replenishment-index' %}active{% endif %}"
+                id="nav-replenishment">
+                <span class="material-icons-round nav-icon">inventory_2</span>
+                Replenishment
+            </a>
 
             {% if logged_user.is_main_user or 'user_management' in user_features or 'role_management' in user_features %}
             <div class="nav-sep"></div>
@@ -105,9 +221,10 @@
     <div class="app-main">
         <div class="topbar">
             <div class="topbar-title">{% block dashboard_title %}Dashboard{% endblock %}</div>
-            <div class="topbar-subtitle">Real-time business overview & performance insights</div>
+            <div class="topbar-subtitle">{% block dashboard_subtitle %}Real-time business overview & performance insights{% endblock %}</div>
             <div class="topbar-spacer"></div>
 
+            {% block topbar_filters %}
             <form method="GET" action="" class="topbar-filters" id="dashboardFilterForm">
                 <div class="topbar-filter-group">
                     <span class="filter-label">Date Range</span>
@@ -186,8 +303,8 @@
                     <span class="material-icons-round">restart_alt</span>
                 </button>
             </form>
-
             <div class="topbar-sep"></div>
+            {% endblock %}
             <div class="user-profile">
                 <div class="user-avatar">{{ logged_user.fname|default:"U"|truncatechars:1 }}{{ logged_user.lname|default:"N"|truncatechars:1 }}</div>
                 <div class="user-info">
@@ -202,6 +319,31 @@
 
         <div class="dash-body">
             {% block dashboard_content %}{% endblock %}
+
+            <!-- Download Calculated Data Section (visible on all dashboards, not upload) -->
+            <div class="download-export-section" id="downloadExportSection" style="display:none;">
+                <div class="export-card">
+                    <div class="export-card-left">
+                        <div class="export-icon-wrap">
+                            <span class="material-icons-round">download_for_offline</span>
+                        </div>
+                        <div class="export-text">
+                            <div class="export-title">Export Calculated Data</div>
+                            <div class="export-subtitle">Download the processed dashboard data with all computed metrics (ROAS, TACoS, CVR, AOV, Margins, etc.) respecting your current filters.</div>
+                        </div>
+                    </div>
+                    <div class="export-card-actions">
+                        <button class="export-btn csv-btn" id="dlCalcCsv" onclick="downloadCalculatedData('csv')" title="Download as CSV">
+                            <span class="material-icons-round" style="font-size:18px">description</span>
+                            <span>Download CSV</span>
+                        </button>
+                        <button class="export-btn excel-btn" id="dlCalcExcel" onclick="downloadCalculatedData('excel')" title="Download as Excel with Annexure">
+                            <span class="material-icons-round" style="font-size:18px">table_view</span>
+                            <span>Download Excel</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -318,6 +460,27 @@
     </script>
     <script src="https://cdn.jsdelivr.net/npm/choices.js/public/assets/scripts/choices.min.js"></script>
     <script src="/static/js/dashboard.js"></script>
+    <script>
+        // Show export section only on dashboard pages (not upload, management, or replenishment)
+        document.addEventListener('DOMContentLoaded', function() {
+            var viewType = window.DASHBOARD_VIEW_TYPE || '';
+            var exportSection = document.getElementById('downloadExportSection');
+            var allowedViews = ['business', 'ceo', 'category'];
+            
+            if (exportSection && allowedViews.includes(viewType)) {
+                exportSection.style.display = 'block';
+            }
+        });
+
+        function downloadCalculatedData(format) {
+            // Build the download URL preserving current filter query string
+            var qs = window.location.search || '';
+            var sep = qs ? '&' : '?';
+            // The endpoint uses the same query params
+            var url = '/dashboard/download/' + format + '/' + qs;
+            window.location.href = url;
+        }
+    </script>
     {% block dashboard_scripts %}{% endblock %}
 </body>
 

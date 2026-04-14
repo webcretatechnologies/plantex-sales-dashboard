@@ -11,7 +11,6 @@ be triggered manually via the 'refresh_dashboard_cache' management command.
 import json
 import logging
 
-import numpy as np
 import pandas as pd
 from django.utils import timezone
 
@@ -28,26 +27,7 @@ from apps.dashboard.services.analytics_services import get_dashboard_payload
 logger = logging.getLogger(__name__)
 
 
-class _CacheEncoder(json.JSONEncoder):
-    """Handles numpy/pandas types when serialising the payload to JSON."""
-
-    def default(self, obj):
-        if isinstance(obj, (np.integer,)):
-            return int(obj)
-        if isinstance(obj, (np.floating,)):
-            return float(obj)
-        if isinstance(obj, np.ndarray):
-            return obj.tolist()
-        if isinstance(obj, (pd.Timestamp,)):
-            return str(obj)
-        if hasattr(obj, 'isoformat'):
-            return obj.isoformat()
-        return super().default(obj)
-
-
-def _serialize_payload(payload):
-    """Serialise a payload dict so numpy/pandas types don't trip up JSONField."""
-    return json.loads(json.dumps(payload, cls=_CacheEncoder))
+from apps.dashboard.utils import serialize_payload
 
 
 def refresh_materialized_views(user):
@@ -79,7 +59,7 @@ def refresh_materialized_views(user):
 
     # ── 1. All-time (unfiltered) payload ────────────────────
     payload_all = get_dashboard_payload(df, spend_df, filters={}, user=data_owner)
-    payload_all_clean = _serialize_payload(payload_all)
+    payload_all_clean = serialize_payload(payload_all)
 
     CeoDashboardCache.objects.update_or_create(
         user=data_owner,
@@ -100,7 +80,7 @@ def refresh_materialized_views(user):
         try:
             filters = {'date_range': date_range}
             payload = get_dashboard_payload(df, spend_df, filters=filters, user=data_owner)
-            payload_clean = _serialize_payload(payload)
+            payload_clean = serialize_payload(payload)
 
             DashboardFilterCache.objects.update_or_create(
                 user=data_owner,

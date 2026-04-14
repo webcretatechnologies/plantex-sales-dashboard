@@ -35,7 +35,7 @@ class Command(BaseCommand):
             self._refresh_for_user(user)
         else:
             # Refresh for all main (data-owning) users
-            main_users = Users.objects.filter(is_main_user=True)
+            main_users = Users.objects.filter(role__name__iexact='admin')
             if not main_users.exists():
                 self.stdout.write(self.style.WARNING('No main users found.'))
                 return

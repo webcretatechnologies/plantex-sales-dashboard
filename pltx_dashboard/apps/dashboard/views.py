@@ -1,4 +1,5 @@
 from django.shortcuts import render, redirect
+from django.http import FileResponse
 from apps.dashboard.models import SpendData, ProcessedDashboardData
 from apps.dashboard.materialized_models import (
     CeoDashboardCache,
@@ -8,35 +9,13 @@ from apps.dashboard.materialized_models import (
 from apps.accounts.models import Users
 import pandas as pd
 import json
-import numpy as np
 from apps.dashboard.services.analytics_services import get_dashboard_payload
 from apps.accounts.decorators import require_feature, _first_allowed_dashboard_for
 from apps.accounts.models import Feature
-class DashboardEncoder(json.JSONEncoder):
-    """Handles numpy/pandas types that the default encoder chokes on."""
-    def default(self, obj):
-        if isinstance(obj, (np.integer,)):
-            return int(obj)
-        if isinstance(obj, (np.floating,)):
-            return float(obj)
-        if isinstance(obj, np.ndarray):
-            return obj.tolist()
-        if isinstance(obj, (pd.Timestamp,)):
-            return str(obj)
-        if hasattr(obj, 'isoformat'):
-            return obj.isoformat()
-        return super().default(obj)
+from apps.dashboard.utils import DashboardEncoder
 
 
-def get_logged_in_user(request):
-    """Get the logged-in Users instance from session, or None."""
-    user_id = request.session.get('user_id')
-    if not user_id:
-        return None
-    try:
-        return Users.objects.get(id=user_id)
-    except Users.DoesNotExist:
-        return None
+from apps.accounts.utils import get_logged_in_user
 
 
 def dashboard_view(request):
@@ -74,14 +53,13 @@ def get_dashboard_context(request):
         'asins': request.GET.getlist('asin'),
     }
 
-    # ── Try to get filter dropdown metadata from the materialized cache ──
-    # This avoids loading the full unfiltered dataset just to populate dropdowns
+    # Filter dropdown metadata from cache
     cached_filter_metadata = None
     cache = CeoDashboardCache.objects.filter(user=data_owner).first()
     if cache and cache.payload_json:
         cached_filter_metadata = cache.payload_json.get('filters', None)
 
-    # ── Build the queryset with DB-level entity filters ──
+    # Build the queryset with DB-level entity filters
     qs = ProcessedDashboardData.objects.filter(user=data_owner)
 
     # Apply category filter at DB level
@@ -153,9 +131,7 @@ def get_dashboard_context(request):
     }
 
 
-# ─────────────────────────────────────────────────────────
 # Materialized-view helpers
-# ─────────────────────────────────────────────────────────
 
 from apps.dashboard.materialized_models import (
     DashboardFilterCache,
@@ -310,4 +286,46 @@ def upload_view(request):
         user_features = [f.code_name for f in user.role.features.all()] if user.role else []
         
     return render(request, 'dashboard/upload.html', {'logged_user': user, 'user_features': user_features})
+
+
+def download_calculated_data(request, file_format):
+    """Download the calculated/merged dashboard data as CSV or Excel.
+    
+    Uses the same filters currently applied on the dashboard.
+    The export mirrors the logic from scripts/cleaning_mapping_merging.py.
+    """
+    from apps.dashboard.services.export_services import export_csv, export_excel
+    from datetime import datetime
+
+    user = get_logged_in_user(request)
+    if not user:
+        return redirect('account-login')
+
+    # Collect filters from query params (same as dashboard views)
+    filters = {}
+    for k in request.GET.keys():
+        vals = request.GET.getlist(k)
+        if len(vals) == 1:
+            filters[k] = vals[0]
+        else:
+            filters[k] = vals
+
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+
+    if file_format == 'csv':
+        buf = export_csv(user, filters)
+        response = FileResponse(buf, content_type='text/csv')
+        response['Content-Disposition'] = f'attachment; filename="Calculated_Dashboard_Data_{timestamp}.csv"'
+        return response
+    elif file_format == 'excel':
+        buf = export_excel(user, filters)
+        response = FileResponse(
+            buf,
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+        response['Content-Disposition'] = f'attachment; filename="Calculated_Dashboard_Data_{timestamp}.xlsx"'
+        return response
+    else:
+        from django.http import JsonResponse
+        return JsonResponse({"error": "Invalid format. Use 'csv' or 'excel'."}, status=400)
 

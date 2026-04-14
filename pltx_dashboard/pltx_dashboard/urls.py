@@ -9,6 +9,7 @@ urlpatterns = [
     path('accounts/', include('apps.accounts.urls')),
     path('', include('apps.upload.urls')),
     path('', include('apps.dashboard.urls')),
+    path('', include('apps.replenishment.urls')),
 ]
 
 if settings.DEBUG:
