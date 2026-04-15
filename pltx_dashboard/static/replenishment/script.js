@@ -101,15 +101,21 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (res.status === 404) {
                         return reject(new Error('Task expired or failed to start.'));
                     }
-                    const data = await res.json();
-
-                    if (data.status === 'success') {
-                        resolve(data);
-                    } else if (data.status === 'error') {
-                        reject(new Error(data.message || 'Error occurred during processing.'));
+                    
+                    const contentType = res.headers.get("content-type");
+                    if (contentType && contentType.indexOf("application/json") !== -1) {
+                        const data = await res.json();
+                        if (data.status === 'success') {
+                            resolve(data);
+                        } else if (data.status === 'error') {
+                            reject(new Error(data.message || 'Error occurred during processing.'));
+                        } else {
+                            setTimeout(check, 2500);
+                        }
                     } else {
-                        // Keep polling
-                        setTimeout(check, 2500);
+                        const text = await res.text();
+                        console.error("Non-JSON status response:", text);
+                        reject(new Error('Server returned an invalid status response.'));
                     }
                 } catch (err) {
                     reject(err);
@@ -245,15 +251,22 @@ document.addEventListener('DOMContentLoaded', () => {
                 body: getFormData()
             });
 
-            const initialData = await response.json();
-            if (!response.ok) throw new Error(initialData.error || 'Server error occurred.');
-            if (!initialData.task_id) throw new Error('Task failed to start.');
+            const contentType = response.headers.get("content-type");
+            if (contentType && contentType.indexOf("application/json") !== -1) {
+                const initialData = await response.json();
+                if (!response.ok) throw new Error(initialData.error || 'Server error occurred.');
+                if (!initialData.task_id) throw new Error('Task failed to start.');
 
-            localStorage.setItem('replenishment_task', JSON.stringify({ type: 'validation', id: initialData.task_id }));
+                localStorage.setItem('replenishment_task', JSON.stringify({ type: 'validation', id: initialData.task_id }));
 
-            // Poll for completion
-            const data = await pollStatus(initialData.task_id);
-            handleValidationSuccess(data);
+                // Poll for completion
+                const data = await pollStatus(initialData.task_id);
+                handleValidationSuccess(data);
+            } else {
+                const text = await response.text();
+                console.error("Non-JSON validation response:", text);
+                throw new Error('Server error: Received invalid response format.');
+            }
         } catch (err) {
             handleValidationCatch(err);
         }
@@ -274,15 +287,22 @@ document.addEventListener('DOMContentLoaded', () => {
                 body: getFormData()
             });
 
-            const initialData = await response.json();
-            if (!response.ok) throw new Error(initialData.error || 'Failed to start master generation.');
-            if (!initialData.task_id) throw new Error('Task failed to start.');
+            const contentType = response.headers.get("content-type");
+            if (contentType && contentType.indexOf("application/json") !== -1) {
+                const initialData = await response.json();
+                if (!response.ok) throw new Error(initialData.error || 'Failed to start master generation.');
+                if (!initialData.task_id) throw new Error('Task failed to start.');
 
-            localStorage.setItem('replenishment_task', JSON.stringify({ type: 'generation', id: initialData.task_id }));
+                localStorage.setItem('replenishment_task', JSON.stringify({ type: 'generation', id: initialData.task_id }));
 
-            // Poll for completion
-            const data = await pollStatus(initialData.task_id);
-            handleGenerationSuccess(data);
+                // Poll for completion
+                const data = await pollStatus(initialData.task_id);
+                handleGenerationSuccess(data);
+            } else {
+                const text = await response.text();
+                console.error("Non-JSON generation response:", text);
+                throw new Error('Server error during generation: Invalid response format.');
+            }
         } catch (err) {
             handleGenerationCatch(err);
         }

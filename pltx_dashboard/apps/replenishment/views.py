@@ -107,17 +107,20 @@ def index(request):
     return render(request, "replenishment/index.html", context)
 
 
-def save_uploaded_files(request_files, subfolder):
-    """Save multi-part uploaded files to a unique subfolder in MEDIA_ROOT."""
-    base_path = os.path.join(settings.MEDIA_ROOT, 'replenishment', 'uploads', subfolder)
-    if not os.path.exists(base_path):
-        os.makedirs(base_path, exist_ok=True)
-        
-    fs = FileSystemStorage(location=base_path)
+def save_uploaded_files(request_files):
+    """Save multi-part uploaded files to a system temporary directory."""
+    temp_dir = tempfile.mkdtemp(prefix="repl_uploads_")
     saved_paths = {}
     for key, file in request_files.items():
-        filename = fs.save(file.name, file)
-        saved_paths[key] = fs.path(filename)
+        # Sanitize filename
+        safe_name = "".join([c for c in file.name if c.isalnum() or c in "._- "]).strip()
+        if not safe_name:
+            safe_name = "uploaded_file"
+        path = os.path.join(temp_dir, safe_name)
+        with open(path, 'wb+') as destination:
+            for chunk in file.chunks():
+                destination.write(chunk)
+        saved_paths[key] = path
     return saved_paths
 
 
@@ -125,65 +128,68 @@ def save_uploaded_files(request_files, subfolder):
 
 @csrf_exempt
 def validate_api(request):
-    if request.method != 'POST':
-        return JsonResponse({"error": "Only POST allowed"}, status=405)
-        
-    if not request.FILES:
-        return JsonResponse({"error": "No files uploaded"}, status=400)
-    
-    # Save files to a unique subfolder
-    subfolder = datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + str(uuid.uuid4())[:8]
-    files = save_uploaded_files(request.FILES, subfolder)
-    
-    reports_to_validate = [
-        ("Sales", files.get("Sales")),
-        ("Shipment", files.get("Shipment")),
-        ("Stock", files.get("Stock")),
-        ("LIS", files.get("LIS"))
-    ]
-    
-    # Needs Assortment for validation logic
-    if not files.get("Assortment") or not os.path.exists(files["Assortment"]):
-        return JsonResponse({"error": "Assortment Master file is required for validation"}, status=400)
-        
     try:
+        if request.method != 'POST':
+            return JsonResponse({"error": "Only POST allowed"}, status=405)
+            
+        if not request.FILES:
+            return JsonResponse({"error": "No files uploaded"}, status=400)
+        
+        # Save files to a unique temporary folder
+        files = save_uploaded_files(request.FILES)
+        
+        reports_to_validate = [
+            ("Sales", files.get("Sales")),
+            ("Shipment", files.get("Shipment")),
+            ("Stock", files.get("Stock")),
+            ("LIS", files.get("LIS"))
+        ]
+        
+        # Needs Assortment for validation logic
+        if not files.get("Assortment") or not os.path.exists(files["Assortment"]):
+            return JsonResponse({"error": "Assortment Master file is required for validation"}, status=400)
+            
         master_data = generate_master_data(
             files.get("FC_Cluster"),
             files.get("Pincode_Cluster"),
             files.get("Assortment"),
             files.get("Input_Sheet")
         )
+        
+        task = validate_reports_celery.delay(reports_to_validate, master_data)
+        
+        return JsonResponse({'task_id': task.id, 'status': 'processing'})
     except Exception as e:
-        return JsonResponse({"error": str(e)}, status=500)
-    
-    task = validate_reports_celery.delay(reports_to_validate, master_data)
-    
-    return JsonResponse({'task_id': task.id, 'status': 'processing'})
+        return JsonResponse({"error": f"Validation Error: {str(e)}"}, status=500)
+
 
 
 
 
 @csrf_exempt
 def generate_master_api(request):
-    if request.method != 'POST':
-        return JsonResponse({"error": "Only POST allowed"}, status=405)
-        
-    if not request.FILES:
-        return JsonResponse({"error": "No files uploaded"}, status=400)
+    try:
+        if request.method != 'POST':
+            return JsonResponse({"error": "Only POST allowed"}, status=405)
+            
+        if not request.FILES:
+            return JsonResponse({"error": "No files uploaded"}, status=400)
 
-    # Save files to a unique subfolder
-    subfolder = datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + str(uuid.uuid4())[:8]
-    files = save_uploaded_files(request.FILES, subfolder)
-    
-    required = ["Sales", "Stock", "LIS", "Shipment", "Assortment", "FC_Cluster", "Pincode_Cluster", "Input_Sheet", "Business_Report"]
-    missing = [req for req in required if not files.get(req) or not os.path.exists(files[req])]
-    if missing:
-        return JsonResponse({"error": f"Missing uploaded files for: {', '.join(missing)}"}, status=400)
-    
-    temp_dir = tempfile.mkdtemp()
-    task = generate_master_celery.delay(files, temp_dir)
-    
-    return JsonResponse({'task_id': task.id, 'status': 'processing'})
+        # Save files to a unique temporary folder
+        files = save_uploaded_files(request.FILES)
+        
+        required = ["Sales", "Stock", "LIS", "Shipment", "Assortment", "FC_Cluster", "Pincode_Cluster", "Input_Sheet", "Business_Report"]
+        missing = [req for req in required if not files.get(req) or not os.path.exists(files[req])]
+        if missing:
+            return JsonResponse({"error": f"Missing uploaded files for: {', '.join(missing)}"}, status=400)
+        
+        temp_dir = tempfile.mkdtemp()
+        task = generate_master_celery.delay(files, temp_dir)
+        
+        return JsonResponse({'task_id': task.id, 'status': 'processing'})
+    except Exception as e:
+        return JsonResponse({"error": f"Generation Error: {str(e)}"}, status=500)
+
 
 
 def check_task_status(request, task_id):
