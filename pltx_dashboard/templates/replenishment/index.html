@@ -54,46 +54,145 @@
                     <div class="panel-label">01 — Inputs</div>
                     <h2 class="panel-title">Source Files</h2>
 
-                    <form id="generatorForm" novalidate>
+                    <form id="generatorForm" novalidate enctype="multipart/form-data">
                         <div class="field-grid">
                             <!-- Action Reports -->
                             <div class="field">
                                 <label class="field-label" for="fileSales">Sales Report</label>
-                                <input type="text" class="input-text" id="fileSales" placeholder="Files/Sales 1.csv" required>
+                                <div class="file-upload-wrapper">
+                                    <input type="file" id="fileSales" class="file-upload-input" required>
+                                    <div class="file-upload-display">
+                                        <div class="icon-box">
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                                        </div>
+                                        <div class="file-info">
+                                            <span class="file-label-text">Sales Report</span>
+                                            <span class="file-status-text">Click to upload .csv file</span>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                             <div class="field">
                                 <label class="field-label" for="fileStock">Stock Report</label>
-                                <input type="text" class="input-text" id="fileStock" placeholder="Files/FBA stock 1.xlsx" required>
+                                <div class="file-upload-wrapper">
+                                    <input type="file" id="fileStock" class="file-upload-input" required>
+                                    <div class="file-upload-display">
+                                        <div class="icon-box">
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                                        </div>
+                                        <div class="file-info">
+                                            <span class="file-label-text">Stock Report</span>
+                                            <span class="file-status-text">Click to upload .xlsx file</span>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                             <div class="field">
                                 <label class="field-label" for="fileLIS">LIS Report (Database)</label>
-                                <input type="text" class="input-text" id="fileLIS" placeholder="Files/Database.xlsx" required>
+                                <div class="file-upload-wrapper">
+                                    <input type="file" id="fileLIS" class="file-upload-input" required>
+                                    <div class="file-upload-display">
+                                        <div class="icon-box">
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                                        </div>
+                                        <div class="file-info">
+                                            <span class="file-label-text">LIS Report</span>
+                                            <span class="file-status-text">Click to upload .xlsx file</span>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                             <div class="field">
                                 <label class="field-label" for="fileShipment">Shipment Report</label>
-                                <input type="text" class="input-text" id="fileShipment" placeholder="Files/Shipment 1.xlsx" required>
+                                <div class="file-upload-wrapper">
+                                    <input type="file" id="fileShipment" class="file-upload-input" required>
+                                    <div class="file-upload-display">
+                                        <div class="icon-box">
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                                        </div>
+                                        <div class="file-info">
+                                            <span class="file-label-text">Shipment Report</span>
+                                            <span class="file-status-text">Click to upload .xlsx file</span>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                             
                             <!-- Master Files -->
                             <div class="field">
                                 <label class="field-label" for="fileAssortment">Assortment Master/Product</label>
-                                <input type="text" class="input-text" id="fileAssortment" placeholder="Files/Product Details 1.xlsx" required>
+                                <div class="file-upload-wrapper">
+                                    <input type="file" id="fileAssortment" class="file-upload-input" required>
+                                    <div class="file-upload-display">
+                                        <div class="icon-box">
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                                        </div>
+                                        <div class="file-info">
+                                            <span class="file-label-text">Assortment Master</span>
+                                            <span class="file-status-text">Click to upload .xlsx file</span>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                             <div class="field">
                                 <label class="field-label" for="fileFCCluster">FC Cluster Mapping</label>
-                                <input type="text" class="input-text" id="fileFCCluster" placeholder="Files/FC_Cluster_Mapping 3.xlsx" required>
+                                <div class="file-upload-wrapper">
+                                    <input type="file" id="fileFCCluster" class="file-upload-input" required>
+                                    <div class="file-upload-display">
+                                        <div class="icon-box">
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                                        </div>
+                                        <div class="file-info">
+                                            <span class="file-label-text">FC Cluster Mapping</span>
+                                            <span class="file-status-text">Click to upload .xlsx file</span>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                             <div class="field">
                                 <label class="field-label" for="filePincode">Pin Code Cluster</label>
-                                <input type="text" class="input-text" id="filePincode" placeholder="Files/PIN CODE and CLUSTER 1.csv" required>
+                                <div class="file-upload-wrapper">
+                                    <input type="file" id="filePincode" class="file-upload-input" required>
+                                    <div class="file-upload-display">
+                                        <div class="icon-box">
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                                        </div>
+                                        <div class="file-info">
+                                            <span class="file-label-text">Pin Code Cluster</span>
+                                            <span class="file-status-text">Click to upload .csv file</span>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                             <div class="field">
                                 <label class="field-label" for="fileInputSheet">Input Sheet</label>
-                                <input type="text" class="input-text" id="fileInputSheet" placeholder="Files/Input Sheet 1.xlsx" required>
+                                <div class="file-upload-wrapper">
+                                    <input type="file" id="fileInputSheet" class="file-upload-input" required>
+                                    <div class="file-upload-display">
+                                        <div class="icon-box">
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                                        </div>
+                                        <div class="file-info">
+                                            <span class="file-label-text">Input Sheet</span>
+                                            <span class="file-status-text">Click to upload .xlsx file</span>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                             <div class="field">
                                 <label class="field-label" for="fileBusiness">Business Report</label>
-                                <input type="text" class="input-text" id="fileBusiness" placeholder="Files/BusinessReport-02-04-26.csv" required>
+                                <div class="file-upload-wrapper">
+                                    <input type="file" id="fileBusiness" class="file-upload-input" required>
+                                    <div class="file-upload-display">
+                                        <div class="icon-box">
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                                        </div>
+                                        <div class="file-info">
+                                            <span class="file-label-text">Business Report</span>
+                                            <span class="file-status-text">Click to upload .csv file</span>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
 

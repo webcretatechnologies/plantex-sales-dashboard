@@ -14,6 +14,7 @@ from celery.result import AsyncResult
 from apps.accounts.utils import get_logged_in_user
 from apps.dashboard.utils import resolve_path, extract_days
 from apps.accounts.models import Feature
+from django.core.files.storage import FileSystemStorage
 
 # Logic imports
 from .validation import validate_sales, validate_shipment, validate_stock, validate_lis
@@ -106,19 +107,33 @@ def index(request):
     return render(request, "replenishment/index.html", context)
 
 
+def save_uploaded_files(request_files, subfolder):
+    """Save multi-part uploaded files to a unique subfolder in MEDIA_ROOT."""
+    base_path = os.path.join(settings.MEDIA_ROOT, 'replenishment', 'uploads', subfolder)
+    if not os.path.exists(base_path):
+        os.makedirs(base_path, exist_ok=True)
+        
+    fs = FileSystemStorage(location=base_path)
+    saved_paths = {}
+    for key, file in request_files.items():
+        filename = fs.save(file.name, file)
+        saved_paths[key] = fs.path(filename)
+    return saved_paths
+
+
+
 
 @csrf_exempt
 def validate_api(request):
     if request.method != 'POST':
         return JsonResponse({"error": "Only POST allowed"}, status=405)
         
-    try:
-        data = json.loads(request.body)
-    except json.JSONDecodeError:
-        return JsonResponse({"error": "Invalid JSON"}, status=400)
-        
-    raw_files = data.get('files', {})
-    files = {k: resolve_path(v) for k, v in raw_files.items()}
+    if not request.FILES:
+        return JsonResponse({"error": "No files uploaded"}, status=400)
+    
+    # Save files to a unique subfolder
+    subfolder = datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + str(uuid.uuid4())[:8]
+    files = save_uploaded_files(request.FILES, subfolder)
     
     reports_to_validate = [
         ("Sales", files.get("Sales")),
@@ -147,28 +162,29 @@ def validate_api(request):
 
 
 
+
 @csrf_exempt
 def generate_master_api(request):
     if request.method != 'POST':
         return JsonResponse({"error": "Only POST allowed"}, status=405)
         
-    try:
-        data = json.loads(request.body)
-    except json.JSONDecodeError:
-        return JsonResponse({"error": "Invalid JSON"}, status=400)
-        
-    raw_files = data.get('files', {})
-    files = {k: resolve_path(v) for k, v in raw_files.items()}
+    if not request.FILES:
+        return JsonResponse({"error": "No files uploaded"}, status=400)
+
+    # Save files to a unique subfolder
+    subfolder = datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + str(uuid.uuid4())[:8]
+    files = save_uploaded_files(request.FILES, subfolder)
     
     required = ["Sales", "Stock", "LIS", "Shipment", "Assortment", "FC_Cluster", "Pincode_Cluster", "Input_Sheet", "Business_Report"]
     missing = [req for req in required if not files.get(req) or not os.path.exists(files[req])]
     if missing:
-        return JsonResponse({"error": f"Missing or invalid paths for: {', '.join(missing)}"}, status=400)
+        return JsonResponse({"error": f"Missing uploaded files for: {', '.join(missing)}"}, status=400)
     
     temp_dir = tempfile.mkdtemp()
     task = generate_master_celery.delay(files, temp_dir)
     
     return JsonResponse({'task_id': task.id, 'status': 'processing'})
+
 
 def check_task_status(request, task_id):
     """Poll Celery state and transfer result to session so downloads work"""

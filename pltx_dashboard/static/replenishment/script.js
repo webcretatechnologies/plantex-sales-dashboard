@@ -41,20 +41,24 @@ document.addEventListener('DOMContentLoaded', () => {
         toast._t = setTimeout(() => toast.classList.add('hidden'), 5500);
     }
 
-    function getPayload() {
-        return {
-            files: {
-                Sales: document.getElementById('fileSales').value.trim(),
-                Stock: document.getElementById('fileStock').value.trim(),
-                LIS: document.getElementById('fileLIS').value.trim(),
-                Shipment: document.getElementById('fileShipment').value.trim(),
-                Assortment: document.getElementById('fileAssortment').value.trim(),
-                FC_Cluster: document.getElementById('fileFCCluster').value.trim(),
-                Pincode_Cluster: document.getElementById('filePincode').value.trim(),
-                Input_Sheet: document.getElementById('fileInputSheet').value.trim(),
-                Business_Report: document.getElementById('fileBusiness').value.trim()
-            }
+    function getFormData() {
+        const formData = new FormData();
+        const files = {
+            Sales: document.getElementById('fileSales').files[0],
+            Stock: document.getElementById('fileStock').files[0],
+            LIS: document.getElementById('fileLIS').files[0],
+            Shipment: document.getElementById('fileShipment').files[0],
+            Assortment: document.getElementById('fileAssortment').files[0],
+            FC_Cluster: document.getElementById('fileFCCluster').files[0],
+            Pincode_Cluster: document.getElementById('filePincode').files[0],
+            Input_Sheet: document.getElementById('fileInputSheet').files[0],
+            Business_Report: document.getElementById('fileBusiness').files[0]
         };
+
+        for (const [key, file] of Object.entries(files)) {
+            if (file) formData.append(key, file);
+        }
+        return formData;
     }
 
     const inputIds = [
@@ -62,31 +66,32 @@ document.addEventListener('DOMContentLoaded', () => {
         'fileAssortment', 'fileFCCluster', 'filePincode', 'fileInputSheet', 'fileBusiness'
     ];
 
-    function saveInputs() {
-        const data = {};
-        inputIds.forEach(id => {
-            const el = document.getElementById(id);
-            if (el) data[id] = el.value;
-        });
-        localStorage.setItem('replenishment_inputs', JSON.stringify(data));
-    }
-
-    function loadInputs() {
-        const raw = localStorage.getItem('replenishment_inputs');
-        if (raw) {
-            try {
-                const data = JSON.parse(raw);
-                inputIds.forEach(id => {
-                    const el = document.getElementById(id);
-                    if (el && data[id]) el.value = data[id];
-                });
-            } catch (e) {}
+    // --- Custom File Upload UI Handling ---
+    function updateFileUploadUI(input) {
+        const wrapper = input.closest('.file-upload-wrapper');
+        const display = wrapper.querySelector('.file-upload-display');
+        const statusText = wrapper.querySelector('.file-status-text');
+        
+        if (input.files && input.files.length > 0) {
+            const fileName = input.files[0].name;
+            statusText.textContent = `Selected: ${fileName}`;
+            display.classList.add('has-file');
+        } else {
+            const originalText = input.id.includes('Sales') || input.id.includes('Pincode') || input.id.includes('Business') ? 'Click to upload .csv file' : 'Click to upload .xlsx file';
+            statusText.textContent = originalText;
+            display.classList.remove('has-file');
         }
     }
-    
-    // Auto-load inputs if they exist
-    loadInputs();
 
+    inputIds.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.addEventListener('change', () => updateFileUploadUI(el));
+        }
+    });
+
+    // Removed saveInputs/loadInputs as browser security prevents restoring file inputs.
+    
     // Polling helper
     async function pollStatus(taskId) {
         return new Promise((resolve, reject) => {
@@ -223,7 +228,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // ── Run Validation ──
     generatorForm.addEventListener('submit', async (e) => {
         e.preventDefault();
-        saveInputs();
 
         // Loading
         validateBtn.disabled = true;
@@ -238,8 +242,7 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const response = await fetch('/api/replenishment/validate/', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(getPayload())
+                body: getFormData()
             });
 
             const initialData = await response.json();
@@ -258,7 +261,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ── Generate Master ──
     generateBtn.addEventListener('click', async () => {
-        saveInputs();
         generateBtn.disabled = true;
         genBtnLabel.textContent = 'Generating…';
         genSpinner.classList.remove('hidden');
@@ -269,8 +271,7 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const response = await fetch('/api/replenishment/generate_master/', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(getPayload())
+                body: getFormData()
             });
 
             const initialData = await response.json();
