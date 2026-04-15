@@ -1,6 +1,6 @@
 from django.shortcuts import render, redirect
 from django.http import FileResponse
-from apps.dashboard.models import SpendData, ProcessedDashboardData
+from apps.dashboard.models import SpendData, ProcessedDashboardData, FlipkartProcessedDashboardData
 from apps.dashboard.materialized_models import (
     CeoDashboardCache,
     BusinessDashboardCache,
@@ -61,41 +61,59 @@ def get_dashboard_context(request):
 
     # Build the queryset with DB-level entity filters
     qs = ProcessedDashboardData.objects.filter(user=data_owner)
+    fk_qs = FlipkartProcessedDashboardData.objects.filter(user=data_owner)
+
+    # Apply platform filter
+    platform = filters.get('platform')
+    show_amazon = True
+    show_flipkart = True
+    if platform == 'Amazon':
+        show_flipkart = False
+    elif platform == 'Flipkart':
+        show_amazon = False
 
     # Apply category filter at DB level
     category = filters.get('category')
     if category:
         if isinstance(category, (list, tuple)):
             qs = qs.filter(category__in=category)
+            fk_qs = fk_qs.filter(category__in=category)
         else:
             qs = qs.filter(category=category)
+            fk_qs = fk_qs.filter(category=category)
 
     # Apply ASIN filter at DB level
     asin_filter = filters.get('asin')
     if asin_filter:
         if isinstance(asin_filter, (list, tuple)):
             qs = qs.filter(asin__in=asin_filter)
+            fk_qs = fk_qs.filter(fsn__in=asin_filter)
         else:
             qs = qs.filter(asin=asin_filter)
+            fk_qs = fk_qs.filter(fsn=asin_filter)
 
     # Apply portfolio filter at DB level
     portfolio = filters.get('portfolio')
     if portfolio:
         qs = qs.filter(portfolio=portfolio)
+        fk_qs = fk_qs.filter(portfolio=portfolio)
 
     # Apply subcategory filter at DB level
     subcategory = filters.get('subcategory')
     if subcategory:
         if isinstance(subcategory, (list, tuple)):
             qs = qs.filter(subcategory__in=subcategory)
+            fk_qs = fk_qs.filter(subcategory__in=subcategory)
         else:
             qs = qs.filter(subcategory=subcategory)
+            fk_qs = fk_qs.filter(subcategory=subcategory)
 
-    # Note: platform filter is NOT applied at DB level because
-    # ProcessedDashboardData may not have a 'platform' column.
-    # It is handled safely in apply_global_filters() which checks column existence.
+    if not show_amazon:
+        qs = qs.none()
+    if not show_flipkart:
+        fk_qs = fk_qs.none()
 
-    if not qs.exists():
+    if not qs.exists() and not fk_qs.exists():
         return {
             'logged_user': user,
             'user_features': user_features,
@@ -105,7 +123,28 @@ def get_dashboard_context(request):
             'selected_filters_json': json.dumps(selected_filters)
         }
 
-    df = pd.DataFrame(list(qs.values()))
+    df = pd.DataFrame()
+    if qs.exists():
+        df = pd.DataFrame(list(qs.values()))
+        # Add platform column for Amazon data
+        df['platform'] = 'Amazon'
+
+    if fk_qs.exists():
+        df_fk = pd.DataFrame(list(fk_qs.values()))
+        # Rename fsn → asin so the analytics layer works uniformly
+        df_fk = df_fk.rename(columns={'fsn': 'asin'})
+        df_fk['platform'] = 'Flipkart'
+        # Ensure matching columns
+        for col in ['spend_sp', 'spend_sb', 'spend_sd']:
+            if col not in df_fk.columns:
+                df_fk[col] = 0.0
+        
+        if df.empty:
+            df = df_fk
+        else:
+            # Concat
+            common_cols = [c for c in df.columns if c in df_fk.columns]
+            df = pd.concat([df[common_cols], df_fk[common_cols]], ignore_index=True)
 
     # Apply same entity filters to spend data at DB level
     spend_qs = SpendData.objects.filter(user=data_owner)

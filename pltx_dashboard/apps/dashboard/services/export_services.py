@@ -8,7 +8,7 @@ Excel (with Annexure sheet).
 import pandas as pd
 import numpy as np
 from io import BytesIO
-from apps.dashboard.models import ProcessedDashboardData, SpendData
+from apps.dashboard.models import ProcessedDashboardData, SpendData, FlipkartProcessedDashboardData
 from apps.dashboard.services.analytics_services import apply_global_filters
 
 
@@ -21,37 +21,80 @@ def _build_export_dataframe(user, filters):
     data_owner = user.created_by if user.created_by else user
 
     qs = ProcessedDashboardData.objects.filter(user=data_owner)
+    fk_qs = FlipkartProcessedDashboardData.objects.filter(user=data_owner)
+
+    # Apply platform filter
+    platform = filters.get('platform')
+    show_amazon = True
+    show_flipkart = True
+    if platform == 'Amazon':
+        show_flipkart = False
+    elif platform == 'Flipkart':
+        show_amazon = False
 
     # Apply entity-level filters at the DB level (same as dashboard views)
     category = filters.get('category')
     if category:
         if isinstance(category, (list, tuple)):
             qs = qs.filter(category__in=category)
+            fk_qs = fk_qs.filter(category__in=category)
         else:
             qs = qs.filter(category=category)
+            fk_qs = fk_qs.filter(category=category)
 
     asin_filter = filters.get('asin')
     if asin_filter:
         if isinstance(asin_filter, (list, tuple)):
             qs = qs.filter(asin__in=asin_filter)
+            fk_qs = fk_qs.filter(fsn__in=asin_filter)
         else:
             qs = qs.filter(asin=asin_filter)
+            fk_qs = fk_qs.filter(fsn=asin_filter)
 
     portfolio = filters.get('portfolio')
     if portfolio:
         qs = qs.filter(portfolio=portfolio)
+        fk_qs = fk_qs.filter(portfolio=portfolio)
 
     subcategory = filters.get('subcategory')
     if subcategory:
         if isinstance(subcategory, (list, tuple)):
             qs = qs.filter(subcategory__in=subcategory)
+            fk_qs = fk_qs.filter(subcategory__in=subcategory)
         else:
             qs = qs.filter(subcategory=subcategory)
+            fk_qs = fk_qs.filter(subcategory=subcategory)
 
-    if not qs.exists():
+    if not show_amazon:
+        qs = qs.none()
+    if not show_flipkart:
+        fk_qs = fk_qs.none()
+
+    if not qs.exists() and not fk_qs.exists():
         return pd.DataFrame()
 
-    df = pd.DataFrame(list(qs.values()))
+    df_amazon = pd.DataFrame()
+    if qs.exists():
+        df_amazon = pd.DataFrame(list(qs.values()))
+        df_amazon['platform'] = 'Amazon'
+
+    df_fk = pd.DataFrame()
+    if fk_qs.exists():
+        df_fk = pd.DataFrame(list(fk_qs.values()))
+        df_fk = df_fk.rename(columns={'fsn': 'asin'})
+        df_fk['platform'] = 'Flipkart'
+        for col in ['spend_sp', 'spend_sb', 'spend_sd']:
+            if col not in df_fk.columns:
+                df_fk[col] = 0.0
+
+    if df_amazon.empty:
+        df = df_fk
+    elif df_fk.empty:
+        df = df_amazon
+    else:
+        common_cols = [c for c in df_amazon.columns if c in df_fk.columns]
+        df = pd.concat([df_amazon[common_cols], df_fk[common_cols]], ignore_index=True)
+
     df = apply_global_filters(df, filters.copy())
 
     if df.empty:
@@ -72,7 +115,7 @@ def _build_export_dataframe(user, filters):
     }
     # Keep first encounter of dimensional columns
     dim_cols = {}
-    for col in ['portfolio', 'category', 'subcategory', 'price']:
+    for col in ['portfolio', 'category', 'subcategory', 'price', 'platform']:
         if col in df.columns:
             dim_cols[col] = 'first'
 
@@ -93,6 +136,7 @@ def _build_export_dataframe(user, filters):
         'category': 'Category',
         'subcategory': 'Subcategory',
         'price': 'Price',
+        'platform': 'Platform',
     }, inplace=True)
 
     # Fill NaN
@@ -148,7 +192,7 @@ def _build_export_dataframe(user, filters):
 
     # Re-order columns for a clean export
     col_order = [
-        'ASIN', 'Portfolio', 'Category', 'Subcategory',
+        'Platform', 'ASIN', 'Portfolio', 'Category', 'Subcategory',
         'Page Views', 'Units', 'Orders', 'Revenue', 'Price',
         'Spend', 'Spend (SP)', 'Spend (SB)', 'Spend (SD)',
         'ROAS', 'TACoS (%)', 'CVR (%)', 'AOV',

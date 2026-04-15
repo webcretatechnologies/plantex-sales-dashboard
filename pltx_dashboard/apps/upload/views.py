@@ -8,9 +8,11 @@ import os
 from apps.accounts.utils import get_logged_in_user
 from .services import (
     process_category_file, process_price_file, process_spend_file, process_sales_file,
-    process_flipkart_sales_file, process_flipkart_inventory_file,
-    process_flipkart_pca_file, process_flipkart_pla_file,
-    generate_dashboard_data
+    generate_dashboard_data,
+    # Slim Flipkart pipeline
+    process_fk_search_traffic, process_fk_category, process_fk_price,
+    process_fk_pca, process_fk_pla, process_fk_sales_invoice, process_fk_coupon,
+    generate_flipkart_dashboard_data,
 )
 
 class FileUploadView(APIView):
@@ -65,14 +67,26 @@ class FileUploadView(APIView):
                 process_spend_file(file_obj, data_owner)
             elif file_type == 'sales':
                 process_sales_file(file_obj, date_str, data_owner)
-            elif file_type == 'flipkart_sales':
-                process_flipkart_sales_file(file_obj, data_owner)
-            elif file_type == 'flipkart_inventory':
-                process_flipkart_inventory_file(file_obj, data_owner)
-            elif file_type == 'flipkart_pca':
-                process_flipkart_pca_file(file_obj, data_owner)
-            elif file_type == 'flipkart_pla':
-                process_flipkart_pla_file(file_obj, data_owner)
+            # Slim Flipkart pipeline
+            elif file_type == 'fk_search_traffic':
+                process_fk_search_traffic(file_obj, data_owner)
+            elif file_type == 'fk_category':
+                process_fk_category(file_obj, data_owner)
+            elif file_type == 'fk_price':
+                process_fk_price(file_obj, data_owner)
+            elif file_type == 'fk_pca':
+                process_fk_pca(file_obj, data_owner)
+            elif file_type == 'fk_pla':
+                process_fk_pla(file_obj, data_owner)
+            elif file_type == 'fk_sales_invoice':
+                process_fk_sales_invoice(file_obj, data_owner)
+            elif file_type == 'fk_coupon':
+                process_fk_coupon(file_obj, data_owner)
+
+            # Determine which pipeline to run on the last file
+            fk_types = {'fk_search_traffic', 'fk_category', 'fk_price',
+                        'fk_pca', 'fk_pla', 'fk_sales_invoice', 'fk_coupon'}
+            is_flipkart = file_type in fk_types
 
             if is_last:
                 async_to_sync(channel_layer.group_send)(
@@ -82,7 +96,10 @@ class FileUploadView(APIView):
                         'status': 'processing'
                     }
                 )
-                generate_dashboard_data(data_owner)
+                if is_flipkart:
+                    generate_flipkart_dashboard_data(data_owner)
+                else:
+                    generate_dashboard_data(data_owner)
                 async_to_sync(channel_layer.group_send)(
                     group_name, {
                         'type': 'upload_progress',
