@@ -1,0 +1,61 @@
+# Dockerfile.prod - Production-optimized Dockerfile
+
+# Build stage
+FROM python:3.11-slim as builder
+
+WORKDIR /app
+
+# Install system dependencies required for building
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libmysqlclient-dev \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements and install Python dependencies
+COPY pltx_dashboard/requirements.txt .
+RUN pip install --no-cache-dir --user -r requirements.txt && \
+    pip install --no-cache-dir --user gunicorn whitenoise
+
+# Runtime stage
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install runtime dependencies only
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libmysqlclient21 \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy Python packages from builder
+COPY --from=builder /root/.local /root/.local
+
+# Set environment variables
+ENV PATH=/root/.local/bin:$PATH \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    DJANGO_SETTINGS_MODULE=pltx_dashboard.settings
+
+# Copy project files
+COPY . /app/
+
+# Create necessary directories
+RUN mkdir -p /app/staticfiles /app/logs
+
+# Collect static files
+RUN cd /app && python pltx_dashboard/manage.py collectstatic --noinput || true
+
+# Create non-root user for security (uid/gid: 1000)
+RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
+USER appuser
+
+# Expose port
+EXPOSE 8000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8000/ || exit 1
+
+# Production command using Gunicorn
+CMD ["sh", "-c", "cd pltx_dashboard && python manage.py migrate --noinput && gunicorn -w 4 -b 0.0.0.0:8000 --timeout 120 --access-logfile - --error-logfile - pltx_dashboard.wsgi:application"]

@@ -1,0 +1,120 @@
+version: '3.8'
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: plantex-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_password}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-plantex_db}
+      MYSQL_USER: ${MYSQL_USER:-plantex_user}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-plantex_password}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+    networks:
+      - plantex_network
+
+  redis:
+    image: redis:7-alpine
+    container_name: plantex-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      timeout: 3s
+      retries: 5
+    networks:
+      - plantex_network
+
+  web:
+    build: .
+    container_name: plantex-web
+    command: sh -c "cd pltx_dashboard && python manage.py migrate && daphne -b 0.0.0.0 -p 8000 pltx_dashboard.asgi:application"
+    ports:
+      - "8000:8000"
+    environment:
+      DEBUG: ${DEBUG:-False}
+      DJANGO_SETTINGS_MODULE: pltx_dashboard.settings
+      DATABASE_URL: mysql://${MYSQL_USER:-plantex_user}:${MYSQL_PASSWORD:-plantex_password}@mysql:3306/${MYSQL_DATABASE:-plantex_db}
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      SECRET_KEY: ${SECRET_KEY:-your-secret-key-change-in-production}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost,127.0.0.1,web}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - .:/app
+      - static_volume:/app/staticfiles
+      - logs_volume:/app/logs
+    networks:
+      - plantex_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      timeout: 10s
+      retries: 5
+
+  celery_worker:
+    build: .
+    container_name: plantex-celery-worker
+    command: sh -c "cd pltx_dashboard && celery -A pltx_dashboard worker -l info"
+    environment:
+      DEBUG: ${DEBUG:-False}
+      DJANGO_SETTINGS_MODULE: pltx_dashboard.settings
+      DATABASE_URL: mysql://${MYSQL_USER:-plantex_user}:${MYSQL_PASSWORD:-plantex_password}@mysql:3306/${MYSQL_DATABASE:-plantex_db}
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      SECRET_KEY: ${SECRET_KEY:-your-secret-key-change-in-production}
+    depends_on:
+      - mysql
+      - redis
+      - web
+    volumes:
+      - .:/app
+      - logs_volume:/app/logs
+    networks:
+      - plantex_network
+
+  celery_beat:
+    build: .
+    container_name: plantex-celery-beat
+    command: sh -c "cd pltx_dashboard && celery -A pltx_dashboard beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler"
+    environment:
+      DEBUG: ${DEBUG:-False}
+      DJANGO_SETTINGS_MODULE: pltx_dashboard.settings
+      DATABASE_URL: mysql://${MYSQL_USER:-plantex_user}:${MYSQL_PASSWORD:-plantex_password}@mysql:3306/${MYSQL_DATABASE:-plantex_db}
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      SECRET_KEY: ${SECRET_KEY:-your-secret-key-change-in-production}
+    depends_on:
+      - mysql
+      - redis
+      - web
+    volumes:
+      - .:/app
+      - logs_volume:/app/logs
+    networks:
+      - plantex_network
+
+volumes:
+  mysql_data:
+  redis_data:
+  static_volume:
+  logs_volume:
+
+networks:
+  plantex_network:
+    driver: bridge
