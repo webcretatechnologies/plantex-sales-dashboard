@@ -1,7 +1,9 @@
 from django.contrib import admin
 from .models import (
     SalesData, SpendData, CategoryMapping, PriceData, ProcessedDashboardData,
-    FlipkartSalesReport, FlipkartCurrentInventoryReport, PCADailyReport, PLAFSNReport
+    FlipkartSearchTraffic, FlipkartCategoryMap, FlipkartPrice,
+    FlipkartPCA, FlipkartPLA, FlipkartSalesInvoice, FlipkartCoupon,
+    FlipkartProcessedDashboardData
 )
 from .materialized_models import CeoDashboardCache, BusinessDashboardCache, CategoryDashboardCache, DashboardFilterCache
 
@@ -30,29 +32,51 @@ class ProcessedDashboardDataAdmin(admin.ModelAdmin):
     list_display = ('user', 'date', 'asin', 'revenue', 'total_spend')
     list_filter = ('date', 'user')
 
-@admin.register(FlipkartSalesReport)
-class FlipkartSalesReportAdmin(admin.ModelAdmin):
-    list_display = ('user', 'order_id', 'order_item_id', 'order_date', 'final_invoice_amount')
-    list_filter = ('order_date', 'user')
-    search_fields = ('order_id', 'order_item_id', 'sku')
+# ─── Slim Flipkart Models Admin ───
 
-@admin.register(FlipkartCurrentInventoryReport)
-class FlipkartCurrentInventoryReportAdmin(admin.ModelAdmin):
-    list_display = ('user', 'warehouse_id', 'sku', 'fsn', 'sales_30d')
-    list_filter = ('warehouse_id', 'user')
-    search_fields = ('sku', 'fsn', 'listing_id')
+@admin.register(FlipkartSearchTraffic)
+class FlipkartSearchTrafficAdmin(admin.ModelAdmin):
+    list_display = ('user', 'date', 'fsn', 'sku', 'revenue')
+    list_filter = ('date', 'user')
+    search_fields = ('fsn', 'sku')
 
-@admin.register(PCADailyReport)
-class PCADailyReportAdmin(admin.ModelAdmin):
-    list_display = ('user', 'date', 'campaign_name', 'ad_group_name', 'direct_revenue')
-    list_filter = ('date', 'user', 'campaign_name')
-    search_fields = ('campaign_name', 'ad_group_name')
+@admin.register(FlipkartCategoryMap)
+class FlipkartCategoryMapAdmin(admin.ModelAdmin):
+    list_display = ('user', 'fsn', 'portfolio', 'category', 'subcategory')
+    list_filter = ('portfolio', 'category')
+    search_fields = ('fsn', 'sku')
 
-@admin.register(PLAFSNReport)
-class PLAFSNReportAdmin(admin.ModelAdmin):
-    list_display = ('user', 'campaign_name', 'ad_group_name', 'advertised_fsn_id', 'direct_revenue')
-    list_filter = ('user', 'campaign_name')
-    search_fields = ('campaign_name', 'ad_group_name', 'advertised_fsn_id')
+@admin.register(FlipkartPrice)
+class FlipkartPriceAdmin(admin.ModelAdmin):
+    list_display = ('user', 'fsn', 'price')
+    search_fields = ('fsn',)
+
+@admin.register(FlipkartPCA)
+class FlipkartPCAAdmin(admin.ModelAdmin):
+    list_display = ('user', 'date', 'campaign_name', 'fsn_id')
+    list_filter = ('date', 'user')
+    search_fields = ('campaign_id', 'campaign_name', 'fsn_id')
+
+@admin.register(FlipkartPLA)
+class FlipkartPLAAdmin(admin.ModelAdmin):
+    list_display = ('user', 'campaign_id', 'fsn_id', 'ad_spend')
+    search_fields = ('campaign_id', 'fsn_id')
+
+@admin.register(FlipkartSalesInvoice)
+class FlipkartSalesInvoiceAdmin(admin.ModelAdmin):
+    list_display = ('user', 'order_id', 'order_item_id', 'fsn', 'invoice_amount')
+    search_fields = ('order_id', 'order_item_id', 'fsn')
+
+@admin.register(FlipkartCoupon)
+class FlipkartCouponAdmin(admin.ModelAdmin):
+    list_display = ('user', 'fsn', 'coupon_value')
+    search_fields = ('fsn',)
+
+@admin.register(FlipkartProcessedDashboardData)
+class FlipkartProcessedDashboardDataAdmin(admin.ModelAdmin):
+    list_display = ('user', 'date', 'fsn', 'platform', 'revenue', 'total_spend', 'coupon_error')
+    list_filter = ('date', 'user', 'coupon_error')
+    search_fields = ('fsn', 'category')
 
 
 # ─── Materialized-view cache admin ───

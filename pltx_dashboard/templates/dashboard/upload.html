@@ -400,64 +400,109 @@
     <!-- =============== FLIPKART SECTION =============== -->
     <div id="flipkartSection" class="platform-section">
         <div class="upload-grid">
-            <!-- Flipkart Sales Card -->
+            <!-- FK Search Traffic Card -->
             <div class="upload-card flipkart-card">
                 <div class="upload-card-title">
-                    <span class="material-icons-round">receipt_long</span>
-                    Flipkart Daily Sales
+                    <span class="material-icons-round">search</span>
+                    Search Traffic Report
                 </div>
-                <label class="modern-dropzone" for="fkSalesFile">
+                <label class="modern-dropzone" for="fkSearchTrafficFile">
                     <div class="material-icons-round drop-icon">cloud_upload</div>
-                    <div class="drop-text">Drag & drop Flipkart Sales Report here</div>
-                    <div class="drop-subtext">Order ID / FSN / SKU / Invoice / Tax Details (.xlsx)</div>
-                    <input type="file" id="fkSalesFile" accept=".xlsx,.xls" multiple style="display:none">
+                    <div class="drop-text">Drag & drop Search Traffic Report here</div>
+                    <div class="drop-subtext">Listing Id / SKU / Vertical / Impressions / Sales (.xlsx)</div>
+                    <input type="file" id="fkSearchTrafficFile" accept=".xlsx,.xls" multiple style="display:none">
                 </label>
-                <div id="fkSalesFileList" class="file-list"></div>
+                <div id="fkSearchTrafficFileList" class="file-list"></div>
             </div>
 
-            <!-- Flipkart Inventory Card -->
+            <!-- FK Category Card -->
             <div class="upload-card flipkart-card">
                 <div class="upload-card-title">
-                    <span class="material-icons-round">inventory_2</span>
-                    Flipkart Current Inventory
+                    <span class="material-icons-round">account_tree</span>
+                    Category Report
                 </div>
-                <label class="modern-dropzone" for="fkInventoryFile">
-                    <div class="material-icons-round drop-icon">cloud_upload</div>
-                    <div class="drop-text">Drag & drop Flipkart Inventory Report here</div>
-                    <div class="drop-subtext">Warehouse / SKU / FSN / Sales / Stock Details (.csv)</div>
-                    <input type="file" id="fkInventoryFile" accept=".csv" multiple style="display:none">
+                <label class="modern-dropzone" for="fkCategoryFile">
+                    <div class="material-icons-round drop-icon">table_chart</div>
+                    <div class="drop-text">Drag & drop Category Dashboard file here</div>
+                    <div class="drop-subtext">FSN ID / Portfolio / Cat / Subcat (.xlsx)</div>
+                    <input type="file" id="fkCategoryFile" accept=".xlsx,.xls" multiple style="display:none">
                 </label>
-                <div id="fkInventoryFileList" class="file-list"></div>
+                <div id="fkCategoryFileList" class="file-list"></div>
             </div>
 
-            <!-- Flipkart PCA Card -->
+            <!-- FK Price Card -->
+            <div class="upload-card flipkart-card">
+                <div class="upload-card-title">
+                    <span class="material-icons-round">sell</span>
+                    Price Report
+                </div>
+                <label class="modern-dropzone" for="fkPriceFile">
+                    <div class="material-icons-round drop-icon">payments</div>
+                    <div class="drop-text">Drag & drop FK Price file here</div>
+                    <div class="drop-subtext">Flipkart Serial Number / Deal (.xlsx)</div>
+                    <input type="file" id="fkPriceFile" accept=".xlsx,.xls" multiple style="display:none">
+                </label>
+                <div id="fkPriceFileList" class="file-list"></div>
+            </div>
+
+            <!-- FK PCA Card -->
             <div class="upload-card flipkart-card">
                 <div class="upload-card-title">
                     <span class="material-icons-round">ads_click</span>
-                    Flipkart PCA Report
+                    PCA Report
                 </div>
-                <label class="modern-dropzone" for="fkPcaFile">
+                <label class="modern-dropzone" for="fkPcaNewFile">
                     <div class="material-icons-round drop-icon">cloud_upload</div>
-                    <div class="drop-text">Drag & drop PCA Daily Report here</div>
-                    <div class="drop-subtext">Campaign / Ad Group / Spend / Clicks / Revenue (.xlsx)</div>
-                    <input type="file" id="fkPcaFile" accept=".xlsx,.xls" multiple style="display:none">
+                    <div class="drop-text">Drag & drop PCA Attribution Report here</div>
+                    <div class="drop-subtext">campaign_id / fsn_id / Date (.csv)</div>
+                    <input type="file" id="fkPcaNewFile" accept=".csv" multiple style="display:none">
                 </label>
-                <div id="fkPcaFileList" class="file-list"></div>
+                <div id="fkPcaNewFileList" class="file-list"></div>
             </div>
 
-            <!-- Flipkart PLA Card -->
+            <!-- FK PLA Card -->
             <div class="upload-card flipkart-card">
                 <div class="upload-card-title">
                     <span class="material-icons-round">trending_up</span>
-                    Flipkart PLA Report
+                    PLA Report
                 </div>
-                <label class="modern-dropzone" for="fkPlaFile">
+                <label class="modern-dropzone" for="fkPlaNewFile">
                     <div class="material-icons-round drop-icon">cloud_upload</div>
                     <div class="drop-text">Drag & drop PLA FSN Report here</div>
-                    <div class="drop-subtext">FSN / Ad Spend / Units Sold / Revenue / ROI (.xlsx)</div>
-                    <input type="file" id="fkPlaFile" accept=".xlsx,.xls" multiple style="display:none">
+                    <div class="drop-subtext">Campaign ID / FSN ID / Ad Spend (.csv)</div>
+                    <input type="file" id="fkPlaNewFile" accept=".csv" multiple style="display:none">
                 </label>
-                <div id="fkPlaFileList" class="file-list"></div>
+                <div id="fkPlaNewFileList" class="file-list"></div>
+            </div>
+
+            <!-- FK Sales Report Card -->
+            <div class="upload-card flipkart-card">
+                <div class="upload-card-title">
+                    <span class="material-icons-round">receipt_long</span>
+                    Sales Report
+                </div>
+                <label class="modern-dropzone" for="fkSalesInvoiceFile">
+                    <div class="material-icons-round drop-icon">cloud_upload</div>
+                    <div class="drop-text">Drag & drop Flipkart Sales Report here</div>
+                    <div class="drop-subtext">Sales Report + Cash Back sheet / Taxable Value / Invoice (.xlsx)</div>
+                    <input type="file" id="fkSalesInvoiceFile" accept=".xlsx,.xls" multiple style="display:none">
+                </label>
+                <div id="fkSalesInvoiceFileList" class="file-list"></div>
+            </div>
+
+            <!-- FK Coupon Card -->
+            <div class="upload-card flipkart-card">
+                <div class="upload-card-title">
+                    <span class="material-icons-round">local_offer</span>
+                    Coupon Value Report
+                </div>
+                <label class="modern-dropzone" for="fkCouponFile">
+                    <div class="material-icons-round drop-icon">cloud_upload</div>
+                    <div class="drop-text">Drag & drop Coupon Value Report here</div>
+                    <div class="drop-subtext">FSN / Coupon Value (.xlsx)</div>
+                    <input type="file" id="fkCouponFile" accept=".xlsx,.xls" multiple style="display:none">
+                </label>
+                <div id="fkCouponFileList" class="file-list"></div>
             </div>
         </div>
     </div>

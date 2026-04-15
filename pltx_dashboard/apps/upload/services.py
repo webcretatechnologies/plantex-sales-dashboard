@@ -5,7 +5,10 @@ from apps.dashboard.utils import clean_currency, clean_number
 
 from apps.dashboard.models import (
     SalesData, SpendData, CategoryMapping, PriceData, ProcessedDashboardData,
-    FlipkartSalesReport, FlipkartCurrentInventoryReport, PCADailyReport, PLAFSNReport
+    # Slim Flipkart models
+    FlipkartSearchTraffic, FlipkartCategoryMap, FlipkartPrice,
+    FlipkartPCA, FlipkartPLA, FlipkartSalesInvoice, FlipkartCoupon,
+    FlipkartProcessedDashboardData,
 )
 from django.db import connection
 
@@ -217,422 +220,6 @@ def process_sales_file(file_obj, date_str, user):
 
 
 # ---------------------------------------------------------------------------
-# Flipkart Sales Report
-# ---------------------------------------------------------------------------
-
-def process_flipkart_sales_file(file_obj, user):
-    """
-    Upsert Flipkart Sales Report rows scoped to the user.
-    Validates required columns before processing.
-    """
-    df = pd.read_excel(file_obj)
-
-    required_cols = [
-        'Seller GSTIN', 'Order ID', 'Order Item ID', 'Product Title/Description',
-        'FSN', 'SKU', 'HSN Code', 'Event Type', 'Event Sub Type', 'Order Type',
-        'Fulfilment Type', 'Order Date', 'Order Approval Date', 'Item Quantity',
-        'Order Shipped From (State)', 'Warehouse ID', 'Price before discount',
-        'Total Discount', 'Seller Share', 'Bank Offer Share',
-        'Price after discount (Price before discount-Total discount)',
-        'Shipping Charges',
-        'Final Invoice Amount (Price after discount+Shipping Charges)',
-        'Type of tax', 'Taxable Value (Final Invoice Amount -Taxes)',
-        'CST Rate', 'CST Amount', 'VAT Rate', 'VAT Amount',
-        'Luxury Cess Rate', 'Luxury Cess Amount', 'IGST Rate', 'IGST Amount',
-        'CGST Rate', 'CGST Amount',
-        'SGST Rate (or UTGST as applicable)', 'SGST Amount (Or UTGST as applicable)',
-        'TCS IGST Rate', 'TCS IGST Amount', 'TCS CGST Rate', 'TCS CGST Amount',
-        'TCS SGST Rate', 'TCS SGST Amount', 'Total TCS Deducted',
-        'Buyer Invoice ID', 'Buyer Invoice Date', 'Buyer Invoice Amount',
-        "Customer's Billing Pincode", "Customer's Billing State",
-        "Customer's Delivery Pincode", "Customer's Delivery State",
-        'Usual Price', 'Is Shopsy Order?', 'TDS Rate', 'TDS Amount',
-        'IRN', 'Business Name', 'Business GST Number', 'Beneficiary Name', 'IMEI'
-    ]
-    missing_cols = [col for col in required_cols if col not in df.columns]
-    if missing_cols:
-        raise ValueError(f"Flipkart Sales Report missing required columns: {', '.join(missing_cols)}")
-
-    records = []
-    for _, row in df.iterrows():
-        order_id = str(row.get('Order ID', '')).strip()
-        order_item_id = str(row.get('Order Item ID', '')).strip()
-        if not order_id or order_id.lower() == 'nan':
-            continue
-
-        def parse_dt(val):
-            try:
-                return pd.to_datetime(val)
-            except Exception:
-                return None
-
-        records.append(
-            FlipkartSalesReport(
-                user=user,
-                seller_gstin=str(row.get('Seller GSTIN', '') or '').strip(),
-                order_id=order_id,
-                order_item_id=order_item_id,
-                product_title_description=str(row.get('Product Title/Description', '') or '').strip()[:500],
-                fsn=str(row.get('FSN', '') or '').strip(),
-                sku=str(row.get('SKU', '') or '').strip(),
-                hsn_code=str(row.get('HSN Code', '') or '').strip(),
-                event_type=str(row.get('Event Type', '') or '').strip(),
-                event_sub_type=str(row.get('Event Sub Type', '') or '').strip(),
-                order_type=str(row.get('Order Type', '') or '').strip(),
-                fulfilment_type=str(row.get('Fulfilment Type', '') or '').strip(),
-                order_date=parse_dt(row.get('Order Date')),
-                order_approval_date=parse_dt(row.get('Order Approval Date')),
-                item_quantity=clean_number(row.get('Item Quantity', 0)),
-                order_shipped_from_state=str(row.get('Order Shipped From (State)', '') or '').strip(),
-                warehouse_id=str(row.get('Warehouse ID', '') or '').strip(),
-                price_before_discount=float(clean_currency(row.get('Price before discount', 0))),
-                total_discount=float(clean_currency(row.get('Total Discount', 0))),
-                seller_share=float(clean_currency(row.get('Seller Share', 0))),
-                bank_offer_share=float(clean_currency(row.get('Bank Offer Share', 0))),
-                price_after_discount=float(clean_currency(row.get('Price after discount (Price before discount-Total discount)', 0))),
-                shipping_charges=float(clean_currency(row.get('Shipping Charges', 0))),
-                final_invoice_amount=float(clean_currency(row.get('Final Invoice Amount (Price after discount+Shipping Charges)', 0))),
-                type_of_tax=str(row.get('Type of tax', '') or '').strip(),
-                taxable_value=float(clean_currency(row.get('Taxable Value (Final Invoice Amount -Taxes)', 0))),
-                cst_rate=float(clean_currency(row.get('CST Rate', 0))),
-                cst_amount=float(clean_currency(row.get('CST Amount', 0))),
-                vat_rate=float(clean_currency(row.get('VAT Rate', 0))),
-                vat_amount=float(clean_currency(row.get('VAT Amount', 0))),
-                luxury_cess_rate=float(clean_currency(row.get('Luxury Cess Rate', 0))),
-                luxury_cess_amount=float(clean_currency(row.get('Luxury Cess Amount', 0))),
-                igst_rate=float(clean_currency(row.get('IGST Rate', 0))),
-                igst_amount=float(clean_currency(row.get('IGST Amount', 0))),
-                cgst_rate=float(clean_currency(row.get('CGST Rate', 0))),
-                cgst_amount=float(clean_currency(row.get('CGST Amount', 0))),
-                sgst_rate=float(clean_currency(row.get('SGST Rate (or UTGST as applicable)', 0))),
-                sgst_amount=float(clean_currency(row.get('SGST Amount (Or UTGST as applicable)', 0))),
-                tcs_igst_rate=float(clean_currency(row.get('TCS IGST Rate', 0))),
-                tcs_igst_amount=float(clean_currency(row.get('TCS IGST Amount', 0))),
-                tcs_cgst_rate=float(clean_currency(row.get('TCS CGST Rate', 0))),
-                tcs_cgst_amount=float(clean_currency(row.get('TCS CGST Amount', 0))),
-                tcs_sgst_rate=float(clean_currency(row.get('TCS SGST Rate', 0))),
-                tcs_sgst_amount=float(clean_currency(row.get('TCS SGST Amount', 0))),
-                total_tcs_deducted=float(clean_currency(row.get('Total TCS Deducted', 0))),
-                buyer_invoice_id=str(row.get('Buyer Invoice ID', '') or '').strip(),
-                buyer_invoice_date=parse_dt(row.get('Buyer Invoice Date')),
-                buyer_invoice_amount=float(clean_currency(row.get('Buyer Invoice Amount', 0))),
-                customer_billing_pincode=str(row.get("Customer's Billing Pincode", '') or '').strip(),
-                customer_billing_state=str(row.get("Customer's Billing State", '') or '').strip(),
-                customer_delivery_pincode=str(row.get("Customer's Delivery Pincode", '') or '').strip(),
-                customer_delivery_state=str(row.get("Customer's Delivery State", '') or '').strip(),
-                usual_price=float(clean_currency(row.get('Usual Price', 0))),
-                is_shopsy_order=str(row.get('Is Shopsy Order?', '') or '').strip(),
-                tds_rate=float(clean_currency(row.get('TDS Rate', 0))),
-                tds_amount=float(clean_currency(row.get('TDS Amount', 0))),
-                irn=str(row.get('IRN', '') or '').strip(),
-                business_name=str(row.get('Business Name', '') or '').strip(),
-                business_gst_number=str(row.get('Business GST Number', '') or '').strip(),
-                beneficiary_name=str(row.get('Beneficiary Name', '') or '').strip(),
-                imei=str(row.get('IMEI', '') or '').strip(),
-            )
-        )
-
-    if records:
-        update_fields = [
-            'seller_gstin', 'product_title_description', 'fsn', 'sku', 'hsn_code',
-            'event_type', 'event_sub_type', 'order_type', 'fulfilment_type',
-            'order_date', 'order_approval_date', 'item_quantity',
-            'order_shipped_from_state', 'warehouse_id', 'price_before_discount',
-            'total_discount', 'seller_share', 'bank_offer_share',
-            'price_after_discount', 'shipping_charges', 'final_invoice_amount',
-            'type_of_tax', 'taxable_value', 'cst_rate', 'cst_amount',
-            'vat_rate', 'vat_amount', 'luxury_cess_rate', 'luxury_cess_amount',
-            'igst_rate', 'igst_amount', 'cgst_rate', 'cgst_amount',
-            'sgst_rate', 'sgst_amount', 'tcs_igst_rate', 'tcs_igst_amount',
-            'tcs_cgst_rate', 'tcs_cgst_amount', 'tcs_sgst_rate', 'tcs_sgst_amount',
-            'total_tcs_deducted', 'buyer_invoice_id', 'buyer_invoice_date',
-            'buyer_invoice_amount', 'customer_billing_pincode', 'customer_billing_state',
-            'customer_delivery_pincode', 'customer_delivery_state', 'usual_price',
-            'is_shopsy_order', 'tds_rate', 'tds_amount', 'irn', 'business_name',
-            'business_gst_number', 'beneficiary_name', 'imei',
-        ]
-        batch_size = 5_000
-        for i in range(0, len(records), batch_size):
-            FlipkartSalesReport.objects.bulk_create(
-                records[i:i + batch_size],
-                **_get_upsert_kwargs(
-                    unique_fields=['user', 'order_id', 'order_item_id'],
-                    update_fields=update_fields
-                )
-            )
-
-    print(f"[FlipkartSalesReport] Processed and upserted {len(records)} records.")
-
-
-# ---------------------------------------------------------------------------
-# Flipkart Current Inventory Report
-# ---------------------------------------------------------------------------
-
-def process_flipkart_inventory_file(file_obj, user):
-    """
-    Upsert Flipkart Current Inventory Report rows scoped to the user.
-    Validates required columns before processing.
-    """
-    df = pd.read_csv(file_obj)
-
-    required_cols = [
-        'Warehouse Id', 'SKU', 'Title', 'Listing Id', 'FSN', 'Brand',
-        'Flipkart Selling Price', 'Live on Website',
-        'Sales 7D', 'Sales 14D', 'Sales 30D', 'Sales 60D', 'Sales 90D',
-        'B2B Scheduled', 'Transfers Scheduled', 'B2B Shipped', 'Transfers Shipped',
-        'B2B Receiving', 'Transfers Receiving',
-        'Reserved for Orders and Recalls', 'Reserved for Internal Processing',
-        'Returns Processing', 'Orders to Dispatch', 'Recalls to Dispatch',
-        'Damaged', 'QC Reject', 'Catalog Reject', 'Returns Reject',
-        'Seller Return Reject', 'Miscellaneous',
-        'Length (in cm)', 'Breadth (in cm)', 'Height (in cm)', 'Weight (in kg)',
-        'Fulfilment Type', 'F Assured Badge'
-    ]
-    missing_cols = [col for col in required_cols if col not in df.columns]
-    if missing_cols:
-        raise ValueError(f"Flipkart Inventory Report missing required columns: {', '.join(missing_cols)}")
-
-    records = []
-    for _, row in df.iterrows():
-        sku = str(row.get('SKU', '')).strip()
-        if not sku or sku.lower() == 'nan':
-            continue
-
-        records.append(
-            FlipkartCurrentInventoryReport(
-                user=user,
-                warehouse_id=str(row.get('Warehouse Id', '') or '').strip(),
-                sku=sku,
-                title=str(row.get('Title', '') or '').strip()[:255],
-                listing_id=str(row.get('Listing Id', '') or '').strip(),
-                fsn=str(row.get('FSN', '') or '').strip(),
-                brand=str(row.get('Brand', '') or '').strip(),
-                flipkart_selling_price=float(clean_currency(row.get('Flipkart Selling Price', 0))),
-                live_on_website=str(row.get('Live on Website', '') or '').strip(),
-                sales_7d=clean_number(row.get('Sales 7D', 0)),
-                sales_14d=clean_number(row.get('Sales 14D', 0)),
-                sales_30d=clean_number(row.get('Sales 30D', 0)),
-                sales_60d=clean_number(row.get('Sales 60D', 0)),
-                sales_90d=clean_number(row.get('Sales 90D', 0)),
-                b2b_scheduled=clean_number(row.get('B2B Scheduled', 0)),
-                transfers_scheduled=clean_number(row.get('Transfers Scheduled', 0)),
-                b2b_shipped=clean_number(row.get('B2B Shipped', 0)),
-                transfers_shipped=clean_number(row.get('Transfers Shipped', 0)),
-                b2b_receiving=clean_number(row.get('B2B Receiving', 0)),
-                transfers_receiving=clean_number(row.get('Transfers Receiving', 0)),
-                reserved_for_orders_and_recalls=clean_number(row.get('Reserved for Orders and Recalls', 0)),
-                reserved_for_internal_processing=clean_number(row.get('Reserved for Internal Processing', 0)),
-                returns_processing=clean_number(row.get('Returns Processing', 0)),
-                orders_to_dispatch=clean_number(row.get('Orders to Dispatch', 0)),
-                recalls_to_dispatch=clean_number(row.get('Recalls to Dispatch', 0)),
-                damaged=clean_number(row.get('Damaged', 0)),
-                qc_reject=clean_number(row.get('QC Reject', 0)),
-                catalog_reject=clean_number(row.get('Catalog Reject', 0)),
-                returns_reject=clean_number(row.get('Returns Reject', 0)),
-                seller_return_reject=clean_number(row.get('Seller Return Reject', 0)),
-                miscellaneous=clean_number(row.get('Miscellaneous', 0)),
-                length_in_cm=float(clean_currency(row.get('Length (in cm)', 0))),
-                breadth_in_cm=float(clean_currency(row.get('Breadth (in cm)', 0))),
-                height_in_cm=float(clean_currency(row.get('Height (in cm)', 0))),
-                weight_in_kg=float(clean_currency(row.get('Weight (in kg)', 0))),
-                fulfilment_type=str(row.get('Fulfilment Type', '') or '').strip(),
-                f_assured_badge=str(row.get('F Assured Badge', '') or '').strip(),
-            )
-        )
-
-    if records:
-        update_fields = [
-            'title', 'listing_id', 'fsn', 'brand', 'flipkart_selling_price',
-            'live_on_website', 'sales_7d', 'sales_14d', 'sales_30d', 'sales_60d',
-            'sales_90d', 'b2b_scheduled', 'transfers_scheduled', 'b2b_shipped',
-            'transfers_shipped', 'b2b_receiving', 'transfers_receiving',
-            'reserved_for_orders_and_recalls', 'reserved_for_internal_processing',
-            'returns_processing', 'orders_to_dispatch', 'recalls_to_dispatch',
-            'damaged', 'qc_reject', 'catalog_reject', 'returns_reject',
-            'seller_return_reject', 'miscellaneous', 'length_in_cm', 'breadth_in_cm',
-            'height_in_cm', 'weight_in_kg', 'fulfilment_type', 'f_assured_badge',
-        ]
-        batch_size = 5_000
-        for i in range(0, len(records), batch_size):
-            FlipkartCurrentInventoryReport.objects.bulk_create(
-                records[i:i + batch_size],
-                **_get_upsert_kwargs(
-                    unique_fields=['user', 'warehouse_id', 'sku'],
-                    update_fields=update_fields
-                )
-            )
-
-    print(f"[FlipkartInventory] Processed and upserted {len(records)} records.")
-
-
-# ---------------------------------------------------------------------------
-# Flipkart PCA Daily Report
-# ---------------------------------------------------------------------------
-
-def process_flipkart_pca_file(file_obj, user):
-    """
-    Upsert Flipkart PCA Daily Report rows scoped to the user.
-    Validates required columns before processing.
-    """
-    df = pd.read_excel(file_obj)
-
-    required_cols = [
-        'Start Time', 'End Time', 'campaign_id', 'campaign_name',
-        'ad_group_id', 'ad_group_name', 'Date', 'banner_group_spend',
-        'views', 'clicks', 'CTR', 'average_cpc', 'DIRECT PPV',
-        'DIRECT UNITS', 'INDIRECT UNITS', 'CVR', 'DIRECT REVENUE',
-        'INDIRECT REVENUE', 'Direct ROI', 'Indirect ROI'
-    ]
-    missing_cols = [col for col in required_cols if col not in df.columns]
-    if missing_cols:
-        raise ValueError(f"Flipkart PCA Report missing required columns: {', '.join(missing_cols)}")
-
-    records = []
-    for _, row in df.iterrows():
-        campaign_id = str(row.get('campaign_id', '')).strip()
-        ad_group_id = str(row.get('ad_group_id', '')).strip()
-        if not campaign_id or campaign_id.lower() == 'nan':
-            continue
-
-        def parse_dt(val):
-            try:
-                return pd.to_datetime(val)
-            except Exception:
-                return None
-
-        try:
-            row_date = pd.to_datetime(row.get('Date')).date()
-        except Exception:
-            row_date = None
-
-        records.append(
-            PCADailyReport(
-                user=user,
-                start_time=parse_dt(row.get('Start Time')),
-                end_time=parse_dt(row.get('End Time')),
-                campaign_id=campaign_id,
-                campaign_name=str(row.get('campaign_name', '') or '').strip(),
-                ad_group_id=ad_group_id,
-                ad_group_name=str(row.get('ad_group_name', '') or '').strip(),
-                date=row_date,
-                banner_group_spend=float(clean_currency(row.get('banner_group_spend', 0))),
-                views=clean_number(row.get('views', 0)),
-                clicks=clean_number(row.get('clicks', 0)),
-                ctr=float(clean_currency(row.get('CTR', 0))),
-                average_cpc=float(clean_currency(row.get('average_cpc', 0))),
-                direct_ppv=float(clean_currency(row.get('DIRECT PPV', 0))),
-                direct_units=clean_number(row.get('DIRECT UNITS', 0)),
-                indirect_units=clean_number(row.get('INDIRECT UNITS', 0)),
-                cvr=float(clean_currency(row.get('CVR', 0))),
-                direct_revenue=float(clean_currency(row.get('DIRECT REVENUE', 0))),
-                indirect_revenue=float(clean_currency(row.get('INDIRECT REVENUE', 0))),
-                direct_roi=float(clean_currency(row.get('Direct ROI', 0))),
-                indirect_roi=float(clean_currency(row.get('Indirect ROI', 0))),
-            )
-        )
-
-    if records:
-        update_fields = [
-            'start_time', 'end_time', 'campaign_name', 'ad_group_name',
-            'banner_group_spend', 'views', 'clicks', 'ctr', 'average_cpc',
-            'direct_ppv', 'direct_units', 'indirect_units', 'cvr',
-            'direct_revenue', 'indirect_revenue', 'direct_roi', 'indirect_roi',
-        ]
-        batch_size = 5_000
-        for i in range(0, len(records), batch_size):
-            PCADailyReport.objects.bulk_create(
-                records[i:i + batch_size],
-                **_get_upsert_kwargs(
-                    unique_fields=['user', 'campaign_id', 'ad_group_id', 'date'],
-                    update_fields=update_fields
-                )
-            )
-
-    print(f"[PCADailyReport] Processed and upserted {len(records)} records.")
-
-
-# ---------------------------------------------------------------------------
-# Flipkart PLA FSN Report
-# ---------------------------------------------------------------------------
-
-def process_flipkart_pla_file(file_obj, user):
-    """
-    Upsert Flipkart PLA FSN Report rows scoped to the user.
-    Validates required columns before processing.
-    """
-    df = pd.read_excel(file_obj)
-
-    required_cols = [
-        'Start Time', 'End Time', 'Campaign ID', 'Campaign Name',
-        'Ad Group ID', 'AdGroup Name', 'Advertised FSN ID',
-        'Advertised Product Name', 'Views', 'Clicks', 'CTR', 'CVR',
-        'Ad Spend', 'Units Sold (Direct)', 'Units Sold (Indirect)',
-        'Direct Revenue', 'Indirect Revenue', 'ROI (Direct)', 'ROI (Indirect)'
-    ]
-    missing_cols = [col for col in required_cols if col not in df.columns]
-    if missing_cols:
-        raise ValueError(f"Flipkart PLA Report missing required columns: {', '.join(missing_cols)}")
-
-    records = []
-    for _, row in df.iterrows():
-        fsn_id = str(row.get('Advertised FSN ID', '')).strip()
-        campaign_id = str(row.get('Campaign ID', '')).strip()
-        ad_group_id = str(row.get('Ad Group ID', '')).strip()
-        if not fsn_id or fsn_id.lower() == 'nan':
-            continue
-
-        def parse_dt(val):
-            try:
-                return pd.to_datetime(val)
-            except Exception:
-                return None
-
-        records.append(
-            PLAFSNReport(
-                user=user,
-                start_time=parse_dt(row.get('Start Time')),
-                end_time=parse_dt(row.get('End Time')),
-                campaign_id=campaign_id,
-                campaign_name=str(row.get('Campaign Name', '') or '').strip(),
-                ad_group_id=ad_group_id,
-                ad_group_name=str(row.get('AdGroup Name', '') or '').strip(),
-                advertised_fsn_id=fsn_id,
-                advertised_product_name=str(row.get('Advertised Product Name', '') or '').strip(),
-                views=clean_number(row.get('Views', 0)),
-                clicks=clean_number(row.get('Clicks', 0)),
-                ctr=float(clean_currency(row.get('CTR', 0))),
-                cvr=float(clean_currency(row.get('CVR', 0))),
-                ad_spend=float(clean_currency(row.get('Ad Spend', 0))),
-                units_sold_direct=clean_number(row.get('Units Sold (Direct)', 0)),
-                units_sold_indirect=clean_number(row.get('Units Sold (Indirect)', 0)),
-                direct_revenue=float(clean_currency(row.get('Direct Revenue', 0))),
-                indirect_revenue=float(clean_currency(row.get('Indirect Revenue', 0))),
-                roi_direct=float(clean_currency(row.get('ROI (Direct)', 0))),
-                roi_indirect=float(clean_currency(row.get('ROI (Indirect)', 0))),
-            )
-        )
-
-    if records:
-        update_fields = [
-            'start_time', 'end_time', 'campaign_name', 'ad_group_name',
-            'advertised_product_name', 'views', 'clicks', 'ctr', 'cvr',
-            'ad_spend', 'units_sold_direct', 'units_sold_indirect',
-            'direct_revenue', 'indirect_revenue', 'roi_direct', 'roi_indirect',
-        ]
-        batch_size = 5_000
-        for i in range(0, len(records), batch_size):
-            PLAFSNReport.objects.bulk_create(
-                records[i:i + batch_size],
-                **_get_upsert_kwargs(
-                    unique_fields=['user', 'campaign_id', 'ad_group_id', 'advertised_fsn_id'],
-                    update_fields=update_fields
-                )
-            )
-
-    print(f"[PLAFSNReport] Processed and upserted {len(records)} records.")
-
-
-# ---------------------------------------------------------------------------
 # Dashboard aggregation
 # ---------------------------------------------------------------------------
 
@@ -743,6 +330,554 @@ def generate_dashboard_data(user):
         )
 
     # Refresh materialized-view caches for all three dashboards
+    from apps.dashboard.services.materialized_services import refresh_materialized_views
+    try:
+        refresh_materialized_views(user)
+    except Exception as exc:
+        print(f"[MaterializedViews] Cache refresh failed for user {user}: {exc}")
+
+
+# ===========================================================================
+# SLIM FLIPKART PROCESSING FUNCTIONS
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# FK Search Traffic Report
+# ---------------------------------------------------------------------------
+
+def process_fk_search_traffic(file_obj, user):
+    """
+    Parse Flipkart Search Traffic Report (.xlsx).
+    Extracts FSN from Listing Id using Mid(Listing Id, 4, 16) → listing_id[3:19].
+    Saves per-FSN per-date traffic & sales data.
+    """
+    df = pd.read_excel(file_obj)
+
+    required_cols = ['Listing Id', 'SKU Id', 'Vertical', 'Impression Date',
+                     'Product Clicks', 'Sales', 'Revenue']
+    missing = [c for c in required_cols if c not in df.columns]
+    if missing:
+        raise ValueError(f"FK Search Traffic missing columns: {', '.join(missing)}")
+
+    records = []
+    for _, row in df.iterrows():
+        listing_id = str(row.get('Listing Id', '')).strip()
+        if not listing_id or listing_id.lower() == 'nan' or len(listing_id) < 19:
+            continue
+
+        fsn = listing_id[3:19]  # Mid(Listing Id, 4, 16)
+
+        try:
+            row_date = pd.to_datetime(row.get('Impression Date')).date()
+        except Exception:
+            continue
+
+        # Page Views = Product Clicks column from Search Traffic
+        page_views = clean_number(row.get('Product Clicks', 0))
+        product_clicks = clean_number(row.get('Product Clicks', 0))
+        sales_val = clean_number(row.get('Sales', 0))
+        revenue_val = float(clean_currency(row.get('Revenue', 0)))
+        sku = str(row.get('SKU Id', '') or '').strip()
+        vertical = str(row.get('Vertical', '') or '').strip()
+
+        records.append(
+            FlipkartSearchTraffic(
+                user=user, fsn=fsn, sku=sku, vertical=vertical,
+                date=row_date, page_views=page_views,
+                product_clicks=product_clicks, sales=sales_val,
+                revenue=revenue_val,
+            )
+        )
+
+    if records:
+        batch_size = 10_000
+        for i in range(0, len(records), batch_size):
+            FlipkartSearchTraffic.objects.bulk_create(
+                records[i:i + batch_size],
+                **_get_upsert_kwargs(
+                    unique_fields=['user', 'fsn', 'date'],
+                    update_fields=['sku', 'vertical', 'page_views',
+                                   'product_clicks', 'sales', 'revenue']
+                )
+            )
+
+    print(f"[FK SearchTraffic] Processed {len(records)} records.")
+
+
+# ---------------------------------------------------------------------------
+# FK Category Report
+# ---------------------------------------------------------------------------
+
+def process_fk_category(file_obj, user):
+    """
+    Parse Flipkart Category Dashboard (.xlsx).
+    Columns: FSN ID, SKU, Portfolio, Cat, Subcat.
+    """
+    df = pd.read_excel(file_obj)
+
+    required_cols = ['FSN ID', 'Portfolio', 'Cat', 'Subcat']
+    missing = [c for c in required_cols if c not in df.columns]
+    if missing:
+        raise ValueError(f"FK Category missing columns: {', '.join(missing)}")
+
+    records = []
+    for _, row in df.iterrows():
+        fsn = str(row.get('FSN ID', '')).strip()
+        if not fsn or fsn.lower() == 'nan':
+            continue
+
+        records.append(
+            FlipkartCategoryMap(
+                user=user, fsn=fsn,
+                sku=str(row.get('SKU', '') or '').strip(),
+                portfolio=str(row.get('Portfolio', '') or '').strip(),
+                category=str(row.get('Cat', '') or '').strip(),
+                subcategory=str(row.get('Subcat', '') or '').strip(),
+            )
+        )
+
+    if records:
+        FlipkartCategoryMap.objects.bulk_create(
+            records,
+            **_get_upsert_kwargs(
+                unique_fields=['user', 'fsn'],
+                update_fields=['sku', 'portfolio', 'category', 'subcategory']
+            )
+        )
+
+    print(f"[FK Category] Processed {len(records)} records.")
+
+
+# ---------------------------------------------------------------------------
+# FK Price Report
+# ---------------------------------------------------------------------------
+
+def process_fk_price(file_obj, user):
+    """
+    Parse Flipkart Price file (.xlsx).
+    Columns: Flipkart Serial Number → fsn, Deal → price.
+    """
+    df = pd.read_excel(file_obj)
+
+    required_cols = ['Flipkart Serial Number', 'Deal']
+    missing = [c for c in required_cols if c not in df.columns]
+    if missing:
+        raise ValueError(f"FK Price missing columns: {', '.join(missing)}")
+
+    records = []
+    for _, row in df.iterrows():
+        fsn = str(row.get('Flipkart Serial Number', '')).strip()
+        if not fsn or fsn.lower() == 'nan':
+            continue
+
+        price_val = float(clean_currency(row.get('Deal', 0)))
+        records.append(FlipkartPrice(user=user, fsn=fsn, price=price_val))
+
+    if records:
+        FlipkartPrice.objects.bulk_create(
+            records,
+            **_get_upsert_kwargs(
+                unique_fields=['user', 'fsn'],
+                update_fields=['price']
+            )
+        )
+
+    print(f"[FK Price] Processed {len(records)} records.")
+
+
+# ---------------------------------------------------------------------------
+# FK PCA Attribution Report
+# ---------------------------------------------------------------------------
+
+def process_fk_pca(file_obj, user):
+    """
+    Parse Flipkart PCA Attribution (.csv).
+    File has 2 metadata rows (Start Time, End Time) then the header row.
+    Columns: campaign_id, campaign_name, Date, fsn_id.
+    """
+    df = pd.read_csv(file_obj, skiprows=2)
+
+    required_cols = ['campaign_id', 'campaign_name', 'Date', 'fsn_id']
+    missing = [c for c in required_cols if c not in df.columns]
+    if missing:
+        raise ValueError(f"FK PCA missing columns: {', '.join(missing)}")
+
+    records = []
+    for _, row in df.iterrows():
+        campaign_id = str(row.get('campaign_id', '')).strip()
+        fsn_id = str(row.get('fsn_id', '')).strip()
+        if not campaign_id or campaign_id.lower() == 'nan':
+            continue
+        if not fsn_id or fsn_id.lower() == 'nan':
+            continue
+
+        try:
+            row_date = pd.to_datetime(row.get('Date')).date()
+        except Exception:
+            row_date = None
+
+        records.append(
+            FlipkartPCA(
+                user=user,
+                campaign_id=campaign_id,
+                campaign_name=str(row.get('campaign_name', '') or '').strip(),
+                date=row_date,
+                fsn_id=fsn_id,
+            )
+        )
+
+    if records:
+        FlipkartPCA.objects.bulk_create(
+            records,
+            **_get_upsert_kwargs(
+                unique_fields=['user', 'campaign_id', 'fsn_id', 'date'],
+                update_fields=['campaign_name']
+            )
+        )
+
+    print(f"[FK PCA] Processed {len(records)} records.")
+
+
+# ---------------------------------------------------------------------------
+# FK PLA FSN Report
+# ---------------------------------------------------------------------------
+
+def process_fk_pla(file_obj, user):
+    """
+    Parse Flipkart PLA FSN Report (.csv).
+    File has 2 metadata rows then the header row.
+    Columns: Campaign ID, Advertised FSN ID, Ad Spend.
+    """
+    df = pd.read_csv(file_obj, skiprows=2)
+
+    required_cols = ['Campaign ID', 'Advertised FSN ID', 'Ad Spend']
+    missing = [c for c in required_cols if c not in df.columns]
+    if missing:
+        raise ValueError(f"FK PLA missing columns: {', '.join(missing)}")
+
+    records = []
+    for _, row in df.iterrows():
+        campaign_id = str(row.get('Campaign ID', '')).strip()
+        fsn_id = str(row.get('Advertised FSN ID', '')).strip()
+        if not fsn_id or fsn_id.lower() == 'nan':
+            continue
+
+        records.append(
+            FlipkartPLA(
+                user=user,
+                campaign_id=campaign_id,
+                fsn_id=fsn_id,
+                ad_spend=float(clean_currency(row.get('Ad Spend', 0))),
+            )
+        )
+
+    if records:
+        FlipkartPLA.objects.bulk_create(
+            records,
+            **_get_upsert_kwargs(
+                unique_fields=['user', 'campaign_id', 'fsn_id'],
+                update_fields=['ad_spend']
+            )
+        )
+
+    print(f"[FK PLA] Processed {len(records)} records.")
+
+
+# ---------------------------------------------------------------------------
+# FK Sales Invoice (Sales Report file — both sheets)
+# ---------------------------------------------------------------------------
+
+def process_fk_sales_invoice(file_obj, user):
+    """
+    Parse Flipkart Sales Report (.xlsx).
+    - From 'Sales Report' sheet: get Order Item ID → FSN + Item Quantity mapping
+    - From 'Cash Back Report' sheet: get Taxable Value & Invoice Amount
+    - Join by Order Item ID to attach FSN to Cash Back rows.
+    """
+    xl = pd.ExcelFile(file_obj)
+
+    # --- Sales Report sheet: extract FSN + Item Quantity per Order Item ---
+    fsn_map = {}
+    if 'Sales Report' in xl.sheet_names:
+        df_sales = pd.read_excel(xl, sheet_name='Sales Report')
+        for _, row in df_sales.iterrows():
+            oid = str(row.get('Order Item ID', '')).strip().replace('"', '')
+            fsn = str(row.get('FSN', '')).strip().replace('"', '')
+            qty = clean_number(row.get('Item Quantity', 0))
+            if oid and oid.lower() != 'nan' and fsn and fsn.lower() != 'nan':
+                fsn_map[oid] = {'fsn': fsn, 'qty': qty}
+
+    # --- Cash Back Report sheet: taxable value & invoice amount ---
+    records = []
+    if 'Cash Back Report' in xl.sheet_names:
+        df_cb = pd.read_excel(xl, sheet_name='Cash Back Report')
+
+        for _, row in df_cb.iterrows():
+            order_id = str(row.get('Order ID', '')).strip()
+            order_item_id = str(row.get('Order Item ID', '')).strip()
+            if not order_id or order_id.lower() == 'nan':
+                continue
+
+            # Look up FSN from the Sales Report sheet
+            info = fsn_map.get(order_item_id, {})
+            fsn = info.get('fsn', '')
+            qty = info.get('qty', 0)
+
+            records.append(
+                FlipkartSalesInvoice(
+                    user=user,
+                    order_id=order_id,
+                    order_item_id=order_item_id,
+                    fsn=fsn,
+                    item_quantity=qty,
+                    taxable_value=float(clean_currency(row.get('Taxable Value', 0))),
+                    invoice_amount=float(clean_currency(row.get('Invoice Amount', 0))),
+                )
+            )
+
+    if records:
+        batch_size = 5_000
+        for i in range(0, len(records), batch_size):
+            FlipkartSalesInvoice.objects.bulk_create(
+                records[i:i + batch_size],
+                **_get_upsert_kwargs(
+                    unique_fields=['user', 'order_id', 'order_item_id'],
+                    update_fields=['fsn', 'item_quantity', 'taxable_value', 'invoice_amount']
+                )
+            )
+
+    print(f"[FK SalesInvoice] Processed {len(records)} records.")
+
+
+# ---------------------------------------------------------------------------
+# FK Coupon Value Report
+# ---------------------------------------------------------------------------
+
+def process_fk_coupon(file_obj, user):
+    """
+    Parse Flipkart Coupon Value Report (.xlsx).
+    File has 2 header rows to skip.
+    Columns: Flipkart Serial Number → fsn, Coupon Value.
+    """
+    df = pd.read_excel(file_obj, skiprows=2)
+
+    required_cols = ['Flipkart Serial Number', 'Coupon Value']
+    missing = [c for c in required_cols if c not in df.columns]
+    if missing:
+        raise ValueError(f"FK Coupon missing columns: {', '.join(missing)}")
+
+    records = []
+    for _, row in df.iterrows():
+        fsn = str(row.get('Flipkart Serial Number', '')).strip()
+        if not fsn or fsn.lower() == 'nan':
+            continue
+
+        records.append(
+            FlipkartCoupon(
+                user=user, fsn=fsn,
+                coupon_value=float(clean_currency(row.get('Coupon Value', 0))),
+            )
+        )
+
+    if records:
+        FlipkartCoupon.objects.bulk_create(
+            records,
+            **_get_upsert_kwargs(
+                unique_fields=['user', 'fsn'],
+                update_fields=['coupon_value']
+            )
+        )
+
+    print(f"[FK Coupon] Processed {len(records)} records.")
+
+
+# ===========================================================================
+# Flipkart Dashboard Aggregation
+# ===========================================================================
+
+def generate_flipkart_dashboard_data(user):
+    """
+    Merges all 7 slim Flipkart tables at FSN level into
+    FlipkartProcessedDashboardData — the Flipkart equivalent of
+    ProcessedDashboardData.
+
+    Spend chain: PCA (fsn → campaign_id) → PLA (campaign_id + fsn → ad_spend)
+    Coupon validation: coupon_value × item_quantity ≈ invoice_amount
+    """
+    FlipkartProcessedDashboardData.objects.filter(user=user).delete()
+
+    # 1) Base: Search Traffic (FSN + date)
+    traffic_qs = FlipkartSearchTraffic.objects.filter(user=user).values()
+    if not traffic_qs:
+        print("[FK Dashboard] No search traffic data — skipping.")
+        return
+
+    df_traffic = pd.DataFrame(list(traffic_qs))
+    df_traffic = df_traffic[['fsn', 'sku', 'vertical', 'date',
+                              'page_views', 'product_clicks', 'sales', 'revenue']]
+
+    # 2) Category mapping
+    cat_qs = FlipkartCategoryMap.objects.filter(user=user).values()
+    df_cat = pd.DataFrame(list(cat_qs)) if cat_qs else pd.DataFrame()
+    if not df_cat.empty:
+        df_cat = df_cat[['fsn', 'portfolio', 'category', 'subcategory']]
+
+    # 3) Price
+    price_qs = FlipkartPrice.objects.filter(user=user).values()
+    df_price = pd.DataFrame(list(price_qs)) if price_qs else pd.DataFrame()
+    if not df_price.empty:
+        df_price = df_price[['fsn', 'price']]
+
+    # 4) Spend: PCA (fsn → campaign_id) + PLA (campaign_id + fsn → ad_spend)
+    pca_qs = FlipkartPCA.objects.filter(user=user).values()
+    pla_qs = FlipkartPLA.objects.filter(user=user).values()
+
+    df_spend = pd.DataFrame(columns=['fsn', 'total_spend'])
+    if pca_qs and pla_qs:
+        df_pca = pd.DataFrame(list(pca_qs))[['campaign_id', 'fsn_id']]
+        df_pla = pd.DataFrame(list(pla_qs))[['campaign_id', 'fsn_id', 'ad_spend']]
+
+        # Join PCA with PLA on campaign_id + fsn_id
+        df_spend_raw = pd.merge(
+            df_pca, df_pla,
+            on=['campaign_id', 'fsn_id'],
+            how='inner'
+        )
+        if not df_spend_raw.empty:
+            # Aggregate spend per FSN
+            df_spend = (
+                df_spend_raw
+                .groupby('fsn_id')['ad_spend']
+                .sum()
+                .reset_index()
+                .rename(columns={'fsn_id': 'fsn', 'ad_spend': 'total_spend'})
+            )
+
+    # 5) Sales Invoice (aggregated per FSN)
+    inv_qs = FlipkartSalesInvoice.objects.filter(user=user).values()
+    df_inv = pd.DataFrame(columns=['fsn', 'taxable_value', 'invoice_amount', 'item_quantity'])
+    if inv_qs:
+        df_inv_raw = pd.DataFrame(list(inv_qs))
+        if not df_inv_raw.empty and 'fsn' in df_inv_raw.columns:
+            df_inv_raw = df_inv_raw[df_inv_raw['fsn'].notna() & (df_inv_raw['fsn'] != '')]
+            if not df_inv_raw.empty:
+                df_inv = (
+                    df_inv_raw
+                    .groupby('fsn')
+                    .agg({
+                        'taxable_value': 'sum',
+                        'invoice_amount': 'sum',
+                        'item_quantity': 'sum',
+                    })
+                    .reset_index()
+                )
+
+    # 6) Coupon
+    coupon_qs = FlipkartCoupon.objects.filter(user=user).values()
+    df_coupon = pd.DataFrame(columns=['fsn', 'coupon_value'])
+    if coupon_qs:
+        df_coupon = pd.DataFrame(list(coupon_qs))
+        if not df_coupon.empty:
+            df_coupon = df_coupon[['fsn', 'coupon_value']]
+
+    # --- Merge everything onto traffic base ---
+    df = df_traffic.copy()
+
+    if not df_cat.empty:
+        df = pd.merge(df, df_cat, on='fsn', how='left')
+    else:
+        df['portfolio'] = ''
+        df['category'] = ''
+        df['subcategory'] = ''
+
+    if not df_price.empty:
+        df = pd.merge(df, df_price, on='fsn', how='left')
+    else:
+        df['price'] = 0.0
+
+    if not df_spend.empty:
+        df = pd.merge(df, df_spend, on='fsn', how='left')
+    else:
+        df['total_spend'] = 0.0
+
+    if not df_inv.empty:
+        df = pd.merge(df, df_inv, on='fsn', how='left')
+    else:
+        df['taxable_value'] = 0.0
+        df['invoice_amount'] = 0.0
+        df['item_quantity'] = 0
+
+    if not df_coupon.empty:
+        df = pd.merge(df, df_coupon, on='fsn', how='left')
+    else:
+        df['coupon_value'] = 0.0
+
+    # Fill NaN
+    fill = {
+        'portfolio': '', 'category': '', 'subcategory': '',
+        'price': 0.0, 'total_spend': 0.0,
+        'taxable_value': 0.0, 'invoice_amount': 0.0,
+        'item_quantity': 0, 'coupon_value': 0.0,
+    }
+    for col, val in fill.items():
+        if col in df.columns:
+            df[col] = df[col].fillna(val)
+
+    # Coupon validation: coupon_value × item_quantity ≈ invoice_amount
+    df['coupon_total'] = df['coupon_value'] * df['item_quantity']
+    df['coupon_error'] = False
+    mask = (df['coupon_total'] > 0) & (df['invoice_amount'] > 0)
+    df.loc[mask, 'coupon_error'] = ~(
+        (df.loc[mask, 'coupon_total'] - df.loc[mask, 'invoice_amount']).abs()
+        < 1.0  # tolerance of ₹1
+    )
+
+    # Build records
+    records = []
+    for row in df.to_dict('records'):
+        records.append(
+            FlipkartProcessedDashboardData(
+                user=user,
+                date=row['date'],
+                fsn=row['fsn'],
+                platform='Flipkart',
+                portfolio=str(row.get('portfolio', '')) or '',
+                category=str(row.get('category', '')) or '',
+                subcategory=str(row.get('subcategory', '')) or '',
+                price=float(row.get('price', 0)),
+                pageviews=clean_number(row.get('page_views', 0)),
+                units=clean_number(row.get('sales', 0)),
+                orders=0,  # No order data for Flipkart
+                revenue=float(row.get('revenue', 0)),
+                total_spend=float(row.get('total_spend', 0)),
+                spend_sp=0.0,
+                spend_sb=0.0,
+                spend_sd=0.0,
+                taxable_value=float(row.get('taxable_value', 0)),
+                invoice_amount=float(row.get('invoice_amount', 0)),
+                coupon_total=float(row.get('coupon_total', 0)),
+                coupon_error=bool(row.get('coupon_error', False)),
+            )
+        )
+
+    batch_size = 10_000
+    for i in range(0, len(records), batch_size):
+        FlipkartProcessedDashboardData.objects.bulk_create(
+            records[i:i + batch_size],
+            **_get_upsert_kwargs(
+                unique_fields=['user', 'date', 'fsn'],
+                update_fields=[
+                    'platform', 'portfolio', 'category', 'subcategory', 'price',
+                    'pageviews', 'units', 'orders', 'revenue',
+                    'total_spend', 'spend_sp', 'spend_sb', 'spend_sd',
+                    'taxable_value', 'invoice_amount', 'coupon_total', 'coupon_error',
+                ]
+            )
+        )
+
+    print(f"[FK Dashboard] Generated {len(records)} processed records.")
+
+    # Refresh materialized-view caches (with combined Amazon + Flipkart data)
     from apps.dashboard.services.materialized_services import refresh_materialized_views
     try:
         refresh_materialized_views(user)

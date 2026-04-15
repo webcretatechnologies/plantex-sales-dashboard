@@ -27,25 +27,28 @@ document.querySelectorAll('input[name="platform"]').forEach(radio => {
     });
 });
 
+// ---------------------------------------------------------------------------
+// File input IDs and list IDs — grouped by platform
+// ---------------------------------------------------------------------------
+const AMAZON_IDS = ['csvInput', 'catFile', 'spendFile', 'priceFile'];
+const AMAZON_LISTS = ['fileList', 'catFileList', 'spendFileList', 'priceFileList'];
+
+const FK_IDS = [
+    'fkSearchTrafficFile', 'fkCategoryFile', 'fkPriceFile',
+    'fkPcaNewFile', 'fkPlaNewFile', 'fkSalesInvoiceFile', 'fkCouponFile'
+];
+const FK_LISTS = [
+    'fkSearchTrafficFileList', 'fkCategoryFileList', 'fkPriceFileList',
+    'fkPcaNewFileList', 'fkPlaNewFileList', 'fkSalesInvoiceFileList', 'fkCouponFileList'
+];
+
 function clearAllFiles() {
     // Amazon inputs
-    ['csvInput', 'catFile', 'spendFile', 'priceFile'].forEach(id => {
-        let el = document.getElementById(id);
-        if (el) el.value = '';
-    });
-    ['fileList', 'catFileList', 'spendFileList', 'priceFileList'].forEach(id => {
-        let el = document.getElementById(id);
-        if (el) el.innerHTML = '';
-    });
+    AMAZON_IDS.forEach(id => { let el = document.getElementById(id); if (el) el.value = ''; });
+    AMAZON_LISTS.forEach(id => { let el = document.getElementById(id); if (el) el.innerHTML = ''; });
     // Flipkart inputs
-    ['fkSalesFile', 'fkInventoryFile', 'fkPcaFile', 'fkPlaFile'].forEach(id => {
-        let el = document.getElementById(id);
-        if (el) el.value = '';
-    });
-    ['fkSalesFileList', 'fkInventoryFileList', 'fkPcaFileList', 'fkPlaFileList'].forEach(id => {
-        let el = document.getElementById(id);
-        if (el) el.innerHTML = '';
-    });
+    FK_IDS.forEach(id => { let el = document.getElementById(id); if (el) el.value = ''; });
+    FK_LISTS.forEach(id => { let el = document.getElementById(id); if (el) el.innerHTML = ''; });
 }
 
 // ---------------------------------------------------------------------------
@@ -58,8 +61,9 @@ function updateProcessButton() {
     if (platform === 'amazon') {
         hasFiles = document.getElementById('csvInput').files.length > 0;
     } else {
-        ['fkSalesFile', 'fkInventoryFile', 'fkPcaFile', 'fkPlaFile'].forEach(id => {
-            if (document.getElementById(id).files.length > 0) hasFiles = true;
+        FK_IDS.forEach(id => {
+            let el = document.getElementById(id);
+            if (el && el.files.length > 0) hasFiles = true;
         });
     }
 
@@ -74,10 +78,14 @@ function updateProcessButton() {
     { id: 'catFile', listId: 'catFileList' },
     { id: 'spendFile', listId: 'spendFileList' },
     { id: 'priceFile', listId: 'priceFileList' },
-    { id: 'fkSalesFile', listId: 'fkSalesFileList' },
-    { id: 'fkInventoryFile', listId: 'fkInventoryFileList' },
-    { id: 'fkPcaFile', listId: 'fkPcaFileList' },
-    { id: 'fkPlaFile', listId: 'fkPlaFileList' },
+    // Flipkart (7 file types)
+    { id: 'fkSearchTrafficFile', listId: 'fkSearchTrafficFileList' },
+    { id: 'fkCategoryFile', listId: 'fkCategoryFileList' },
+    { id: 'fkPriceFile', listId: 'fkPriceFileList' },
+    { id: 'fkPcaNewFile', listId: 'fkPcaNewFileList' },
+    { id: 'fkPlaNewFile', listId: 'fkPlaNewFileList' },
+    { id: 'fkSalesInvoiceFile', listId: 'fkSalesInvoiceFileList' },
+    { id: 'fkCouponFile', listId: 'fkCouponFileList' },
 ].forEach(cfg => {
     let el = document.getElementById(cfg.id);
     if (!el) return;
@@ -139,22 +147,33 @@ async function loadDashboard() {
             for (let i = 0; i < priceFiles.length; i++) fileQueue.push({ file: priceFiles[i], type: 'price' });
 
         } else {
-            let fkSales = document.getElementById('fkSalesFile').files;
-            let fkInventory = document.getElementById('fkInventoryFile').files;
-            let fkPca = document.getElementById('fkPcaFile').files;
-            let fkPla = document.getElementById('fkPlaFile').files;
+            // Flipkart — 7 file types mapped to slim pipeline
+            const fkFileMap = [
+                { inputId: 'fkSearchTrafficFile', type: 'fk_search_traffic' },
+                { inputId: 'fkCategoryFile',      type: 'fk_category' },
+                { inputId: 'fkPriceFile',         type: 'fk_price' },
+                { inputId: 'fkPcaNewFile',        type: 'fk_pca' },
+                { inputId: 'fkPlaNewFile',        type: 'fk_pla' },
+                { inputId: 'fkSalesInvoiceFile',  type: 'fk_sales_invoice' },
+                { inputId: 'fkCouponFile',        type: 'fk_coupon' },
+            ];
 
-            let totalFk = fkSales.length + fkInventory.length + fkPca.length + fkPla.length;
+            let totalFk = 0;
+            fkFileMap.forEach(m => {
+                let el = document.getElementById(m.inputId);
+                if (el) {
+                    for (let i = 0; i < el.files.length; i++) {
+                        fileQueue.push({ file: el.files[i], type: m.type });
+                        totalFk++;
+                    }
+                }
+            });
+
             if (totalFk === 0) {
                 alert("Please upload at least one Flipkart report!");
                 btn.disabled = false;
                 return;
             }
-
-            for (let i = 0; i < fkSales.length; i++) fileQueue.push({ file: fkSales[i], type: 'flipkart_sales' });
-            for (let i = 0; i < fkInventory.length; i++) fileQueue.push({ file: fkInventory[i], type: 'flipkart_inventory' });
-            for (let i = 0; i < fkPca.length; i++) fileQueue.push({ file: fkPca[i], type: 'flipkart_pca' });
-            for (let i = 0; i < fkPla.length; i++) fileQueue.push({ file: fkPla[i], type: 'flipkart_pla' });
         }
 
         let totalFiles = fileQueue.length;

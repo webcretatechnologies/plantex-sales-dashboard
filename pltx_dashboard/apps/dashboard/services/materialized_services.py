@@ -21,7 +21,7 @@ from apps.dashboard.materialized_models import (
     DashboardFilterCache,
     STANDARD_DATE_RANGES,
 )
-from apps.dashboard.models import ProcessedDashboardData, SpendData
+from apps.dashboard.models import ProcessedDashboardData, SpendData, FlipkartProcessedDashboardData
 from apps.dashboard.services.analytics_services import get_dashboard_payload
 
 logger = logging.getLogger(__name__)
@@ -52,6 +52,20 @@ def refresh_materialized_views(user):
 
     # ── Load data ONCE ──────────────────────────────────────
     df = pd.DataFrame(list(qs))
+    df['platform'] = 'Amazon'
+
+    # Concat Flipkart processed data if available
+    fk_qs = FlipkartProcessedDashboardData.objects.filter(user=data_owner).values()
+    if fk_qs:
+        df_fk = pd.DataFrame(list(fk_qs))
+        df_fk = df_fk.rename(columns={'fsn': 'asin'})
+        df_fk['platform'] = 'Flipkart'
+        for col in ['spend_sp', 'spend_sb', 'spend_sd']:
+            if col not in df_fk.columns:
+                df_fk[col] = 0.0
+        common_cols = [c for c in df.columns if c in df_fk.columns]
+        df = pd.concat([df[common_cols], df_fk[common_cols]], ignore_index=True)
+
     spend_qs = SpendData.objects.filter(user=data_owner).values()
     spend_df = pd.DataFrame(list(spend_qs)) if spend_qs else pd.DataFrame()
 
