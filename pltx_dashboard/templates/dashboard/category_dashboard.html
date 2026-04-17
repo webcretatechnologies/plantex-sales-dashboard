@@ -1,4 +1,4 @@
-{% extends 'dashboard/base_dashboard.html' %}
+{% extends base_template %}
 {% load dashboard_extras %}
 
 {% block page_title %}Category Dashboard{% endblock %}
@@ -151,7 +151,7 @@
                 <div class="ceo-platform-legend" id="platformLegend">
                     {% for name, data in payload.platforms.items %}
                     <div class="ceo-platform-item">
-                        <span class="ceo-platform-dot {% if name == 'Amazon' %}amazon{% elif name == 'Flipkart' %}flipkart{% else %}jiomart{% endif %}"></span>
+                        <span class="ceo-platform-dot {% if name == 'Amazon' %}amazon{% elif name == 'Flipkart' %}flipkart{% endif %}"></span>
                         <span class="ceo-platform-name">{{ name }}</span>
                         <span class="ceo-platform-pct">{{ data.pct }}%</span>
                         <span class="ceo-platform-rev">{{ data.revenue|fmt_rupee }}</span>

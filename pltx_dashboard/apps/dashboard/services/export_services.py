@@ -9,13 +9,13 @@ import pandas as pd
 import numpy as np
 from io import BytesIO
 from apps.dashboard.models import ProcessedDashboardData, SpendData, FlipkartProcessedDashboardData
-from apps.dashboard.services.analytics_services import apply_global_filters
+from apps.dashboard.services.analytics_services_orm_pipeline import apply_global_filters_orm
 
 
 def _build_export_dataframe(user, filters):
     """
-    Query the DB for the user's data, apply dashboard filters, merge
-    sales + spend, and compute all derived metrics.
+    Query the DB for the user's data, apply dashboard filters at the ORM level, 
+    merge sales + spend natively, and compute all derived metrics.
     Returns a pandas DataFrame ready for export.
     """
     data_owner = user.created_by if user.created_by else user
@@ -23,7 +23,11 @@ def _build_export_dataframe(user, filters):
     qs = ProcessedDashboardData.objects.filter(user=data_owner)
     fk_qs = FlipkartProcessedDashboardData.objects.filter(user=data_owner)
 
-    # Apply platform filter
+    # 1. Apply global date/custom filters
+    qs = apply_global_filters_orm(qs, filters)
+    fk_qs = apply_global_filters_orm(fk_qs, filters)
+
+    # 2. Apply platform filter
     platform = filters.get('platform')
     show_amazon = True
     show_flipkart = True
@@ -32,7 +36,7 @@ def _build_export_dataframe(user, filters):
     elif platform == 'Flipkart':
         show_amazon = False
 
-    # Apply entity-level filters at the DB level (same as dashboard views)
+    # 3. Apply entity-level filters
     category = filters.get('category')
     if category:
         if isinstance(category, (list, tuple)):
@@ -73,6 +77,7 @@ def _build_export_dataframe(user, filters):
     if not qs.exists() and not fk_qs.exists():
         return pd.DataFrame()
 
+    # 4. Fetch the FILTERED subset into memory
     df_amazon = pd.DataFrame()
     if qs.exists():
         df_amazon = pd.DataFrame(list(qs.values()))
@@ -94,8 +99,6 @@ def _build_export_dataframe(user, filters):
     else:
         common_cols = [c for c in df_amazon.columns if c in df_fk.columns]
         df = pd.concat([df_amazon[common_cols], df_fk[common_cols]], ignore_index=True)
-
-    df = apply_global_filters(df, filters.copy())
 
     if df.empty:
         return pd.DataFrame()

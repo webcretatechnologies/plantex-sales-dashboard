@@ -1,21 +1,28 @@
 from django.shortcuts import render, redirect
 from django.http import FileResponse
 from apps.dashboard.models import SpendData, ProcessedDashboardData, FlipkartProcessedDashboardData
-from apps.dashboard.materialized_models import (
-    CeoDashboardCache,
-    BusinessDashboardCache,
-    CategoryDashboardCache,
-)
-from apps.accounts.models import Users
-import pandas as pd
 import json
-from apps.dashboard.services.analytics_services import get_dashboard_payload
 from apps.accounts.decorators import require_feature, _first_allowed_dashboard_for
 from apps.accounts.models import Feature
 from apps.dashboard.utils import DashboardEncoder
 
 
 from apps.accounts.utils import get_logged_in_user
+
+
+def no_cache_for_htmx(view_func):
+    """Decorator to prevent caching of HTMX requests"""
+    def wrapper(request, *args, **kwargs):
+        response = view_func(request, *args, **kwargs)
+        
+        # Set no-cache headers for HTMX requests
+        if request.headers.get('HX-Request') == 'true':
+            response['Cache-Control'] = 'no-cache, no-store, must-revalidate, max-age=0'
+            response['Pragma'] = 'no-cache'
+            response['Expires'] = '0'
+        
+        return response
+    return wrapper
 
 
 def dashboard_view(request):
@@ -38,26 +45,28 @@ def get_dashboard_context(request):
     else:
         user_features = [f.code_name for f in user.role.features.all()] if user.role else []
 
-    # Build filters from QueryDict preserving repeated params as lists
+    # Define which fields should be treated as lists (multi-selects)
+    list_fields = ['category', 'asin', 'fsn', 'portfolio', 'subcategory']
+    
+    # Build filters from QueryDict: 
+    # Logic: For lists, take all non-empty values. For single values, take the standard request.GET.get() 
+    # (which picks the last value if duplicates exist, and preserves "" for "All" options).
     filters = {}
     for k in request.GET.keys():
-        vals = request.GET.getlist(k)
-        if len(vals) == 1:
-            filters[k] = vals[0]
+        if k in list_fields:
+            # Filter out empty strings for lists to keep them clean
+            filters[k] = [v for v in request.GET.getlist(k) if v]
         else:
-            filters[k] = vals
+            # Single value: standard Django GET behavior (takes the last one)
+            # This is critical for allowing "All" choices (empty strings) to work
+            filters[k] = request.GET.get(k, '')
 
     # selected_filters is used by templates to pre-select multi-select controls (always lists)
     selected_filters = {
-        'categories': request.GET.getlist('category'),
-        'asins': request.GET.getlist('asin'),
+        'categories': filters.get('category', []),
+        'asins': filters.get('asin', []),
+        'fsns': filters.get('fsn', []),
     }
-
-    # Filter dropdown metadata from cache
-    cached_filter_metadata = None
-    cache = CeoDashboardCache.objects.filter(user=data_owner).first()
-    if cache and cache.payload_json:
-        cached_filter_metadata = cache.payload_json.get('filters', None)
 
     # Build the queryset with DB-level entity filters
     qs = ProcessedDashboardData.objects.filter(user=data_owner)
@@ -71,6 +80,13 @@ def get_dashboard_context(request):
         show_flipkart = False
     elif platform == 'Flipkart':
         show_amazon = False
+
+    # Extract all available options BEFORE applying entity filters
+    from apps.dashboard.services.analytics_services_orm_pipeline import get_available_filters_orm
+    cached_filter_metadata = get_available_filters_orm(
+        qs if show_amazon else qs.none(), 
+        fk_qs if show_flipkart else fk_qs.none()
+    )
 
     # Apply category filter at DB level
     category = filters.get('category')
@@ -87,10 +103,23 @@ def get_dashboard_context(request):
     if asin_filter:
         if isinstance(asin_filter, (list, tuple)):
             qs = qs.filter(asin__in=asin_filter)
-            fk_qs = fk_qs.filter(fsn__in=asin_filter)
         else:
             qs = qs.filter(asin=asin_filter)
-            fk_qs = fk_qs.filter(fsn=asin_filter)
+
+    # Apply FSN filter at DB level
+    fsn_filter = filters.get('fsn')
+    if fsn_filter:
+        if isinstance(fsn_filter, (list, tuple)):
+            fk_qs = fk_qs.filter(fsn__in=fsn_filter)
+        else:
+            fk_qs = fk_qs.filter(fsn=fsn_filter)
+
+    # If user selected an ASIN but no FSN, then empty the Flipkart query
+    if asin_filter and not fsn_filter:
+        fk_qs = fk_qs.none()
+    # If user selected an FSN but no ASIN, then empty the Amazon query
+    elif fsn_filter and not asin_filter:
+        qs = qs.none()
 
     # Apply portfolio filter at DB level
     portfolio = filters.get('portfolio')
@@ -118,33 +147,11 @@ def get_dashboard_context(request):
             'logged_user': user,
             'user_features': user_features,
             'payload': None,
+            'payload_json': 'null',
             'filters': filters,
             'selected_filters': selected_filters,
             'selected_filters_json': json.dumps(selected_filters)
         }
-
-    df = pd.DataFrame()
-    if qs.exists():
-        df = pd.DataFrame(list(qs.values()))
-        # Add platform column for Amazon data
-        df['platform'] = 'Amazon'
-
-    if fk_qs.exists():
-        df_fk = pd.DataFrame(list(fk_qs.values()))
-        # Rename fsn → asin so the analytics layer works uniformly
-        df_fk = df_fk.rename(columns={'fsn': 'asin'})
-        df_fk['platform'] = 'Flipkart'
-        # Ensure matching columns
-        for col in ['spend_sp', 'spend_sb', 'spend_sd']:
-            if col not in df_fk.columns:
-                df_fk[col] = 0.0
-        
-        if df.empty:
-            df = df_fk
-        else:
-            # Concat
-            common_cols = [c for c in df.columns if c in df_fk.columns]
-            df = pd.concat([df[common_cols], df_fk[common_cols]], ignore_index=True)
 
     # Apply same entity filters to spend data at DB level
     spend_qs = SpendData.objects.filter(user=data_owner)
@@ -153,12 +160,15 @@ def get_dashboard_context(request):
             spend_qs = spend_qs.filter(asin__in=asin_filter)
         else:
             spend_qs = spend_qs.filter(asin=asin_filter)
-    spend_df = pd.DataFrame(list(spend_qs.values())) if spend_qs.exists() else pd.DataFrame()
 
-    payload = get_dashboard_payload(
-        df, spend_df, filters, data_owner,
-        cached_filter_metadata=cached_filter_metadata,
+    # Use our newly built native ORM pipeline to bypass Pandas completely
+    # for lightning-fast cache bypass responses.
+    from apps.dashboard.services.analytics_services_orm_pipeline import run_orm_computation
+    payload = run_orm_computation(
+        qs, fk_qs, spend_qs, filters, data_owner,
+        cached_filter_metadata=cached_filter_metadata
     )
+
     return {
         'logged_user': user,
         'user_features': user_features,
@@ -170,148 +180,53 @@ def get_dashboard_context(request):
     }
 
 
-# Materialized-view helpers
-
-from apps.dashboard.materialized_models import (
-    DashboardFilterCache,
-    STANDARD_DATE_RANGES,
-)
-
-
-def _get_cacheable_filter_key(request):
+def _inject_htmx(request, ctx):
     """
-    Return the cache key if this request uses ONLY a standard date-range
-    filter (no category, ASIN, platform, or custom dates).
-    Returns None if the request can't be served from the filter cache.
+    Inject base_template into context.
+    Ensures base_template is ALWAYS set to prevent extends tag errors.
     """
-    params = request.GET
-    if not params:
-        return None  # No filters → handled by the all-time cache
-
-    date_range = params.get('date_range', '')
-    if not date_range or date_range not in STANDARD_DATE_RANGES:
-        return None  # Custom dates or unknown range
-
-    # Check that no OTHER meaningful filters are applied
-    # (start_date/end_date/platform may appear as empty strings from the form)
-    for key, val in params.items():
-        if key == 'date_range':
-            continue
-        # Skip empty string values (form artefacts)
-        if isinstance(val, str) and not val.strip():
-            continue
-        # Any other non-empty param means we can't use the cache
-        return None
-
-    return date_range
-
-
-def _build_cached_context(user, payload, refreshed_at, filters=None, selected_filters=None):
-    """
-    Build a template context from a pre-computed payload.
-    Avoids all Pandas / analytics computation.
-    """
-    if user.is_main_user:
-        user_features = [f.code_name for f in Feature.objects.all()]
-    else:
-        user_features = [f.code_name for f in user.role.features.all()] if user.role else []
-
-    if filters is None:
-        filters = {}
-    if selected_filters is None:
-        selected_filters = {'categories': [], 'asins': []}
-
-    return {
-        'logged_user': user,
-        'user_features': user_features,
-        'payload': payload,
-        'payload_json': json.dumps(payload, cls=DashboardEncoder),
-        'filters': filters,
-        'selected_filters': selected_filters,
-        'selected_filters_json': json.dumps(selected_filters),
-        'cache_refreshed_at': refreshed_at,
-    }
-
-
-def _try_serve_from_cache(request, user, cache_model):
-    """
-    Try to serve the dashboard from cache:
-      1. No filters → all-time cache
-      2. Standard date-range only → filter cache
-      3. Otherwise → return None (live computation needed)
-    """
-    data_owner = user.created_by if user.created_by else user
-
-    if not request.GET:
-        # No filters → all-time cache
-        cache = cache_model.objects.filter(user=data_owner).first()
-        if cache and cache.payload_json:
-            return _build_cached_context(user, cache.payload_json, cache.refreshed_at)
-        return None
-
-    # Check for a standard date-range-only request
-    filter_key = _get_cacheable_filter_key(request)
-    if filter_key:
-        fc = DashboardFilterCache.objects.filter(
-            user=data_owner, filter_key=filter_key
-        ).first()
-        if fc and fc.payload_json:
-            return _build_cached_context(
-                user, fc.payload_json, fc.refreshed_at,
-                filters={'date_range': filter_key},
-            )
-
-    return None
-
+    # Ensure ctx is always a dict (not None)
+    if ctx is None:
+        ctx = {
+            'logged_user': None,
+            'user_features': [],
+            'payload': None,
+            'payload_json': 'null',
+            'filters': {},
+            'selected_filters': {},
+            'selected_filters_json': '{}',
+        }
+    
+    # Determine which base template to use
+    is_htmx_request = request.headers.get('HX-Request') == 'true'
+    ctx['base_template'] = 'dashboard/base_htmx.html' if is_htmx_request else 'dashboard/base_dashboard.html'
+    
+    return ctx
 
 # ─────────────────────────────────────────────────────────
-# Dashboard views — cache-first, live-fallback
+# Dashboard views
 # ─────────────────────────────────────────────────────────
 
 @require_feature('business_dashboard')
+@no_cache_for_htmx
 def business_dashboard_view(request):
-    user = get_logged_in_user(request)
-    if not user:
-        return redirect('account-login')
-
-    ctx = _try_serve_from_cache(request, user, BusinessDashboardCache)
-    if ctx:
-        return render(request, 'dashboard/business_dashboard.html', ctx)
-
-    # Fallback to live computation
     ctx = get_dashboard_context(request)
     if ctx is None: return redirect('account-login')
-    return render(request, 'dashboard/business_dashboard.html', ctx)
+    return render(request, 'dashboard/business_dashboard.html', _inject_htmx(request, ctx))
 
 @require_feature('ceo_dashboard')
+@no_cache_for_htmx
 def ceo_dashboard_view(request):
-    user = get_logged_in_user(request)
-    if not user:
-        return redirect('account-login')
-
-    ctx = _try_serve_from_cache(request, user, CeoDashboardCache)
-    if ctx:
-        return render(request, 'dashboard/ceo_dashboard.html', ctx)
-
-    # Fallback to live computation
     ctx = get_dashboard_context(request)
     if ctx is None: return redirect('account-login')
-    return render(request, 'dashboard/ceo_dashboard.html', ctx)
+    return render(request, 'dashboard/ceo_dashboard.html', _inject_htmx(request, ctx))
 
 @require_feature('category_dashboard')
+@no_cache_for_htmx
 def category_dashboard_view(request):
-    user = get_logged_in_user(request)
-    if not user:
-        return redirect('account-login')
-
-    ctx = _try_serve_from_cache(request, user, CategoryDashboardCache)
-    if ctx:
-        return render(request, 'dashboard/category_dashboard.html', ctx)
-
-    # Fallback to live computation
     ctx = get_dashboard_context(request)
     if ctx is None: return redirect('account-login')
-    return render(request, 'dashboard/category_dashboard.html', ctx)
+    return render(request, 'dashboard/category_dashboard.html', _inject_htmx(request, ctx))
 
 @require_feature('upload_data')
 def upload_view(request):
@@ -367,4 +282,5 @@ def download_calculated_data(request, file_format):
     else:
         from django.http import JsonResponse
         return JsonResponse({"error": "Invalid format. Use 'csv' or 'excel'."}, status=400)
+
 

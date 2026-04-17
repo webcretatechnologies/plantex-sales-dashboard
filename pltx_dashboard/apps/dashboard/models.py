@@ -64,6 +64,8 @@ class ProcessedDashboardData(models.Model):
         unique_together = ('user', 'date', 'asin')
         indexes = [
             models.Index(fields=['user', 'category', 'date'], name='idx_user_cat_date'),
+            models.Index(fields=['user', 'date'], name='idx_user_date'),
+            models.Index(fields=['user', 'asin', 'date'], name='idx_user_asin_date'),
         ]
 
 # ============================================================================
@@ -186,4 +188,6 @@ class FlipkartProcessedDashboardData(models.Model):
         unique_together = ('user', 'date', 'fsn')
         indexes = [
             models.Index(fields=['user', 'category', 'date'], name='idx_fk_user_cat_date'),
+            models.Index(fields=['user', 'date'], name='idx_fk_user_date'),
+            models.Index(fields=['user', 'fsn', 'date'], name='idx_fk_user_fsn_date'),
         ]

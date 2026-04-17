@@ -5,10 +5,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="preconnect" href="https://cdn.shopify.com" crossorigin><link rel="icon" type="image/png" href="//www.plantex.in/cdn/shop/files/Plantex_Favicon.jpg?crop=center&height=32&v=1775624855&width=32"><link rel="preconnect" href="https://fonts.shopifycdn.com" crossorigin>
-    <title>Plantex — {% block page_title %}Sales Dashboard{% endblock %}</title>
+    <link rel="preconnect" href="https://cdn.shopify.com" crossorigin>
+    <link rel="icon" type="image/png"
+        href="//www.plantex.in/cdn/shop/files/Plantex_Favicon.jpg?crop=center&height=32&v=1775624855&width=32">
+    <link rel="preconnect" href="https://fonts.shopifycdn.com" crossorigin>
+    <title id="page-document-title">Plantex — {% block page_title %}Sales Dashboard{% endblock %}</title>
     <meta name="description" content="Plantex real-time business overview and performance insights dashboard">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
     <link
         href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap"
         rel="stylesheet">
@@ -23,6 +27,7 @@
             margin: 40px 0 24px;
             padding: 0;
         }
+
         .export-card {
             display: flex;
             align-items: center;
@@ -32,19 +37,22 @@
             border: 1px solid #bae6fd;
             border-radius: 18px;
             padding: 28px 36px;
-            box-shadow: 0 4px 16px rgba(14, 165, 233, 0.08), 0 1px 4px rgba(0,0,0,0.03);
+            box-shadow: 0 4px 16px rgba(14, 165, 233, 0.08), 0 1px 4px rgba(0, 0, 0, 0.03);
             transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         }
+
         .export-card:hover {
-            box-shadow: 0 8px 28px rgba(14, 165, 233, 0.14), 0 2px 6px rgba(0,0,0,0.04);
+            box-shadow: 0 8px 28px rgba(14, 165, 233, 0.14), 0 2px 6px rgba(0, 0, 0, 0.04);
             transform: translateY(-2px);
         }
+
         .export-card-left {
             display: flex;
             align-items: center;
             gap: 20px;
             flex: 1;
         }
+
         .export-icon-wrap {
             width: 52px;
             height: 52px;
@@ -56,11 +64,16 @@
             flex-shrink: 0;
             box-shadow: 0 4px 12px rgba(14, 165, 233, 0.3);
         }
+
         .export-icon-wrap .material-icons-round {
             font-size: 26px;
             color: #ffffff;
         }
-        .export-text { flex: 1; }
+
+        .export-text {
+            flex: 1;
+        }
+
         .export-title {
             font-size: 17px;
             font-weight: 700;
@@ -68,16 +81,19 @@
             margin-bottom: 4px;
             letter-spacing: -0.3px;
         }
+
         .export-subtitle {
             font-size: 13px;
             color: #64748b;
             line-height: 1.5;
         }
+
         .export-card-actions {
             display: flex;
             gap: 12px;
             flex-shrink: 0;
         }
+
         .export-btn {
             display: inline-flex;
             align-items: center;
@@ -92,44 +108,92 @@
             transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
             white-space: nowrap;
         }
+
         .export-btn:hover {
             transform: translateY(-2px);
         }
+
         .csv-btn {
             background: linear-gradient(135deg, #059669, #10b981);
             color: #ffffff;
             box-shadow: 0 4px 14px rgba(5, 150, 105, 0.3);
         }
+
         .csv-btn:hover {
             box-shadow: 0 6px 20px rgba(5, 150, 105, 0.4);
         }
+
         .excel-btn {
             background: linear-gradient(135deg, #2563eb, #3b82f6);
             color: #ffffff;
             box-shadow: 0 4px 14px rgba(37, 99, 235, 0.3);
         }
+
         .excel-btn:hover {
             box-shadow: 0 6px 20px rgba(37, 99, 235, 0.4);
         }
+
         @media (max-width: 768px) {
             .export-card {
                 flex-direction: column;
                 align-items: flex-start;
                 padding: 20px 24px;
             }
+
             .export-card-actions {
                 width: 100%;
             }
+
             .export-btn {
                 flex: 1;
                 justify-content: center;
             }
         }
     </style>
-    {% block extra_head %}{% endblock %}
+    <!-- Page-specific styles (Upload / Management pages inject their CSS here).
+         This tag is cleared by dashboardContentLoaded JS on every HTMX navigation
+         so no non-dashboard CSS can persist and distort the dashboard layout. -->
+    <style id="page-specific-styles">{% block extra_head_css %}{% endblock %}</style>
+    {% block extra_head_scripts %}{% endblock %}
 </head>
 
 <body class="has-sidebar">
+
+<!-- HTMX Loading Spinner Overlay -->
+<div id="htmxLoadingOverlay" style="
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.35);
+    backdrop-filter: blur(2px);
+    z-index: 9999;
+    align-items: center;
+    justify-content: center;
+">
+    <div style="
+        background: #1e293b;
+        border: 1px solid rgba(148, 163, 184, 0.12);
+        border-radius: 16px;
+        padding: 28px 40px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 16px;
+        box-shadow: 0 24px 48px rgba(0,0,0,0.4);
+    ">
+        <div style="
+            width: 40px; height: 40px;
+            border: 3px solid rgba(59,130,246,0.2);
+            border-top-color: #3b82f6;
+            border-radius: 50%;
+            animation: htmxSpin 0.7s linear infinite;
+        "></div>
+        <div style="font-size: 13px; font-weight: 600; color: #94a3b8; letter-spacing: 0.3px;">Loading dashboard…</div>
+    </div>
+</div>
+<style>
+@keyframes htmxSpin { to { transform: rotate(360deg); } }
+</style>
 
     <!-- Sidebar Navigation -->
     <div class="app-sidebar">
@@ -140,7 +204,8 @@
             {% if 'ceo_dashboard' in user_features %}
             <a href="{% url 'ceo-dashboard' %}"
                 class="nav-item {% if request.resolver_match.url_name == 'ceo-dashboard' %}active{% endif %}"
-                id="nav-ceo">
+                id="nav-ceo" hx-get="{% url 'ceo-dashboard' %}" hx-target=".dash-body" hx-push-url="true"
+                hx-swap="innerHTML" hx-include="#dashboardFilterForm, #secondaryFilters">
                 <span class="material-icons-round nav-icon">dashboard</span>
                 CEO Dashboard
             </a>
@@ -148,7 +213,8 @@
             {% if 'business_dashboard' in user_features %}
             <a href="{% url 'business-dashboard' %}"
                 class="nav-item {% if request.resolver_match.url_name == 'business-dashboard' %}active{% endif %}"
-                id="nav-business">
+                id="nav-business" hx-get="{% url 'business-dashboard' %}" hx-target=".dash-body" hx-push-url="true"
+                hx-swap="innerHTML" hx-include="#dashboardFilterForm, #secondaryFilters">
                 <span class="material-icons-round nav-icon">business</span>
                 Business
             </a>
@@ -156,7 +222,8 @@
             {% if 'category_dashboard' in user_features %}
             <a href="{% url 'category-dashboard' %}"
                 class="nav-item {% if request.resolver_match.url_name == 'category-dashboard' %}active{% endif %}"
-                id="nav-category">
+                id="nav-category" hx-get="{% url 'category-dashboard' %}" hx-target=".dash-body" hx-push-url="true"
+                hx-swap="innerHTML" hx-include="#dashboardFilterForm, #secondaryFilters">
                 <span class="material-icons-round nav-icon">category</span>
                 Category
             </a>
@@ -187,7 +254,8 @@
 
             {% if logged_user.is_main_user or 'user_management' in user_features %}
             <a href="{% url 'user-management' %}"
-                class="nav-item {% if request.resolver_match.url_name == 'user-management' %}active{% endif %}">
+                class="nav-item {% if request.resolver_match.url_name == 'user-management' %}active{% endif %}"
+                id="nav-user-management">
                 <span class="material-icons-round nav-icon">people</span>
                 User Management
             </a>
@@ -195,13 +263,13 @@
 
             {% if logged_user.is_main_user or 'role_management' in user_features %}
             <a href="{% url 'role-management' %}"
-                class="nav-item {% if request.resolver_match.url_name == 'role-management' %}active{% endif %}">
+                class="nav-item {% if request.resolver_match.url_name == 'role-management' %}active{% endif %}"
+                id="nav-role-management">
                 <span class="material-icons-round nav-icon">admin_panel_settings</span>
                 Role Management
             </a>
             {% endif %}
             {% endif %}
-
 
             <div class="nav-sep"></div>
             <a href="#" class="nav-item disabled" id="nav-reports">
@@ -223,12 +291,32 @@
     <!-- Main App Content -->
     <div class="app-main">
         <div class="topbar">
-            <div class="topbar-title">{% block dashboard_title %}Dashboard{% endblock %}</div>
-            <div class="topbar-subtitle">{% block dashboard_subtitle %}Real-time business overview & performance insights{% endblock %}</div>
+            <div class="topbar-title" id="page-topbar-title">{% block dashboard_title %}Dashboard{% endblock %}</div>
+            <div class="topbar-subtitle" id="page-topbar-subtitle">{% block dashboard_subtitle %}Real-time business
+                overview & performance insights{% endblock %}</div>
             <div class="topbar-spacer"></div>
 
+            <div id="dashboardTopbarFilters">
             {% block topbar_filters %}
-            <form method="GET" action="" class="topbar-filters" id="dashboardFilterForm">
+            {% endblock %}
+            </div>
+            <div class="user-profile">
+                <div class="user-avatar">{{ logged_user.fname|default:"U"|truncatechars:1 }}{{ logged_user.lname|default:"N"|truncatechars:1 }}</div>
+                <div class="user-info">
+                    <span class="user-name">{{ logged_user.fname }} {{ logged_user.lname }}</span>
+                    <span class="user-role" id="page-user-role">{% block user_role %}Business Head{% endblock %}</span>
+                </div>
+            </div>
+            <a href="{% url 'account-logout' %}" class="btn-logout">
+                <span class="material-icons-round" style="font-size:16px">logout</span>
+            </a>
+        </div>
+
+        <!-- Secondary Filters Bar above KPIs -->
+        <div class="secondary-filter-bar" id="secondaryFilters" hx-swap-oob="true">
+            <form method="GET" action="" class="topbar-filters" style="margin:0;" id="dashboardFilterForm" hx-get="{{ request.path }}"
+                hx-target=".dash-body" hx-push-url="true" hx-swap="innerHTML" hx-trigger="change">
+                
                 <div class="topbar-filter-group">
                     <span class="filter-label">Date Range</span>
                     <select class="filter-select-top" id="dateRangeSelect" name="date_range"
@@ -244,7 +332,6 @@
                         <option value="custom" {% if request.GET.date_range == 'custom' %}selected{% endif %}>Custom Dates</option>
                     </select>
                 </div>
-
                 <div class="topbar-filter-group custom-date-group" id="customDateGroup"
                     style="display: {% if request.GET.date_range == 'custom' %}flex{% else %}none{% endif %}; margin-left: 4px;">
                     <span class="filter-label">&nbsp;</span>
@@ -252,8 +339,7 @@
                         <input type="text" id="flatpickrRange" placeholder="Select Dates..."
                             style="width: 220px; background: #ffffff; border: 1px solid #cbd5e1; border-radius: 6px; padding: 7px 12px; font-size: 13px; font-family: 'Inter', sans-serif; color: #0f172a; outline: none; cursor: pointer; transition: border-color 0.2s;"
                             onfocus="this.style.borderColor='#3b82f6'">
-                        <input type="hidden" id="customStartDate" name="start_date"
-                            value="{{ request.GET.start_date }}">
+                        <input type="hidden" id="customStartDate" name="start_date" value="{{ request.GET.start_date }}">
                         <input type="hidden" id="customEndDate" name="end_date" value="{{ request.GET.end_date }}">
                         <button type="button"
                             style="padding: 7px 16px; background: #2563eb; color: #ffffff; border: none; border-radius: 6px; font-family: 'Inter', sans-serif; font-weight: 600; font-size: 12px; cursor: pointer; transition: all 0.2s; box-shadow: 0 2px 4px rgba(37,99,235,0.2);"
@@ -264,7 +350,8 @@
                 </div>
                 <div class="topbar-filter-group">
                     <span class="filter-label">Platform</span>
-                    <select class="filter-select-top" id="platformSelect" name="platform" onchange="this.form.submit()">
+                    <select class="filter-select-top" id="platformSelect" name="platform"
+                        onchange="syncFilterVisibility()">
                         <option value="">All</option>
                         {% if payload.filters.platforms %}
                         {% for p in payload.filters.platforms %}
@@ -273,17 +360,15 @@
                         {% else %}
                         <option value="Amazon" {% if request.GET.platform == 'Amazon' %}selected{% endif %}>Amazon</option>
                         <option value="Flipkart" {% if request.GET.platform == 'Flipkart' %}selected{% endif %}>Flipkart</option>
-                        <option value="JioMart" {% if request.GET.platform == 'JioMart' %}selected{% endif %}>JioMart</option>
                         {% endif %}
                     </select>
                 </div>
+                
                 <div class="topbar-filter-group filter-group-multi">
                     <span class="filter-label">
-                        <span class="material-icons-round"
-                            style="font-size:11px;vertical-align:middle;margin-right:3px;">category</span>Category
+                        <span class="material-icons-round" style="font-size:11px;vertical-align:middle;margin-right:3px;">category</span>Category
                     </span>
-                    <select id="categorySelect" name="category" class="filter-select-top" multiple
-                        onchange="this.form.submit()">
+                    <select id="categorySelect" name="category" class="filter-select-top" multiple onchange="htmx.trigger('#dashboardFilterForm', 'change')">
                         {% for c in payload.filters.categories %}
                         <option value="{{ c }}" {% if selected_filters.categories and c in selected_filters.categories %}selected{% endif %}>{{ c }}</option>
                         {% endfor %}
@@ -291,60 +376,63 @@
                 </div>
                 <div class="topbar-filter-group filter-group-multi filter-group-asin">
                     <span class="filter-label">
-                        <span class="material-icons-round"
-                            style="font-size:11px;vertical-align:middle;margin-right:3px;">qr_code</span>ASIN
+                        <span class="material-icons-round" style="font-size:11px;vertical-align:middle;margin-right:3px;">qr_code</span>ASIN
                     </span>
-                    <select id="asinSelect" name="asin" class="filter-select-top" multiple
-                        onchange="this.form.submit()">
+                    <select id="asinSelect" name="asin" class="filter-select-top" multiple onchange="htmx.trigger('#dashboardFilterForm', 'change')">
                         {% for a in payload.filters.asins %}
                         <option value="{{ a }}" {% if selected_filters.asins and a in selected_filters.asins %}selected{% endif %}>{{ a }}</option>
                         {% endfor %}
                     </select>
                 </div>
-                <button type="button" class="btn-reset" onclick="window.location.href=window.location.pathname"
-                    title="Reset filters">
-                    <span class="material-icons-round">restart_alt</span>
-                </button>
-            </form>
-            <div class="topbar-sep"></div>
-            {% endblock %}
-            <div class="user-profile">
-                <div class="user-avatar">{{ logged_user.fname|default:"U"|truncatechars:1 }}{{ logged_user.lname|default:"N"|truncatechars:1 }}</div>
-                <div class="user-info">
-                    <span class="user-name">{{ logged_user.fname }} {{ logged_user.lname }}</span>
-                    <span class="user-role">{% block user_role %}Business Head{% endblock %}</span>
+                <div class="topbar-filter-group filter-group-multi" id="fsnFilterGroup" style="display:none;">
+                    <span class="filter-label">
+                        <span class="material-icons-round" style="font-size:11px;vertical-align:middle;margin-right:3px;">qr_code</span>FSN
+                    </span>
+                    <select id="fsnSelect" name="fsn" class="filter-select-top" multiple onchange="htmx.trigger('#dashboardFilterForm', 'change')">
+                        {% for f in payload.filters.fsns %}
+                        <option value="{{ f }}" {% if selected_filters.fsns and f in selected_filters.fsns %}selected{% endif %}>{{ f }}</option>
+                        {% endfor %}
+                    </select>
                 </div>
-            </div>
-            <a href="{% url 'account-logout' %}" class="btn-logout">
-                <span class="material-icons-round" style="font-size:16px">logout</span>
-            </a>
+
+                <div class="topbar-filter-group" style="margin-left: 8px;">
+                    <span class="filter-label">&nbsp;</span>
+                    <button type="button" class="btn-text-reset" onclick="window.location.href=window.location.pathname"
+                        title="Reset all filters">Reset Filters</button>
+                </div>
+            </form>
         </div>
 
-        <div class="dash-body">
+        <div class="dash-body" id="dash-body">
             {% block dashboard_content %}{% endblock %}
+        </div>
 
-            <!-- Download Calculated Data Section (visible on all dashboards, not upload) -->
-            <div class="download-export-section" id="downloadExportSection" style="display:none;">
-                <div class="export-card">
-                    <div class="export-card-left">
-                        <div class="export-icon-wrap">
-                            <span class="material-icons-round">download_for_offline</span>
-                        </div>
-                        <div class="export-text">
-                            <div class="export-title">Export Calculated Data</div>
-                            <div class="export-subtitle">Download the processed dashboard data with all computed metrics (ROAS, TACoS, CVR, AOV, Margins, etc.) respecting your current filters.</div>
-                        </div>
+        <!-- Download Calculated Data Section —
+             Placed OUTSIDE .dash-body so HTMX innerHTML swaps don't remove it.
+             Shown/hidden via syncExportSection() JavaScript. -->
+        <div class="download-export-section" id="downloadExportSection" style="display:none;">
+            <div class="export-card">
+                <div class="export-card-left">
+                    <div class="export-icon-wrap">
+                        <span class="material-icons-round">download_for_offline</span>
                     </div>
-                    <div class="export-card-actions">
-                        <button class="export-btn csv-btn" id="dlCalcCsv" onclick="downloadCalculatedData('csv')" title="Download as CSV">
-                            <span class="material-icons-round" style="font-size:18px">description</span>
-                            <span>Download CSV</span>
-                        </button>
-                        <button class="export-btn excel-btn" id="dlCalcExcel" onclick="downloadCalculatedData('excel')" title="Download as Excel with Annexure">
-                            <span class="material-icons-round" style="font-size:18px">table_view</span>
-                            <span>Download Excel</span>
-                        </button>
+                    <div class="export-text">
+                        <div class="export-title">Export Calculated Data</div>
+                        <div class="export-subtitle">Download the processed dashboard data with all computed metrics
+                            (ROAS, TACoS, CVR, AOV, Margins, etc.) respecting your current filters.</div>
                     </div>
+                </div>
+                <div class="export-card-actions">
+                    <button class="export-btn csv-btn" id="dlCalcCsv" onclick="downloadCalculatedData('csv')"
+                        title="Download as CSV">
+                        <span class="material-icons-round" style="font-size:18px">description</span>
+                        <span>Download CSV</span>
+                    </button>
+                    <button class="export-btn excel-btn" id="dlCalcExcel" onclick="downloadCalculatedData('excel')"
+                        title="Download as Excel with Annexure">
+                        <span class="material-icons-round" style="font-size:18px">table_view</span>
+                        <span>Download Excel</span>
+                    </button>
                 </div>
             </div>
         </div>
@@ -352,8 +440,54 @@
 
     <script>
         window.DASHBOARD_VIEW_TYPE = "{% block view_type %}business{% endblock %}";
-        window.DASHBOARD_PAYLOAD = {{ payload_json|safe|default:"null" }};
-        window.SELECTED_FILTERS = {{ selected_filters_json|safe|default:"{}" }};
+        window.DASHBOARD_PAYLOAD = {{ payload_json | safe |default:"null" }};
+        window.SELECTED_FILTERS = {{ selected_filters_json | safe |default:"{}" }};
+
+        // Function to update active nav item based on view type
+        function updateActiveNav(viewType) {
+            // Remove active class from all nav items
+            document.querySelectorAll('.sidebar-nav .nav-item').forEach(item => {
+                item.classList.remove('active');
+            });
+
+            // Add active class to the corresponding nav item
+            if (viewType === 'ceo') {
+                document.getElementById('nav-ceo')?.classList.add('active');
+            } else if (viewType === 'business') {
+                document.getElementById('nav-business')?.classList.add('active');
+            } else if (viewType === 'category') {
+                document.getElementById('nav-category')?.classList.add('active');
+            } else if (viewType === 'upload') {
+                document.getElementById('nav-upload')?.classList.add('active');
+            } else if (viewType === 'replenishment') {
+                document.getElementById('nav-replenishment')?.classList.add('active');
+            } else if (viewType === 'user_management') {
+                document.getElementById('nav-user-management')?.classList.add('active');
+            } else if (viewType === 'role_management') {
+                document.getElementById('nav-role-management')?.classList.add('active');
+            }
+        }
+
+        // Update nav on initial load
+        document.addEventListener('DOMContentLoaded', function () {
+            updateActiveNav(window.DASHBOARD_VIEW_TYPE);
+        });
+
+        // Listen for custom dashboard content loaded event (from HTMX)
+        document.addEventListener('dashboardContentLoaded', function (event) {
+            const viewType = event.detail.viewType;
+            console.log('Dashboard content loaded:', viewType);
+            updateActiveNav(viewType);
+        });
+
+        // Update nav when HTMX completes a swap
+        document.body.addEventListener('htmx:afterSettle', function (event) {
+            // Update view type from the newly loaded content
+            const newViewType = document.querySelector('[data-view-type]')?.getAttribute('data-view-type')
+                || window.DASHBOARD_VIEW_TYPE;
+            window.DASHBOARD_VIEW_TYPE = newViewType;
+            updateActiveNav(newViewType);
+        });
 
         let fpInstance;
         document.addEventListener("DOMContentLoaded", function () {
@@ -379,43 +513,11 @@
                 }
             });
 
-            // Initialize searchable multi-selects using Choices.js
-            try {
-                if (typeof Choices !== 'undefined') {
-                    var catEl = document.getElementById('categorySelect');
-                    var asinEl = document.getElementById('asinSelect');
-                    if (catEl) {
-                        new Choices(catEl, {
-                            removeItemButton: true,
-                            searchEnabled: true,
-                            shouldSort: false,
-                            placeholder: true,
-                            placeholderValue: 'All Categories',
-                            itemSelectText: '',
-                            position: 'bottom',
-                            searchPlaceholderValue: 'Search categories...',
-                            noResultsText: 'No categories found',
-                            noChoicesText: 'No categories available'
-                        });
-                    }
-                    if (asinEl) {
-                        new Choices(asinEl, {
-                            removeItemButton: true,
-                            searchEnabled: true,
-                            shouldSort: false,
-                            placeholder: true,
-                            placeholderValue: 'All ASINs',
-                            itemSelectText: '',
-                            position: 'bottom',
-                            searchPlaceholderValue: 'Search ASINs...',
-                            noResultsText: 'No ASINs found',
-                            noChoicesText: 'No ASINs available'
-                        });
-                    }
-                }
-            } catch (e) {
-                console.warn('Choices init failed', e);
-            }
+            // ── Choices.js multi-select init (centralized, with instance tracking) ──
+            initChoicesJs();
+
+            // Set initial platform-dependent filter visibility
+            syncFilterVisibility();
         });
 
         function handleDateRangeChange(selectElement) {
@@ -426,7 +528,8 @@
                 document.getElementById('customDateGroup').style.display = 'none';
                 document.getElementById('customStartDate').value = '';
                 document.getElementById('customEndDate').value = '';
-                document.getElementById('dashboardFilterForm').submit();
+                // Explicitly trigger form submission to ensure UI updates immediately
+                htmx.trigger('#dashboardFilterForm', 'change');
             }
         }
 
@@ -452,37 +555,126 @@
                 return;
             }
 
-            if (eDate < sDate) {
-                alert("End date should not be before the start date.");
-                return;
+            // Manually trigger the form submission since hidden input changes don't bubble change events
+            var form = document.getElementById('dashboardFilterForm');
+            if (form) {
+                htmx.trigger(form, 'submit');
             }
-
-            // Submits the form if all conditions are met
-            document.getElementById('dashboardFilterForm').submit();
         }
     </script>
     <script src="https://cdn.jsdelivr.net/npm/choices.js/public/assets/scripts/choices.min.js"></script>
-    <script src="/static/js/dashboard.js"></script>
+    <script src="/static/js/filters.js"></script>
+    <script src="/static/js/spa.js"></script>
+    <script src="/static/js/charts.js"></script>
     <script>
-        // Show export section only on dashboard pages (not upload, management, or replenishment)
-        document.addEventListener('DOMContentLoaded', function() {
-            var viewType = window.DASHBOARD_VIEW_TYPE || '';
-            var exportSection = document.getElementById('downloadExportSection');
-            var allowedViews = ['business', 'ceo', 'category'];
-            
-            if (exportSection && allowedViews.includes(viewType)) {
-                exportSection.style.display = 'block';
-            }
+        // ── Choices.js instance registry ─────────────────────────────────────────
+        var _choicesInstances = {};
+
+        var _choicesDefs = [
+            { id: 'categorySelect', placeholder: 'All Categories',  search: 'Search categories...',  noResult: 'No categories found',  noChoices: 'No categories available' },
+            { id: 'asinSelect',     placeholder: 'All ASINs',       search: 'Search ASINs...',        noResult: 'No ASINs found',        noChoices: 'No ASINs available' },
+            { id: 'fsnSelect',      placeholder: 'All FSNs',        search: 'Search FSNs...',         noResult: 'No FSNs found',         noChoices: 'No FSNs available' },
+        ];
+
+        /** Destroy + recreate Choices.js wrappers on the 3 filter selects. */
+        function initChoicesJs() {
+            if (typeof Choices === 'undefined') return;
+            _choicesDefs.forEach(function (def) {
+                var el = document.getElementById(def.id);
+                if (!el) return;
+                // Destroy existing instance cleanly
+                if (_choicesInstances[def.id]) {
+                    try { _choicesInstances[def.id].destroy(); } catch (e) {}
+                    delete _choicesInstances[def.id];
+                }
+                try {
+                    _choicesInstances[def.id] = new Choices(el, {
+                        removeItemButton: true,
+                        searchEnabled: true,
+                        shouldSort: false,
+                        placeholder: true,
+                        placeholderValue: def.placeholder,
+                        itemSelectText: '',
+                        position: 'bottom',
+                        searchPlaceholderValue: def.search,
+                        noResultsText: def.noResult,
+                        noChoicesText: def.noChoices
+                    });
+                } catch (e) { console.warn('Choices init failed for ' + def.id, e); }
+            });
+        }
+
+        /**
+         * repopulateFilterDropdowns()
+         * After an HTMX navigation, the topbar filter <select> elements still exist
+         * in the DOM but their <option> tags were rendered from an earlier server
+         * response that may have had no payload (e.g. Upload / User-Management pages
+         * have no dashboard data). This function rebuilds the options from
+         * window.DASHBOARD_PAYLOAD.filters so filters always reflect the current
+         * dashboard's available categories / ASINs / FSNs.
+         */
+        // ── Export / Download section visibility ─────────────────────────────────
+        var DASHBOARD_EXPORT_VIEWS = ['business', 'ceo', 'category'];
+
+        function syncExportSection() {
+            var viewType  = window.DASHBOARD_VIEW_TYPE || '';
+            var exportSec = document.getElementById('downloadExportSection');
+            if (!exportSec) return;
+            exportSec.style.display = DASHBOARD_EXPORT_VIEWS.includes(viewType) ? 'block' : 'none';
+        }
+
+        // Run on initial full page load
+        document.addEventListener('DOMContentLoaded', function () {
+            syncExportSection();
+        });
+
+        // Re-run after every HTMX navigation into a dashboard
+        document.addEventListener('dashboardContentLoaded', function () {
+            // 0. CRITICAL: Clear any page-specific CSS that was injected by non-dashboard pages
+            //    (Upload, User Management, Role Management, Replenishment inject their own CSS
+            //    into <style id="page-specific-styles"> which persists in <head> across HTMX
+            //    navigation and distorts the dashboard card grid/layout sizing).
+            var pageStyles = document.getElementById('page-specific-styles');
+            if (pageStyles) pageStyles.textContent = '';
+
+            // 1. Initialize choices on fresh, server-rendered select elements
+            initChoicesJs();
+            if (typeof syncFilterVisibility === 'function') syncFilterVisibility();
+
+            // 2. Show/hide the export buttons
+            syncExportSection();
         });
 
         function downloadCalculatedData(format) {
             // Build the download URL preserving current filter query string
             var qs = window.location.search || '';
-            var sep = qs ? '&' : '?';
-            // The endpoint uses the same query params
+            // window.location.search includes the '?' if present
             var url = '/dashboard/download/' + format + '/' + qs;
             window.location.href = url;
         }
+
+        // ── HTMX loading spinner ────────────────────────────────────────────────
+        (function () {
+            var overlay = document.getElementById('htmxLoadingOverlay');
+            if (!overlay) return;
+
+            document.body.addEventListener('htmx:beforeRequest', function (e) {
+                // Only show overlay for dashboard navigation swaps, not filter form submits
+                // (filter submits still feel fast; navigation to other dashboards can be slow)
+                var target = e.detail && e.detail.target;
+                if (target && target.classList && target.classList.contains('dash-body')) {
+                    overlay.style.display = 'flex';
+                }
+            });
+
+            document.body.addEventListener('htmx:afterSettle', function () {
+                overlay.style.display = 'none';
+            });
+
+            document.body.addEventListener('htmx:responseError', function () {
+                overlay.style.display = 'none';
+            });
+        })();
     </script>
     {% block dashboard_scripts %}{% endblock %}
 </body>

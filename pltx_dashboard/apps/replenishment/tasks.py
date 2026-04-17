@@ -12,13 +12,31 @@ from .fba_stock_processor import process_fba_stock
 from .merger_sales_ship_stock import generate_master_report
 
 @shared_task(bind=True)
-def validate_reports_celery(self, reports_to_validate, master_data):
+def validate_reports_celery(self, reports_to_validate, mapping_files):
+    """
+    Celery task for report validation.
+    
+    Parameters
+    ----------
+    reports_to_validate : list of (report_type, file_path) tuples
+    mapping_files : dict with keys 'FC_Cluster', 'Pincode_Cluster', 'Assortment', 'Input_Sheet'
+        File paths to the mapping files used to generate master data.
+    """
     task_id = self.request.id
     results = {}
     total_errors = 0
     error_data_map = {}
     
     try:
+        # Generate master data inside the Celery task (was previously blocking the view)
+        from .utils import generate_master_data
+        master_data = generate_master_data(
+            mapping_files.get("FC_Cluster"),
+            mapping_files.get("Pincode_Cluster"),
+            mapping_files.get("Assortment"),
+            mapping_files.get("Input_Sheet"),
+        )
+
         for r_type, path in reports_to_validate:
             results[r_type] = {
                 "error_count": 0,
@@ -141,7 +159,7 @@ def generate_master_celery(self, files, temp_dir):
                 {"Header Name": "IXD Shipment ID", "Description / Formula": "Shipment IDs for IXD replenishment."}
             ]
             df_annexure = pd.DataFrame(annexure_data)
-            with pd.ExcelWriter(master_out_excel) as writer:
+            with pd.ExcelWriter(master_out_excel, engine='xlsxwriter') as writer:
                 df_master.to_excel(writer, sheet_name='Master Report', index=False)
                 df_annexure.to_excel(writer, sheet_name='Annexure', index=False)
         except Exception as e:

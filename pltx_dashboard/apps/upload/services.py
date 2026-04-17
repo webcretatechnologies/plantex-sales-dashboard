@@ -18,6 +18,21 @@ def _get_upsert_kwargs(unique_fields, update_fields):
         kwargs['unique_fields'] = unique_fields
     return kwargs
 
+def load_file_obj(file_obj, **kwargs):
+    filename = getattr(file_obj, 'name', '').lower()
+    if filename.endswith('.csv'):
+        try:
+            return pd.read_csv(file_obj, **kwargs)
+        except UnicodeDecodeError:
+            file_obj.seek(0)
+            return pd.read_csv(file_obj, encoding='latin1', **kwargs)
+    else:
+        try:
+            return pd.read_excel(file_obj, **kwargs)
+        except Exception:
+            file_obj.seek(0)
+            return pd.read_excel(file_obj, engine='openpyxl', **kwargs)
+
 
 # ---------------------------------------------------------------------------
 # Category
@@ -28,7 +43,7 @@ def process_category_file(file_obj, user):
     Upsert category mappings scoped to the given user.
     - Uses bulk_create with update_conflicts to elegantly update existing records.
     """
-    df = pd.read_excel(file_obj)
+    df = load_file_obj(file_obj)
     
     required_cols = ['ASIN', 'Portfolio', 'Category', 'Subcategory', 'Skus']
     missing_cols = [col for col in required_cols if col not in df.columns]
@@ -75,7 +90,7 @@ def process_price_file(file_obj, user):
     Upsert price data scoped to the given user.
     - Uses bulk_create with update_conflicts to smartly update existing values.
     """
-    df = pd.read_excel(file_obj)
+    df = load_file_obj(file_obj)
 
     required_cols = ['ASIN', 'Price']
     missing_cols = [col for col in required_cols if col not in df.columns]
@@ -111,7 +126,7 @@ def process_spend_file(file_obj, user):
     """
     Insert spend rows scoped to the user, or update existing records directly if they already exist.
     """
-    df = pd.read_excel(file_obj)
+    df = load_file_obj(file_obj)
 
     required_cols = ['Date', 'Ad Account', 'Ad Type', 'ASIN', 'Spend']
     missing_cols = [col for col in required_cols if col not in df.columns]
@@ -181,7 +196,7 @@ def process_sales_file(file_obj, date_str, user):
     except ValueError:
         raise ValueError(f"Invalid Date format '{date_str}' in Daily Sales filename. Please strictly use DD-MM-YYYY.csv format.")
 
-    df = pd.read_csv(file_obj)
+    df = load_file_obj(file_obj)
 
     required_cols = ['(Child) ASIN', 'Page Views - Total', 'Units Ordered', 'Ordered Product Sales', 'Total Order Items']
     missing_cols = [col for col in required_cols if col not in df.columns]
@@ -329,12 +344,7 @@ def generate_dashboard_data(user):
             )
         )
 
-    # Refresh materialized-view caches for all three dashboards
-    from apps.dashboard.services.materialized_services import refresh_materialized_views
-    try:
-        refresh_materialized_views(user)
-    except Exception as exc:
-        print(f"[MaterializedViews] Cache refresh failed for user {user}: {exc}")
+
 
 
 # ===========================================================================
@@ -351,7 +361,7 @@ def process_fk_search_traffic(file_obj, user):
     Extracts FSN from Listing Id using Mid(Listing Id, 4, 16) → listing_id[3:19].
     Saves per-FSN per-date traffic & sales data.
     """
-    df = pd.read_excel(file_obj)
+    df = load_file_obj(file_obj)
 
     required_cols = ['Listing Id', 'SKU Id', 'Vertical', 'Impression Date',
                      'Product Clicks', 'Sales', 'Revenue']
@@ -413,7 +423,7 @@ def process_fk_category(file_obj, user):
     Parse Flipkart Category Dashboard (.xlsx).
     Columns: FSN ID, SKU, Portfolio, Cat, Subcat.
     """
-    df = pd.read_excel(file_obj)
+    df = load_file_obj(file_obj)
 
     required_cols = ['FSN ID', 'Portfolio', 'Cat', 'Subcat']
     missing = [c for c in required_cols if c not in df.columns]
@@ -457,7 +467,7 @@ def process_fk_price(file_obj, user):
     Parse Flipkart Price file (.xlsx).
     Columns: Flipkart Serial Number → fsn, Deal → price.
     """
-    df = pd.read_excel(file_obj)
+    df = load_file_obj(file_obj)
 
     required_cols = ['Flipkart Serial Number', 'Deal']
     missing = [c for c in required_cols if c not in df.columns]
@@ -495,7 +505,7 @@ def process_fk_pca(file_obj, user):
     File has 2 metadata rows (Start Time, End Time) then the header row.
     Columns: campaign_id, campaign_name, Date, fsn_id.
     """
-    df = pd.read_csv(file_obj, skiprows=2)
+    df = load_file_obj(file_obj, skiprows=2)
 
     required_cols = ['campaign_id', 'campaign_name', 'Date', 'fsn_id']
     missing = [c for c in required_cols if c not in df.columns]
@@ -548,7 +558,7 @@ def process_fk_pla(file_obj, user):
     File has 2 metadata rows then the header row.
     Columns: Campaign ID, Advertised FSN ID, Ad Spend.
     """
-    df = pd.read_csv(file_obj, skiprows=2)
+    df = load_file_obj(file_obj, skiprows=2)
 
     required_cols = ['Campaign ID', 'Advertised FSN ID', 'Ad Spend']
     missing = [c for c in required_cols if c not in df.columns]
@@ -659,7 +669,7 @@ def process_fk_coupon(file_obj, user):
     File has 2 header rows to skip.
     Columns: Flipkart Serial Number → fsn, Coupon Value.
     """
-    df = pd.read_excel(file_obj, skiprows=2)
+    df = load_file_obj(file_obj, skiprows=2)
 
     required_cols = ['Flipkart Serial Number', 'Coupon Value']
     missing = [c for c in required_cols if c not in df.columns]
@@ -876,10 +886,3 @@ def generate_flipkart_dashboard_data(user):
         )
 
     print(f"[FK Dashboard] Generated {len(records)} processed records.")
-
-    # Refresh materialized-view caches (with combined Amazon + Flipkart data)
-    from apps.dashboard.services.materialized_services import refresh_materialized_views
-    try:
-        refresh_materialized_views(user)
-    except Exception as exc:
-        print(f"[MaterializedViews] Cache refresh failed for user {user}: {exc}")
