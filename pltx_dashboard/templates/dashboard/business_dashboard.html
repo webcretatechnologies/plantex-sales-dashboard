@@ -1,4 +1,4 @@
-{% extends 'dashboard/base_dashboard.html' %}
+{% extends base_template %}
 {% load dashboard_extras %}
 
 {% block page_title %}Business Dashboard{% endblock %}
@@ -14,7 +14,8 @@
     <div class="ceo-kpi-card" id="biz-kpi-revenue">
         <div class="ceo-kpi-header">
             <span class="ceo-kpi-label">Total Revenue</span>
-            <div class="ceo-kpi-icon blue"><span class="material-icons-round" style="font-size:16px">trending_up</span></div>
+            <div class="ceo-kpi-icon blue"><span class="material-icons-round" style="font-size:16px">trending_up</span>
+            </div>
         </div>
         <div class="ceo-kpi-value">{{ payload.kpis.revenue|fmt_rupee }}</div>
         <div class="ceo-kpi-change {% if payload.kpis.mom_growth >= 0 %}up{% else %}down{% endif %}">
@@ -26,11 +27,13 @@
     <div class="ceo-kpi-card" id="biz-kpi-mom">
         <div class="ceo-kpi-header">
             <span class="ceo-kpi-label">MOM Growth</span>
-            <div class="ceo-kpi-icon green"><span class="material-icons-round" style="font-size:16px">show_chart</span></div>
+            <div class="ceo-kpi-icon green"><span class="material-icons-round" style="font-size:16px">show_chart</span>
+            </div>
         </div>
         <div class="ceo-kpi-value {% if payload.kpis.mom_growth >= 0 %}accent-green{% else %}accent-red{% endif %}">{{ payload.kpis.mom_growth|floatformat:1 }}%</div>
         <div class="ceo-kpi-change {% if payload.kpis.mom_growth >= 0 %}up{% else %}down{% endif %}">
-            {% if payload.kpis.mom_growth >= 0 %}▲{% else %}▼{% endif %} {{ payload.kpis.prev_mom|abs_val }}pp <span class="sub">vs prev. period</span>
+            {% if payload.kpis.mom_growth >= 0 %}▲{% else %}▼{% endif %} {{ payload.kpis.prev_mom|abs_val }}pp <span
+                class="sub">vs prev. period</span>
         </div>
     </div>
 
@@ -38,11 +41,13 @@
     <div class="ceo-kpi-card" id="biz-kpi-yoy">
         <div class="ceo-kpi-header">
             <span class="ceo-kpi-label">YOY Growth</span>
-            <div class="ceo-kpi-icon green"><span class="material-icons-round" style="font-size:16px">stacked_line_chart</span></div>
+            <div class="ceo-kpi-icon green"><span class="material-icons-round"
+                    style="font-size:16px">stacked_line_chart</span></div>
         </div>
         <div class="ceo-kpi-value {% if payload.kpis.yoy_growth >= 0 %}accent-green{% else %}accent-red{% endif %}">{{ payload.kpis.yoy_growth|floatformat:1 }}%</div>
         <div class="ceo-kpi-change {% if payload.kpis.yoy_growth >= 0 %}up{% else %}down{% endif %}">
-            {% if payload.kpis.yoy_growth >= 0 %}▲{% else %}▼{% endif %} {{ payload.kpis.prev_yoy|abs_val }}pp <span class="sub">vs last year</span>
+            {% if payload.kpis.yoy_growth >= 0 %}▲{% else %}▼{% endif %} {{ payload.kpis.prev_yoy|abs_val }}pp <span
+                class="sub">vs last year</span>
         </div>
     </div>
 
@@ -50,7 +55,8 @@
     <div class="ceo-kpi-card" id="biz-kpi-gm">
         <div class="ceo-kpi-header">
             <span class="ceo-kpi-label">Gross Margin</span>
-            <div class="ceo-kpi-icon purple"><span class="material-icons-round" style="font-size:16px">pie_chart</span></div>
+            <div class="ceo-kpi-icon purple"><span class="material-icons-round" style="font-size:16px">pie_chart</span>
+            </div>
         </div>
         <div class="ceo-kpi-value">{{ payload.kpis.gross_margin_pct|floatformat:1 }}%</div>
         <div class="ceo-kpi-change up">
@@ -62,7 +68,8 @@
     <div class="ceo-kpi-card" id="biz-kpi-contribution">
         <div class="ceo-kpi-header">
             <span class="ceo-kpi-label">Contribution</span>
-            <div class="ceo-kpi-icon amber"><span class="material-icons-round" style="font-size:16px">account_balance_wallet</span></div>
+            <div class="ceo-kpi-icon amber"><span class="material-icons-round"
+                    style="font-size:16px">account_balance_wallet</span></div>
         </div>
         <div class="ceo-kpi-value">{{ payload.kpis.gross_margin|fmt_rupee }}</div>
         <div class="ceo-kpi-change {% if payload.kpis.contribution_margin_change >= 0 %}up{% else %}down{% endif %}">
@@ -74,7 +81,8 @@
     <div class="ceo-kpi-card" id="biz-kpi-orders">
         <div class="ceo-kpi-header">
             <span class="ceo-kpi-label">Orders</span>
-            <div class="ceo-kpi-icon cyan"><span class="material-icons-round" style="font-size:16px">shopping_cart</span></div>
+            <div class="ceo-kpi-icon cyan"><span class="material-icons-round"
+                    style="font-size:16px">shopping_cart</span></div>
         </div>
         <div class="ceo-kpi-value">{{ payload.kpis.orders|fmt_num }}</div>
         <div class="ceo-kpi-change {% if payload.kpis.orders_change >= 0 %}up{% else %}down{% endif %}">
@@ -86,7 +94,8 @@
     <div class="ceo-kpi-card" id="biz-kpi-aov">
         <div class="ceo-kpi-header">
             <span class="ceo-kpi-label">AOV</span>
-            <div class="ceo-kpi-icon blue"><span class="material-icons-round" style="font-size:16px">price_check</span></div>
+            <div class="ceo-kpi-icon blue"><span class="material-icons-round" style="font-size:16px">price_check</span>
+            </div>
         </div>
         <div class="ceo-kpi-value">{{ payload.kpis.aov|fmt_rupee }}</div>
         <div class="ceo-kpi-change {% if payload.kpis.aov_change >= 0 %}up{% else %}down{% endif %}">
@@ -98,11 +107,13 @@
     <div class="ceo-kpi-card" id="biz-kpi-tacos">
         <div class="ceo-kpi-header">
             <span class="ceo-kpi-label">TACOS</span>
-            <div class="ceo-kpi-icon cyan"><span class="material-icons-round" style="font-size:16px">donut_small</span></div>
+            <div class="ceo-kpi-icon cyan"><span class="material-icons-round" style="font-size:16px">donut_small</span>
+            </div>
         </div>
         <div class="ceo-kpi-value">{{ payload.kpis.tacos|floatformat:1 }}%</div>
         <div class="ceo-kpi-change {% if payload.kpis.tacos_change < 0 %}down{% else %}up{% endif %}">
-            {% if payload.kpis.tacos_change < 0 %}▼{% else %}▲{% endif %} {{ payload.kpis.tacos_change|abs_val }}pp <span class="sub">vs prev. period</span>
+            {% if payload.kpis.tacos_change < 0 %}▼{% else %}▲{% endif %} {{ payload.kpis.tacos_change|abs_val }}pp
+                <span class="sub">vs prev. period</span>
         </div>
     </div>
 </div>
@@ -123,8 +134,12 @@
             </div>
         </div>
         <div class="ceo-trend-legend">
-            <div class="ceo-trend-legend-item"><div class="ceo-legend-line solid"></div><span>This Period</span></div>
-            <div class="ceo-trend-legend-item"><div class="ceo-legend-line dashed"></div><span>Last Period</span></div>
+            <div class="ceo-trend-legend-item">
+                <div class="ceo-legend-line solid"></div><span>This Period</span>
+            </div>
+            <div class="ceo-trend-legend-item">
+                <div class="ceo-legend-line dashed"></div><span>Last Period</span>
+            </div>
         </div>
         <div class="ceo-card-body">
             <div class="ceo-chart-wrap tall"><canvas id="salesTrendChart"></canvas></div>
@@ -151,7 +166,8 @@
                 <div class="ceo-platform-legend" id="platformLegend">
                     {% for name, data in payload.platforms.items %}
                     <div class="ceo-platform-item">
-                        <span class="ceo-platform-dot {% if name == 'Amazon' %}amazon{% elif name == 'Flipkart' %}flipkart{% else %}jiomart{% endif %}"></span>
+                        <span
+                            class="ceo-platform-dot {% if name == 'Amazon' %}amazon{% elif name == 'Flipkart' %}flipkart{% endif %}"></span>
                         <span class="ceo-platform-name">{{ name }}</span>
                         <span class="ceo-platform-pct">{{ data.pct }}%</span>
                         <span class="ceo-platform-rev">{{ data.revenue|fmt_rupee }}</span>
@@ -170,7 +186,8 @@
                 <span class="ceo-card-title">Category Performance</span>
                 <div style="font-size:11px;color:var(--muted);margin-top:2px;">Revenue and growth by category</div>
             </div>
-            <button class="ceo-view-all-btn" onclick="openModal('categoryModal')" id="biz-btn-cat-viewall">View All</button>
+            <button class="ceo-view-all-btn" onclick="openModal('categoryModal')" id="biz-btn-cat-viewall">View
+                All</button>
         </div>
         <div class="ceo-card-body no-pad">
             <table class="ceo-table">
@@ -193,7 +210,9 @@
                         <td class="num">{{ cat.contribution }}%</td>
                     </tr>
                     {% empty %}
-                    <tr><td colspan="4" class="empty">No data available</td></tr>
+                    <tr>
+                        <td colspan="4" class="empty">No data available</td>
+                    </tr>
                     {% endfor %}
                 </tbody>
             </table>
@@ -210,7 +229,8 @@
                 <span class="ceo-card-title">Top 5 Categories by Growth</span>
                 <div style="font-size:11px;color:var(--muted);margin-top:2px;">vs previous period</div>
             </div>
-            <button class="ceo-view-all-btn" onclick="openModal('catGrowthModal')" id="biz-btn-catgrowth-viewall">View All</button>
+            <button class="ceo-view-all-btn" onclick="openModal('catGrowthModal')" id="biz-btn-catgrowth-viewall">View
+                All</button>
         </div>
         <div class="ceo-card-body">
             <div class="biz-growth-bars" id="bizCatGrowthBars">
@@ -219,7 +239,7 @@
                     <span class="biz-growth-label">{{ cat.category }}</span>
                     <div class="biz-growth-bar-wrap">
                         <div class="biz-growth-bar {% if cat.growth >= 0 %}positive{% else %}negative{% endif %}"
-                             style="width: {% if cat.growth >= 0 %}{{ cat.growth|multiply:3 }}%{% else %}{{ cat.growth|abs_val|multiply:3 }}%{% endif %}; max-width:100%;">
+                            style="width: {% if cat.growth >= 0 %}{{ cat.growth|multiply:3 }}%{% else %}{{ cat.growth|abs_val|multiply:3 }}%{% endif %}; max-width:100%;">
                         </div>
                     </div>
                     <span class="biz-growth-val {% if cat.growth >= 0 %}up{% else %}down{% endif %}">{{ cat.growth }}%</span>
@@ -236,9 +256,11 @@
         <div class="ceo-card-header">
             <div>
                 <span class="ceo-card-title">Top 5 Products by Revenue</span>
-                <div style="font-size:11px;color:var(--muted);margin-top:2px;">Best performing products by revenue vs previous period</div>
+                <div style="font-size:11px;color:var(--muted);margin-top:2px;">Best performing products by revenue vs
+                    previous period</div>
             </div>
-            <button class="ceo-view-all-btn" onclick="openModal('winningModal')" id="biz-btn-winning-viewall">View All</button>
+            <button class="ceo-view-all-btn" onclick="openModal('winningModal')" id="biz-btn-winning-viewall">View
+                All</button>
         </div>
         <div class="ceo-card-body no-pad">
             <div class="biz-product-scroll">
@@ -265,7 +287,9 @@
                             <td class="num growth-up">▲ {{ prod.growth }}%</td>
                         </tr>
                         {% empty %}
-                        <tr><td colspan="4" class="empty">No data available</td></tr>
+                        <tr>
+                            <td colspan="4" class="empty">No data available</td>
+                        </tr>
                         {% endfor %}
                     </tbody>
                 </table>
@@ -283,7 +307,8 @@
                 <span class="ceo-card-title">Bottom 5 Products by Growth</span>
                 <div style="font-size:11px;color:var(--muted);margin-top:2px;">Declining products to watch</div>
             </div>
-            <button class="ceo-view-all-btn" onclick="openModal('decliningModal')" id="biz-btn-declining-viewall">View All</button>
+            <button class="ceo-view-all-btn" onclick="openModal('decliningModal')" id="biz-btn-declining-viewall">View
+                All</button>
         </div>
         <div class="ceo-card-body no-pad">
             <table class="ceo-table">
@@ -309,7 +334,9 @@
                         <td class="num" style="color:var(--danger);">-{{ prod.impact|fmt_rupee }}</td>
                     </tr>
                     {% empty %}
-                    <tr><td colspan="4" class="empty">No data available</td></tr>
+                    <tr>
+                        <td colspan="4" class="empty">No data available</td>
+                    </tr>
                     {% endfor %}
                 </tbody>
             </table>
@@ -331,7 +358,7 @@
         <div class="ceo-card-body">
             <div class="biz-inv-grid">
                 <div class="biz-inv-pill good">
-                    <span class="biz-inv-pill-icon">✓</span>
+                    <span class="biz-inv-pill-icon">&#10003;</span>
                     <span class="biz-inv-pill-label">In Stock</span>
                     <strong>{{ payload.inventory.in_stock }} SKUs</strong>
                 </div>
@@ -341,12 +368,12 @@
                     <strong>{{ payload.inventory.low_stock }} SKUs</strong>
                 </div>
                 <div class="biz-inv-pill danger">
-                    <span class="biz-inv-pill-icon">✕</span>
+                    <span class="biz-inv-pill-icon">&#10005;</span>
                     <span class="biz-inv-pill-label">OOS</span>
                     <strong>{{ payload.inventory.oos }} SKUs</strong>
                 </div>
                 <div class="biz-inv-pill neutral">
-                    <span class="biz-inv-pill-icon">⬆</span>
+                    <span class="biz-inv-pill-icon">&#11014;</span>
                     <span class="biz-inv-pill-label">Overstock</span>
                     <strong>{{ payload.inventory.overstock }} SKUs</strong>
                 </div>
@@ -403,19 +430,19 @@
                     <div class="biz-metric-label">Ad Spend</div>
                     <div class="biz-metric-value">{{ payload.marketing.ad_spend|fmt_rupee }}</div>
                     <div class="biz-metric-sub {% if payload.kpis.spend_change < 0 %}down{% else %}up{% endif %}">
-                        {% if payload.kpis.spend_change < 0 %}▼{% else %}▲{% endif %} {{ payload.kpis.spend_change|abs_val }}%
+                        {% if payload.kpis.spend_change < 0 %}&#9660;{% else %}&#9650;{% endif %} {{ payload.kpis.spend_change|abs_val }}%
                     </div>
                 </div>
                 <div class="biz-metric-item">
                     <div class="biz-metric-label">ROAS</div>
                     <div class="biz-metric-value">{{ payload.marketing.roas }}x</div>
-                    <div class="biz-metric-sub up">▲ {{ payload.marketing.roas_change_pct|floatformat:1 }}%</div>
+                    <div class="biz-metric-sub up">&#9650; {{ payload.marketing.roas_change_pct|floatformat:1 }}%</div>
                 </div>
                 <div class="biz-metric-item">
                     <div class="biz-metric-label">TACOS</div>
                     <div class="biz-metric-value">{{ payload.marketing.tacos|floatformat:1 }}%</div>
                     <div class="biz-metric-sub {% if payload.marketing.tacos_change < 0 %}down{% else %}up{% endif %}">
-                        {% if payload.marketing.tacos_change < 0 %}▼{% else %}▲{% endif %} {{ payload.marketing.tacos_change|abs_val }}pp
+                        {% if payload.marketing.tacos_change < 0 %}&#9660;{% else %}&#9650;{% endif %} {{ payload.marketing.tacos_change|abs_val }}pp
                     </div>
                 </div>
             </div>
@@ -427,7 +454,7 @@
     <div class="ceo-card" id="biz-card-returns">
         <div class="ceo-card-header">
             <div>
-                <span class="ceo-card-title">Returns & VOC</span>
+                <span class="ceo-card-title">Returns &amp; VOC</span>
                 <div style="font-size:11px;color:var(--muted);margin-top:2px;">Returns and customer feedback</div>
             </div>
             <button class="ceo-view-all-btn" onclick="openModal('returnsModal')" id="biz-btn-returns-viewall">View All</button>
@@ -438,7 +465,7 @@
                     <div class="biz-metric-label">Return Rate</div>
                     <div class="biz-metric-value" style="font-size:22px;">{{ payload.returns_ratings.rate }}%</div>
                     <div class="biz-metric-sub {% if payload.returns_ratings.change < 0 %}down{% else %}up{% endif %}">
-                        {% if payload.returns_ratings.change < 0 %}▼{% else %}▲{% endif %} {{ payload.returns_ratings.change|abs_val }}pp vs prev. period
+                        {% if payload.returns_ratings.change < 0 %}&#9660;{% else %}&#9650;{% endif %} {{ payload.returns_ratings.change|abs_val }}pp vs prev. period
                     </div>
                 </div>
                 <div class="biz-returns-issue">
@@ -520,13 +547,13 @@
     <!-- Key Insights & Recommendations -->
     <div class="ceo-card" id="biz-card-insights">
         <div class="ceo-card-header">
-            <span class="ceo-card-title">Key Insights & Recommendations</span>
+            <span class="ceo-card-title">Key Insights &amp; Recommendations</span>
             <button class="ceo-view-all-btn" id="biz-btn-insights-viewall">View All</button>
         </div>
         <div class="ceo-card-body no-pad">
             <div class="biz-insight-list">
                 <div class="biz-insight-item">
-                    <div class="biz-insight-icon">💡</div>
+                    <div class="biz-insight-icon">&#128161;</div>
                     <div class="biz-insight-content">
                         <div class="biz-insight-title">Increase inventory for top 20 SKUs</div>
                         <div class="biz-insight-subtitle">Potential revenue boost: {{ payload.kpis.revenue|multiply:0.1|fmt_rupee }}</div>
@@ -534,7 +561,7 @@
                     <span class="ceo-priority-badge high">High</span>
                 </div>
                 <div class="biz-insight-item">
-                    <div class="biz-insight-icon">📊</div>
+                    <div class="biz-insight-icon">&#128202;</div>
                     <div class="biz-insight-content">
                         <div class="biz-insight-title">Optimize ads for Bathroom category</div>
                         <div class="biz-insight-subtitle">ROAS can improve by 0.8x</div>
@@ -542,7 +569,7 @@
                     <span class="ceo-priority-badge medium">Medium</span>
                 </div>
                 <div class="biz-insight-item">
-                    <div class="biz-insight-icon">🔍</div>
+                    <div class="biz-insight-icon">&#128269;</div>
                     <div class="biz-insight-content">
                         <div class="biz-insight-title">Review pricing for 5 declining SKUs</div>
                         <div class="biz-insight-subtitle">Potential to recover {{ payload.kpis.revenue|multiply:0.03|fmt_rupee }}</div>
@@ -560,8 +587,8 @@
 <div class="tbl-overlay" id="categoryModal">
     <div class="tbl-overlay-inner">
         <div class="tbl-overlay-header">
-            <span class="tbl-overlay-title">Category Performance — Full View</span>
-            <button class="tbl-overlay-close" onclick="closeModal('categoryModal')">✕ Close</button>
+            <span class="tbl-overlay-title">Category Performance &mdash; Full View</span>
+            <button class="tbl-overlay-close" onclick="closeModal('categoryModal')">&#10005; Close</button>
         </div>
         <div class="tbl-overlay-scroll">
             <table class="ceo-table" style="min-width:500px;">
@@ -579,7 +606,7 @@
                         <td style="font-weight:600;">{{ cat.category }}</td>
                         <td class="num">{{ cat.revenue|fmt_rupee }}</td>
                         <td class="num {% if cat.growth >= 0 %}growth-up{% else %}growth-down{% endif %}">
-                            {% if cat.growth >= 0 %}▲{% else %}▼{% endif %} {{ cat.growth|abs_val }}%
+                            {% if cat.growth >= 0 %}&#9650;{% else %}&#9660;{% endif %} {{ cat.growth|abs_val }}%
                         </td>
                         <td class="num">{{ cat.contribution }}%</td>
                     </tr>
@@ -595,7 +622,7 @@
     <div class="tbl-overlay-inner">
         <div class="tbl-overlay-header">
             <span class="tbl-overlay-title">All Categories by Growth</span>
-            <button class="tbl-overlay-close" onclick="closeModal('catGrowthModal')">✕ Close</button>
+            <button class="tbl-overlay-close" onclick="closeModal('catGrowthModal')">&#10005; Close</button>
         </div>
         <div class="tbl-overlay-scroll">
             <table class="ceo-table" style="min-width:500px;">
@@ -613,7 +640,7 @@
                         <td style="font-weight:600;">{{ cat.category }}</td>
                         <td class="num">{{ cat.revenue|fmt_rupee }}</td>
                         <td class="num {% if cat.growth >= 0 %}growth-up{% else %}growth-down{% endif %}">
-                            {% if cat.growth >= 0 %}▲{% else %}▼{% endif %} {{ cat.growth|abs_val }}%
+                            {% if cat.growth >= 0 %}&#9650;{% else %}&#9660;{% endif %} {{ cat.growth|abs_val }}%
                         </td>
                         <td class="num">{{ cat.contribution }}%</td>
                     </tr>
@@ -629,7 +656,7 @@
     <div class="tbl-overlay-inner">
         <div class="tbl-overlay-header">
             <span class="tbl-overlay-title">All Products by Revenue</span>
-            <button class="tbl-overlay-close" onclick="closeModal('winningModal')">✕ Close</button>
+            <button class="tbl-overlay-close" onclick="closeModal('winningModal')">&#10005; Close</button>
         </div>
         <div class="tbl-overlay-scroll">
             <table class="ceo-table" style="min-width:600px;">
@@ -644,10 +671,10 @@
                 <tbody>
                     {% for prod in payload.cat_all_top_products %}
                     <tr>
-                        <td><div class="ceo-sku-cell"><div class="ceo-sku-thumb">📦</div><span>{{ prod.sku }}</span></div></td>
+                        <td><div class="ceo-sku-cell"><div class="ceo-sku-thumb">&#128230;</div><span>{{ prod.sku }}</span></div></td>
                         <td>{{ prod.product_name }}</td>
                         <td class="num">{{ prod.revenue|fmt_rupee }}</td>
-                        <td class="num growth-up">▲ {{ prod.growth }}%</td>
+                        <td class="num growth-up">&#9650; {{ prod.growth }}%</td>
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -660,8 +687,8 @@
 <div class="tbl-overlay" id="decliningModal">
     <div class="tbl-overlay-inner">
         <div class="tbl-overlay-header">
-            <span class="tbl-overlay-title">Declining Products — Full View</span>
-            <button class="tbl-overlay-close" onclick="closeModal('decliningModal')">✕ Close</button>
+            <span class="tbl-overlay-title">Declining Products &mdash; Full View</span>
+            <button class="tbl-overlay-close" onclick="closeModal('decliningModal')">&#10005; Close</button>
         </div>
         <div class="tbl-overlay-scroll">
             <table class="ceo-table" style="min-width:600px;">
@@ -670,15 +697,15 @@
                         <th>SKU</th>
                         <th>Product Name</th>
                         <th class="num">Drop %</th>
-                        <th class="num">Impact (₹)</th>
+                        <th class="num">Impact (&#8377;)</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for prod in payload.cat_all_under_products %}
                     <tr>
-                        <td><div class="ceo-sku-cell"><div class="ceo-sku-thumb">📦</div><span>{{ prod.sku }}</span></div></td>
+                        <td><div class="ceo-sku-cell"><div class="ceo-sku-thumb">&#128230;</div><span>{{ prod.sku }}</span></div></td>
                         <td>{{ prod.product_name }}</td>
-                        <td class="num growth-down">▼ {{ prod.drop_pct|abs_val }}%</td>
+                        <td class="num growth-down">&#9660; {{ prod.drop_pct|abs_val }}%</td>
                         <td class="num" style="color:var(--danger);">-{{ prod.impact|fmt_rupee }}</td>
                     </tr>
                     {% endfor %}
@@ -692,8 +719,8 @@
 <div class="tbl-overlay" id="returnsModal">
     <div class="tbl-overlay-inner">
         <div class="tbl-overlay-header">
-            <span class="tbl-overlay-title">Returns & Customer Feedback — Full View</span>
-            <button class="tbl-overlay-close" onclick="closeModal('returnsModal')">✕ Close</button>
+            <span class="tbl-overlay-title">Returns &amp; Customer Feedback &mdash; Full View</span>
+            <button class="tbl-overlay-close" onclick="closeModal('returnsModal')">&#10005; Close</button>
         </div>
         <div class="tbl-overlay-scroll" style="padding:20px;">
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px;">
@@ -701,7 +728,7 @@
                     <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:8px;">Return Rate</div>
                     <div style="font-size:28px;font-weight:800;color:var(--text);">{{ payload.returns_ratings.rate }}%</div>
                     <div style="font-size:11px;color:var(--muted);margin-top:4px;">
-                        {% if payload.returns_ratings.change < 0 %}▼{% else %}▲{% endif %} {{ payload.returns_ratings.change|abs_val }}pp vs prev. period
+                        {% if payload.returns_ratings.change < 0 %}&#9660;{% else %}&#9650;{% endif %} {{ payload.returns_ratings.change|abs_val }}pp vs prev. period
                     </div>
                 </div>
             </div>
@@ -720,7 +747,9 @@
                         <td class="num">{{ reason.pct }}%</td>
                     </tr>
                     {% empty %}
-                    <tr><td colspan="2" class="empty">No return data available</td></tr>
+                    <tr>
+                        <td colspan="2" class="empty">No return data available</td>
+                    </tr>
                     {% endfor %}
                 </tbody>
             </table>

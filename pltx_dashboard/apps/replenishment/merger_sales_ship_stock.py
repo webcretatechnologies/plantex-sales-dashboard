@@ -11,7 +11,10 @@ def load_data(file_path):
         except UnicodeDecodeError:
             return pd.read_csv(file_path, encoding='latin1')
     else:
-        return pd.read_excel(file_path)
+        try:
+            return pd.read_excel(file_path)
+        except ValueError:
+            return pd.read_excel(file_path, engine='openpyxl')
 
 def generate_master_report(sales_file, stock_file, shipment_file, product_details_file, business_report_file, database_file, raw_sales_file, pin_code_file, fc_mapping_file, input_sheet_file, output_file):
     print("Loading processed reports...")

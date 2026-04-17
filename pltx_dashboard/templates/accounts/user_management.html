@@ -1,12 +1,11 @@
 {% extends 'dashboard/base_dashboard.html' %}
 {% block page_title %}User Management{% endblock %}
 {% block dashboard_title %}User Management{% endblock %}
-{% block view_type %}management{% endblock %}
+{% block view_type %}user_management{% endblock %}
 
-{% block extra_head %}
-<style>
-    /* Hide dashboard filters */
-    .topbar-filters, .sidebar-status, .sidebar-refresh-btn { 
+{% block extra_head_css %}
+    /* Hide sidebar status & refresh on management pages only */
+    .sidebar-status, .sidebar-refresh-btn { 
         display: none !important; 
     }
     .management-container {
@@ -210,8 +209,10 @@
         background: var(--surface2);
         color: var(--text2);
     }
-</style>
-{% endblock %}
+{% endblock extra_head_css %}
+{% block extra_head_scripts %}{% endblock %}
+
+{% block topbar_filters %}{% endblock %}
 
 {% block dashboard_content %}
 <div class="management-container">

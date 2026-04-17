@@ -71,6 +71,7 @@ services:
     volumes:
       - static_volume:/app/staticfiles
       - logs_volume:/app/logs
+      - upload_tmp:/tmp/upload_queue
     networks:
       - plantex_network
     healthcheck:
@@ -105,6 +106,7 @@ services:
       - web
     volumes:
       - logs_volume:/app/logs
+      - upload_tmp:/tmp/upload_queue
     networks:
       - plantex_network
     logging:
@@ -147,6 +149,7 @@ volumes:
   redis_data:
   static_volume:
   logs_volume:
+  upload_tmp:
 
 networks:
   plantex_network:

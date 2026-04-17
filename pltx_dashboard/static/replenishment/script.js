@@ -301,6 +301,7 @@ document.addEventListener('DOMContentLoaded', () => {
             } else {
                 const text = await response.text();
                 console.error("Non-JSON generation response:", text);
+                alert("Server returned HTML instead of JSON! First 500 chars: \n\n" + text.substring(0, 500));
                 throw new Error('Server error during generation: Invalid response format.');
             }
         } catch (err) {

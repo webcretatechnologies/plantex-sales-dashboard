@@ -5,14 +5,17 @@
 {% block dashboard_title %}Data Integration Hub{% endblock %}
 {% block view_type %}upload{% endblock %}
 
-{% block extra_head %}
-<style>
-    /* Hide filters and refresh from topbar/sidebar since they don't apply to upload page */
-    .topbar-filters,
+{% block extra_head_css %}
+    /* Hide sidebar status & refresh on the upload page only */
     .sidebar-status,
     .sidebar-refresh-btn {
         display: none !important;
     }
+
+    /* Hide the topbar filter form on upload — we don't need it here.
+       NOTE: We do NOT use display:none on .topbar-filters directly because
+       that CSS would linger in <head> after HTMX navigation back to a
+       dashboard. Instead we override the block to be empty below. */
 
     /* Modern Premium Upload Design */
     .upload-container {
@@ -307,8 +310,11 @@
             transform: translateY(0);
         }
     }
-</style>
-{% endblock %}
+{% endblock extra_head_css %}
+
+{% block extra_head_scripts %}{% endblock %}
+
+{% block topbar_filters %}{% endblock %}
 
 {% block dashboard_content %}
 <div class="upload-container">
@@ -345,7 +351,7 @@
                     <div class="material-icons-round drop-icon">cloud_upload</div>
                     <div class="drop-text">Drag & drop your daily CSV files here</div>
                     <div class="drop-subtext">Supported format: DD-MM-YYYY.csv · Select multiple dates at once</div>
-                    <input type="file" id="csvInput" accept=".csv" multiple style="display:none">
+                    <input type="file" id="csvInput" accept=".csv,.xlsx,.xls" multiple style="display:none">
                 </label>
                 <div id="fileList" class="file-list"></div>
             </div>
@@ -360,7 +366,7 @@
                     <div class="material-icons-round drop-icon">table_chart</div>
                     <div class="drop-text">Drag & drop Category Excel/CSV here</div>
                     <div class="drop-subtext">ASIN → Portfolio / Category / Subcategory / Skus</div>
-                    <input type="file" id="catFile" accept=".xlsx,.csv" multiple style="display:none">
+                    <input type="file" id="catFile" accept=".csv,.xlsx,.xls" multiple style="display:none">
                 </label>
                 <div id="catFileList" class="file-list"></div>
             </div>
@@ -375,7 +381,7 @@
                     <div class="material-icons-round drop-icon">campaign</div>
                     <div class="drop-text">Drag & drop Spends Excel/CSV here</div>
                     <div class="drop-subtext">Date / Ad Account / Ad Type / ASIN / Spend</div>
-                    <input type="file" id="spendFile" accept=".xlsx,.csv" multiple style="display:none">
+                    <input type="file" id="spendFile" accept=".csv,.xlsx,.xls" multiple style="display:none">
                 </label>
                 <div id="spendFileList" class="file-list"></div>
             </div>
@@ -390,7 +396,7 @@
                     <div class="material-icons-round drop-icon">payments</div>
                     <div class="drop-text">Drag & drop Pricing Excel/CSV here</div>
                     <div class="drop-subtext">Columns: ASIN, Price</div>
-                    <input type="file" id="priceFile" accept=".xlsx,.csv" multiple style="display:none">
+                    <input type="file" id="priceFile" accept=".csv,.xlsx,.xls" multiple style="display:none">
                 </label>
                 <div id="priceFileList" class="file-list"></div>
             </div>
@@ -410,7 +416,7 @@
                     <div class="material-icons-round drop-icon">cloud_upload</div>
                     <div class="drop-text">Drag & drop Search Traffic Report here</div>
                     <div class="drop-subtext">Listing Id / SKU / Vertical / Impressions / Sales (.xlsx)</div>
-                    <input type="file" id="fkSearchTrafficFile" accept=".xlsx,.xls" multiple style="display:none">
+                    <input type="file" id="fkSearchTrafficFile" accept=".csv,.xlsx,.xls" multiple style="display:none">
                 </label>
                 <div id="fkSearchTrafficFileList" class="file-list"></div>
             </div>
@@ -425,7 +431,7 @@
                     <div class="material-icons-round drop-icon">table_chart</div>
                     <div class="drop-text">Drag & drop Category Dashboard file here</div>
                     <div class="drop-subtext">FSN ID / Portfolio / Cat / Subcat (.xlsx)</div>
-                    <input type="file" id="fkCategoryFile" accept=".xlsx,.xls" multiple style="display:none">
+                    <input type="file" id="fkCategoryFile" accept=".csv,.xlsx,.xls" multiple style="display:none">
                 </label>
                 <div id="fkCategoryFileList" class="file-list"></div>
             </div>
@@ -440,7 +446,7 @@
                     <div class="material-icons-round drop-icon">payments</div>
                     <div class="drop-text">Drag & drop FK Price file here</div>
                     <div class="drop-subtext">Flipkart Serial Number / Deal (.xlsx)</div>
-                    <input type="file" id="fkPriceFile" accept=".xlsx,.xls" multiple style="display:none">
+                    <input type="file" id="fkPriceFile" accept=".csv,.xlsx,.xls" multiple style="display:none">
                 </label>
                 <div id="fkPriceFileList" class="file-list"></div>
             </div>
@@ -455,7 +461,7 @@
                     <div class="material-icons-round drop-icon">cloud_upload</div>
                     <div class="drop-text">Drag & drop PCA Attribution Report here</div>
                     <div class="drop-subtext">campaign_id / fsn_id / Date (.csv)</div>
-                    <input type="file" id="fkPcaNewFile" accept=".csv" multiple style="display:none">
+                    <input type="file" id="fkPcaNewFile" accept=".csv,.xlsx,.xls" multiple style="display:none">
                 </label>
                 <div id="fkPcaNewFileList" class="file-list"></div>
             </div>
@@ -470,7 +476,7 @@
                     <div class="material-icons-round drop-icon">cloud_upload</div>
                     <div class="drop-text">Drag & drop PLA FSN Report here</div>
                     <div class="drop-subtext">Campaign ID / FSN ID / Ad Spend (.csv)</div>
-                    <input type="file" id="fkPlaNewFile" accept=".csv" multiple style="display:none">
+                    <input type="file" id="fkPlaNewFile" accept=".csv,.xlsx,.xls" multiple style="display:none">
                 </label>
                 <div id="fkPlaNewFileList" class="file-list"></div>
             </div>
@@ -485,7 +491,7 @@
                     <div class="material-icons-round drop-icon">cloud_upload</div>
                     <div class="drop-text">Drag & drop Flipkart Sales Report here</div>
                     <div class="drop-subtext">Sales Report + Cash Back sheet / Taxable Value / Invoice (.xlsx)</div>
-                    <input type="file" id="fkSalesInvoiceFile" accept=".xlsx,.xls" multiple style="display:none">
+                    <input type="file" id="fkSalesInvoiceFile" accept=".csv,.xlsx,.xls" multiple style="display:none">
                 </label>
                 <div id="fkSalesInvoiceFileList" class="file-list"></div>
             </div>
@@ -500,7 +506,7 @@
                     <div class="material-icons-round drop-icon">cloud_upload</div>
                     <div class="drop-text">Drag & drop Coupon Value Report here</div>
                     <div class="drop-subtext">FSN / Coupon Value (.xlsx)</div>
-                    <input type="file" id="fkCouponFile" accept=".xlsx,.xls" multiple style="display:none">
+                    <input type="file" id="fkCouponFile" accept=".csv,.xlsx,.xls" multiple style="display:none">
                 </label>
                 <div id="fkCouponFileList" class="file-list"></div>
             </div>

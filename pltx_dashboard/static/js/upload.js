@@ -99,6 +99,35 @@ function updateProcessButton() {
 });
 
 // ---------------------------------------------------------------------------
+// Poll a Celery task until it resolves
+// ---------------------------------------------------------------------------
+function pollTaskStatus(taskId) {
+    return new Promise((resolve, reject) => {
+        const interval = setInterval(async () => {
+            try {
+                const resp = await fetch(`/api/upload/status/${taskId}/`, {
+                    credentials: 'same-origin',
+                });
+                const data = await resp.json();
+
+                if (data.status === 'success' || data.status === 'error') {
+                    clearInterval(interval);
+                    if (data.status === 'error') {
+                        reject(new Error(data.message || 'Processing failed'));
+                    } else {
+                        resolve(data);
+                    }
+                }
+                // else still processing — keep polling
+            } catch (err) {
+                clearInterval(interval);
+                reject(err);
+            }
+        }, 1500); // poll every 1.5 seconds
+    });
+}
+
+// ---------------------------------------------------------------------------
 // Main upload handler
 // ---------------------------------------------------------------------------
 async function loadDashboard() {
@@ -196,12 +225,39 @@ async function loadDashboard() {
                 form.append("date", dateStr);
             }
 
-            await fetch("/api/upload/", {
+            let resp = await fetch("/api/upload/", {
                 method: "POST",
                 body: form,
                 headers: { "X-CSRFToken": getCookie("csrftoken") },
                 credentials: "same-origin"
             });
+
+            let respData = await resp.json();
+
+            if (resp.status === 202 && respData.task_id) {
+                // File accepted — poll until processing completes
+                status.textContent = `⚙️ Processing ${item.file.name} (${idx + 1}/${totalFiles})...`;
+                try {
+                    await pollTaskStatus(respData.task_id);
+                } catch (taskErr) {
+                    // WebSocket will show the error too, but update status here
+                    status.textContent = `❌ Error processing ${item.file.name}: ${taskErr.message}`;
+                    btn.disabled = false;
+                    return;
+                }
+            } else if (!resp.ok) {
+                status.textContent = `❌ Upload failed: ${respData.error || 'Unknown error'}`;
+                btn.disabled = false;
+                return;
+            }
+        }
+
+        // If WebSocket hasn't already updated to "complete", set a fallback
+        if (status.textContent.includes('Processing') || status.textContent.includes('Uploading')) {
+            status.textContent = '✅ All files processed successfully!';
+            if (platform === 'amazon') {
+                setTimeout(() => { window.location.href = '/dashboard/business/'; }, 500);
+            }
         }
 
     } catch (err) {
