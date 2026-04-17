@@ -1,4 +1,21 @@
 document.addEventListener('DOMContentLoaded', () => {
+    // -- CSRF Token Helper --
+    function getCookie(name) {
+        let cookieValue = null;
+        if (document.cookie && document.cookie !== '') {
+            const cookies = document.cookie.split(';');
+            for (let i = 0; i < cookies.length; i++) {
+                const cookie = cookies[i].trim();
+                if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                    cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                    break;
+                }
+            }
+        }
+        return cookieValue;
+    }
+    const csrftoken = getCookie('csrftoken');
+
     const generatorForm = document.getElementById('generatorForm');
     const validateBtn = document.getElementById('validateBtn');
     const valSpinner = document.getElementById('valSpinner');
@@ -248,6 +265,7 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const response = await fetch('/api/replenishment/validate/', {
                 method: 'POST',
+                headers: csrftoken ? { 'X-CSRFToken': csrftoken } : {},
                 body: getFormData()
             });
 
@@ -284,6 +302,7 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const response = await fetch('/api/replenishment/generate_master/', {
                 method: 'POST',
+                headers: csrftoken ? { 'X-CSRFToken': csrftoken } : {},
                 body: getFormData()
             });
 
@@ -300,9 +319,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 handleGenerationSuccess(data);
             } else {
                 const text = await response.text();
-                console.error("Non-JSON generation response:", text);
-                alert("Server returned HTML instead of JSON! First 500 chars: \n\n" + text.substring(0, 500));
-                throw new Error('Server error during generation: Invalid response format.');
+                console.error("Non-JSON generation response (HTTP " + response.status + "):", text.substring(0, 1000));
+                throw new Error('Server error (HTTP ' + response.status + '): The server returned an invalid response. Please check server logs.');
             }
         } catch (err) {
             handleGenerationCatch(err);
