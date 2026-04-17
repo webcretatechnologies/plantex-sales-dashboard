@@ -124,6 +124,10 @@ def validate_api(request):
 
 @csrf_exempt
 def generate_master_api(request):
+    import traceback
+    import logging
+    logger = logging.getLogger(__name__)
+    
     try:
         if request.method != 'POST':
             return JsonResponse({"error": "Only POST allowed"}, status=405)
@@ -131,19 +135,24 @@ def generate_master_api(request):
         if not request.FILES:
             return JsonResponse({"error": "No files uploaded"}, status=400)
 
+        logger.info(f"[generate_master_api] Received {len(request.FILES)} files: {list(request.FILES.keys())}")
+
         # Save files to a unique temporary folder
         files = save_uploaded_files(request.FILES)
         
         required = ["Sales", "Stock", "LIS", "Shipment", "Assortment", "FC_Cluster", "Pincode_Cluster", "Input_Sheet", "Business_Report"]
         missing = [req for req in required if not files.get(req) or not os.path.exists(files[req])]
         if missing:
+            logger.warning(f"[generate_master_api] Missing files: {missing}")
             return JsonResponse({"error": f"Missing uploaded files for: {', '.join(missing)}"}, status=400)
         
         temp_dir = tempfile.mkdtemp()
         task = generate_master_celery.delay(files, temp_dir)
+        logger.info(f"[generate_master_api] Celery task dispatched: {task.id}")
         
         return JsonResponse({'task_id': task.id, 'status': 'processing'})
     except Exception as e:
+        logger.error(f"[generate_master_api] Error: {str(e)}\n{traceback.format_exc()}")
         return JsonResponse({"error": f"Generation Error: {str(e)}"}, status=500)
 
 

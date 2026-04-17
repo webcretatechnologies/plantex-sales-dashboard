@@ -159,3 +159,8 @@ LOGIN_URL = '/accounts/login/'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
+# File upload limits — reports can be large
+DATA_UPLOAD_MAX_MEMORY_SIZE = 209715200   # 200 MB
+FILE_UPLOAD_MAX_MEMORY_SIZE = 209715200   # 200 MB
+DATA_UPLOAD_MAX_NUMBER_FILES = 20
+
