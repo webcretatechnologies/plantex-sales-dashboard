@@ -12,6 +12,11 @@
     {% block dashboard_subtitle %}Real-time business overview & performance insights{% endblock %}
 </div>
 
+<!-- OOB swap for page specific CSS (crucial for Admin / Upload pages) -->
+<style id="page-specific-styles" hx-swap-oob="true">
+    {% block extra_head_css %}{% endblock %}
+</style>
+
 <!-- OOB swap for the user role -->
 <span id="page-user-role" class="user-role" hx-swap-oob="true">{% block user_role %}Business Head{% endblock %}</span>
 
@@ -29,7 +34,8 @@
 </div>
 
 <!-- OOB swap for the SECONDARY FILTER BAR -->
-<div class="secondary-filter-bar" id="secondaryFilters" hx-swap-oob="true">
+<div class="secondary-filter-bar" id="secondaryFilters" hx-swap-oob="true" {% if request.resolver_match.url_name != 'ceo-dashboard' and request.resolver_match.url_name != 'business-dashboard' and request.resolver_match.url_name != 'category-dashboard' %}style="display:none;"{% endif %}>
+    {% if request.resolver_match.url_name == 'ceo-dashboard' or request.resolver_match.url_name == 'business-dashboard' or request.resolver_match.url_name == 'category-dashboard' %}
     <form method="GET" action="{{ request.path }}" class="topbar-filters" style="margin:0;" id="dashboardFilterForm" hx-get="{{ request.path }}"
         hx-target=".dash-body" hx-push-url="true" hx-swap="innerHTML" hx-trigger="change">
         
@@ -116,13 +122,13 @@
                 title="Reset all filters">Reset Filters</button>
         </div>
     </form>
+    {% endif %}
 </div>
 
 
 <!-- Main dashboard content swap target -->
-<div data-view-type="{% block view_type %}none{% endblock %}">
-    {% block dashboard_content %}{% endblock %}
-</div>
+{% block dashboard_content %}{% endblock %}
+<span data-view-type="{% block view_type %}none{% endblock %}" style="display: none;"></span>
 <script>
     // Set view type from the data attribute
     window.DASHBOARD_VIEW_TYPE = document.querySelector('[data-view-type]')?.getAttribute('data-view-type') || 'business';

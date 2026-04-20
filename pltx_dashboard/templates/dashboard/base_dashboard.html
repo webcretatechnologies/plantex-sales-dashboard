@@ -153,14 +153,16 @@
     <!-- Page-specific styles (Upload / Management pages inject their CSS here).
          This tag is cleared by dashboardContentLoaded JS on every HTMX navigation
          so no non-dashboard CSS can persist and distort the dashboard layout. -->
-    <style id="page-specific-styles">{% block extra_head_css %}{% endblock %}</style>
+    <style id="page-specific-styles">
+        {% block extra_head_css %}{% endblock %}
+    </style>
     {% block extra_head_scripts %}{% endblock %}
 </head>
 
 <body class="has-sidebar">
 
-<!-- HTMX Loading Spinner Overlay -->
-<div id="htmxLoadingOverlay" style="
+    <!-- HTMX Loading Spinner Overlay -->
+    <div id="htmxLoadingOverlay" style="
     display: none;
     position: fixed;
     inset: 0;
@@ -170,7 +172,7 @@
     align-items: center;
     justify-content: center;
 ">
-    <div style="
+        <div style="
         background: #1e293b;
         border: 1px solid rgba(148, 163, 184, 0.12);
         border-radius: 16px;
@@ -181,19 +183,24 @@
         gap: 16px;
         box-shadow: 0 24px 48px rgba(0,0,0,0.4);
     ">
-        <div style="
+            <div style="
             width: 40px; height: 40px;
             border: 3px solid rgba(59,130,246,0.2);
             border-top-color: #3b82f6;
             border-radius: 50%;
             animation: htmxSpin 0.7s linear infinite;
         "></div>
-        <div style="font-size: 13px; font-weight: 600; color: #94a3b8; letter-spacing: 0.3px;">Loading dashboard…</div>
+            <div style="font-size: 13px; font-weight: 600; color: #94a3b8; letter-spacing: 0.3px;">Loading dashboard…
+            </div>
+        </div>
     </div>
-</div>
-<style>
-@keyframes htmxSpin { to { transform: rotate(360deg); } }
-</style>
+    <style>
+        @keyframes htmxSpin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+    </style>
 
     <!-- Sidebar Navigation -->
     <div class="app-sidebar">
@@ -297,8 +304,8 @@
             <div class="topbar-spacer"></div>
 
             <div id="dashboardTopbarFilters">
-            {% block topbar_filters %}
-            {% endblock %}
+                {% block topbar_filters %}
+                {% endblock %}
             </div>
             <div class="user-profile">
                 <div class="user-avatar">{{ logged_user.fname|default:"U"|truncatechars:1 }}{{ logged_user.lname|default:"N"|truncatechars:1 }}</div>
@@ -313,10 +320,12 @@
         </div>
 
         <!-- Secondary Filters Bar above KPIs -->
-        <div class="secondary-filter-bar" id="secondaryFilters" hx-swap-oob="true">
-            <form method="GET" action="" class="topbar-filters" style="margin:0;" id="dashboardFilterForm" hx-get="{{ request.path }}"
-                hx-target=".dash-body" hx-push-url="true" hx-swap="innerHTML" hx-trigger="change">
-                
+        <div class="secondary-filter-bar" id="secondaryFilters" hx-swap-oob="true" {% if request.resolver_match.url_name != 'ceo-dashboard' and request.resolver_match.url_name != 'business-dashboard' and request.resolver_match.url_name != 'category-dashboard' %}style="display:none;" {% endif %}>
+            {% if request.resolver_match.url_name == 'ceo-dashboard' or request.resolver_match.url_name == 'business-dashboard' or request.resolver_match.url_name == 'category-dashboard' %}
+            <form method="GET" action="" class="topbar-filters" style="margin:0;" id="dashboardFilterForm"
+                hx-get="{{ request.path }}" hx-target=".dash-body" hx-push-url="true" hx-swap="innerHTML"
+                hx-trigger="change">
+
                 <div class="topbar-filter-group">
                     <span class="filter-label">Date Range</span>
                     <select class="filter-select-top" id="dateRangeSelect" name="date_range"
@@ -339,7 +348,8 @@
                         <input type="text" id="flatpickrRange" placeholder="Select Dates..."
                             style="width: 220px; background: #ffffff; border: 1px solid #cbd5e1; border-radius: 6px; padding: 7px 12px; font-size: 13px; font-family: 'Inter', sans-serif; color: #0f172a; outline: none; cursor: pointer; transition: border-color 0.2s;"
                             onfocus="this.style.borderColor='#3b82f6'">
-                        <input type="hidden" id="customStartDate" name="start_date" value="{{ request.GET.start_date }}">
+                        <input type="hidden" id="customStartDate" name="start_date"
+                            value="{{ request.GET.start_date }}">
                         <input type="hidden" id="customEndDate" name="end_date" value="{{ request.GET.end_date }}">
                         <button type="button"
                             style="padding: 7px 16px; background: #2563eb; color: #ffffff; border: none; border-radius: 6px; font-family: 'Inter', sans-serif; font-weight: 600; font-size: 12px; cursor: pointer; transition: all 0.2s; box-shadow: 0 2px 4px rgba(37,99,235,0.2);"
@@ -363,12 +373,14 @@
                         {% endif %}
                     </select>
                 </div>
-                
+
                 <div class="topbar-filter-group filter-group-multi">
                     <span class="filter-label">
-                        <span class="material-icons-round" style="font-size:11px;vertical-align:middle;margin-right:3px;">category</span>Category
+                        <span class="material-icons-round"
+                            style="font-size:11px;vertical-align:middle;margin-right:3px;">category</span>Category
                     </span>
-                    <select id="categorySelect" name="category" class="filter-select-top" multiple onchange="htmx.trigger('#dashboardFilterForm', 'change')">
+                    <select id="categorySelect" name="category" class="filter-select-top" multiple
+                        onchange="htmx.trigger('#dashboardFilterForm', 'change')">
                         {% for c in payload.filters.categories %}
                         <option value="{{ c }}" {% if selected_filters.categories and c in selected_filters.categories %}selected{% endif %}>{{ c }}</option>
                         {% endfor %}
@@ -376,9 +388,11 @@
                 </div>
                 <div class="topbar-filter-group filter-group-multi filter-group-asin">
                     <span class="filter-label">
-                        <span class="material-icons-round" style="font-size:11px;vertical-align:middle;margin-right:3px;">qr_code</span>ASIN
+                        <span class="material-icons-round"
+                            style="font-size:11px;vertical-align:middle;margin-right:3px;">qr_code</span>ASIN
                     </span>
-                    <select id="asinSelect" name="asin" class="filter-select-top" multiple onchange="htmx.trigger('#dashboardFilterForm', 'change')">
+                    <select id="asinSelect" name="asin" class="filter-select-top" multiple
+                        onchange="htmx.trigger('#dashboardFilterForm', 'change')">
                         {% for a in payload.filters.asins %}
                         <option value="{{ a }}" {% if selected_filters.asins and a in selected_filters.asins %}selected{% endif %}>{{ a }}</option>
                         {% endfor %}
@@ -386,9 +400,11 @@
                 </div>
                 <div class="topbar-filter-group filter-group-multi" id="fsnFilterGroup" style="display:none;">
                     <span class="filter-label">
-                        <span class="material-icons-round" style="font-size:11px;vertical-align:middle;margin-right:3px;">qr_code</span>FSN
+                        <span class="material-icons-round"
+                            style="font-size:11px;vertical-align:middle;margin-right:3px;">qr_code</span>FSN
                     </span>
-                    <select id="fsnSelect" name="fsn" class="filter-select-top" multiple onchange="htmx.trigger('#dashboardFilterForm', 'change')">
+                    <select id="fsnSelect" name="fsn" class="filter-select-top" multiple
+                        onchange="htmx.trigger('#dashboardFilterForm', 'change')">
                         {% for f in payload.filters.fsns %}
                         <option value="{{ f }}" {% if selected_filters.fsns and f in selected_filters.fsns %}selected{% endif %}>{{ f }}</option>
                         {% endfor %}
@@ -401,6 +417,7 @@
                         title="Reset all filters">Reset Filters</button>
                 </div>
             </form>
+            {% endif %}
         </div>
 
         <div class="dash-body" id="dash-body">
@@ -571,9 +588,9 @@
         var _choicesInstances = {};
 
         var _choicesDefs = [
-            { id: 'categorySelect', placeholder: 'All Categories',  search: 'Search categories...',  noResult: 'No categories found',  noChoices: 'No categories available' },
-            { id: 'asinSelect',     placeholder: 'All ASINs',       search: 'Search ASINs...',        noResult: 'No ASINs found',        noChoices: 'No ASINs available' },
-            { id: 'fsnSelect',      placeholder: 'All FSNs',        search: 'Search FSNs...',         noResult: 'No FSNs found',         noChoices: 'No FSNs available' },
+            { id: 'categorySelect', placeholder: 'All Categories', search: 'Search categories...', noResult: 'No categories found', noChoices: 'No categories available' },
+            { id: 'asinSelect', placeholder: 'All ASINs', search: 'Search ASINs...', noResult: 'No ASINs found', noChoices: 'No ASINs available' },
+            { id: 'fsnSelect', placeholder: 'All FSNs', search: 'Search FSNs...', noResult: 'No FSNs found', noChoices: 'No FSNs available' },
         ];
 
         /** Destroy + recreate Choices.js wrappers on the 3 filter selects. */
@@ -584,7 +601,7 @@
                 if (!el) return;
                 // Destroy existing instance cleanly
                 if (_choicesInstances[def.id]) {
-                    try { _choicesInstances[def.id].destroy(); } catch (e) {}
+                    try { _choicesInstances[def.id].destroy(); } catch (e) { }
                     delete _choicesInstances[def.id];
                 }
                 try {
@@ -617,7 +634,7 @@
         var DASHBOARD_EXPORT_VIEWS = ['business', 'ceo', 'category'];
 
         function syncExportSection() {
-            var viewType  = window.DASHBOARD_VIEW_TYPE || '';
+            var viewType = window.DASHBOARD_VIEW_TYPE || '';
             var exportSec = document.getElementById('downloadExportSection');
             if (!exportSec) return;
             exportSec.style.display = DASHBOARD_EXPORT_VIEWS.includes(viewType) ? 'block' : 'none';
