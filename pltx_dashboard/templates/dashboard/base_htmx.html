@@ -36,22 +36,30 @@
 <!-- OOB swap for the SECONDARY FILTER BAR -->
 <div class="secondary-filter-bar" id="secondaryFilters" hx-swap-oob="true" {% if request.resolver_match.url_name != 'ceo-dashboard' and request.resolver_match.url_name != 'business-dashboard' and request.resolver_match.url_name != 'category-dashboard' %}style="display:none;"{% endif %}>
     {% if request.resolver_match.url_name == 'ceo-dashboard' or request.resolver_match.url_name == 'business-dashboard' or request.resolver_match.url_name == 'category-dashboard' %}
-    <form method="GET" action="{{ request.path }}" class="topbar-filters" style="margin:0;" id="dashboardFilterForm" hx-get="{{ request.path }}"
-        hx-target=".dash-body" hx-push-url="true" hx-swap="innerHTML" hx-trigger="change">
-        
+    <form method="GET" action="{{ request.path }}" class="topbar-filters" style="margin:0;" id="dashboardFilterForm"
+        hx-get="{{ request.path }}" hx-target=".dash-body" hx-push-url="true" hx-swap="innerHTML" hx-trigger="submit">
+
         <div class="topbar-filter-group">
             <span class="filter-label">Date Range</span>
             <select class="filter-select-top" id="dateRangeSelect" name="date_range"
-                onchange="handleDateRangeChange(this)">
+                onchange="handleDateRangeChange(event, this)">
                 <option value="">All Time</option>
-                <option value="yesterday" {% if request.GET.date_range == 'yesterday' %}selected{% endif %}>Yesterday</option>
-                <option value="last_7_days" {% if request.GET.date_range == 'last_7_days' %}selected{% endif %}>Last 7 Days</option>
-                <option value="last_15_days" {% if request.GET.date_range == 'last_15_days' %}selected{% endif %}>Last 15 Days</option>
-                <option value="last_month" {% if request.GET.date_range == 'last_month' %}selected{% endif %}>Last Month</option>
-                <option value="last_3_months" {% if request.GET.date_range == 'last_3_months' %}selected{% endif %}>Last 3 Months</option>
-                <option value="last_6_months" {% if request.GET.date_range == 'last_6_months' %}selected{% endif %}>Last 6 Months</option>
-                <option value="last_1_year" {% if request.GET.date_range == 'last_1_year' %}selected{% endif %}>Last 1 Year</option>
-                <option value="custom" {% if request.GET.date_range == 'custom' %}selected{% endif %}>Custom Dates</option>
+                <option value="yesterday" {% if request.GET.date_range == "yesterday" %}selected{% endif %}>Yesterday
+                </option>
+                <option value="last_7_days" {% if request.GET.date_range == "last_7_days" %}selected{% endif %}>Last 7
+                    Days</option>
+                <option value="last_15_days" {% if request.GET.date_range == "last_15_days" %}selected{% endif %}>Last 15
+                    Days</option>
+                <option value="last_month" {% if request.GET.date_range == "last_month" %}selected{% endif %}>Last Month
+                </option>
+                <option value="last_3_months" {% if request.GET.date_range == "last_3_months" %}selected{% endif %}>Last 3
+                    Months</option>
+                <option value="last_6_months" {% if request.GET.date_range == "last_6_months" %}selected{% endif %}>Last 6
+                    Months</option>
+                <option value="last_1_year" {% if request.GET.date_range == "last_1_year" %}selected{% endif %}>Last 1
+                    Year</option>
+                <option value="custom" {% if request.GET.date_range == "custom" %}selected{% endif %}>Custom Dates
+                </option>
             </select>
         </div>
         <div class="topbar-filter-group custom-date-group" id="customDateGroup"
@@ -72,24 +80,27 @@
         </div>
         <div class="topbar-filter-group">
             <span class="filter-label">Platform</span>
-            <select class="filter-select-top" id="platformSelect" name="platform" onchange="syncFilterVisibility()">
+            <select class="filter-select-top" id="platformSelect" name="platform"
+                onchange="syncFilterVisibility(); htmx.trigger('#dashboardFilterForm', 'submit')">
                 <option value="">All</option>
                 {% if payload.filters.platforms %}
                 {% for p in payload.filters.platforms %}
                 <option value="{{ p }}" {% if request.GET.platform == p %}selected{% endif %}>{{ p }}</option>
                 {% endfor %}
                 {% else %}
-                <option value="Amazon" {% if request.GET.platform == 'Amazon' %}selected{% endif %}>Amazon</option>
-                <option value="Flipkart" {% if request.GET.platform == 'Flipkart' %}selected{% endif %}>Flipkart</option>
+                <option value="Amazon" {% if request.GET.platform == "Amazon" %}selected{% endif %}>Amazon</option>
+                <option value="Flipkart" {% if request.GET.platform == "Flipkart" %}selected{% endif %}>Flipkart</option>
                 {% endif %}
             </select>
         </div>
-        
+
         <div class="topbar-filter-group filter-group-multi">
             <span class="filter-label">
-                <span class="material-icons-round" style="font-size:11px;vertical-align:middle;margin-right:3px;">category</span>Category
+                <span class="material-icons-round"
+                    style="font-size:11px;vertical-align:middle;margin-right:3px;">category</span>Category
             </span>
-            <select id="categorySelect" name="category" class="filter-select-top" multiple onchange="htmx.trigger('#dashboardFilterForm', 'change')">
+            <select id="categorySelect" name="category" class="filter-select-top" multiple
+                onchange="htmx.trigger('#dashboardFilterForm', 'submit')">
                 {% for c in payload.filters.categories %}
                 <option value="{{ c }}" {% if selected_filters.categories and c in selected_filters.categories %}selected{% endif %}>{{ c }}</option>
                 {% endfor %}
@@ -97,9 +108,11 @@
         </div>
         <div class="topbar-filter-group filter-group-multi filter-group-asin">
             <span class="filter-label">
-                <span class="material-icons-round" style="font-size:11px;vertical-align:middle;margin-right:3px;">qr_code</span>ASIN
+                <span class="material-icons-round"
+                    style="font-size:11px;vertical-align:middle;margin-right:3px;">qr_code</span>ASIN
             </span>
-            <select id="asinSelect" name="asin" class="filter-select-top" multiple onchange="htmx.trigger('#dashboardFilterForm', 'change')">
+            <select id="asinSelect" name="asin" class="filter-select-top" multiple
+                onchange="htmx.trigger('#dashboardFilterForm', 'submit')">
                 {% for a in payload.filters.asins %}
                 <option value="{{ a }}" {% if selected_filters.asins and a in selected_filters.asins %}selected{% endif %}>{{ a }}</option>
                 {% endfor %}
@@ -107,9 +120,11 @@
         </div>
         <div class="topbar-filter-group filter-group-multi" id="fsnFilterGroup" style="display:none;">
             <span class="filter-label">
-                <span class="material-icons-round" style="font-size:11px;vertical-align:middle;margin-right:3px;">qr_code</span>FSN
+                <span class="material-icons-round"
+                    style="font-size:11px;vertical-align:middle;margin-right:3px;">qr_code</span>FSN
             </span>
-            <select id="fsnSelect" name="fsn" class="filter-select-top" multiple onchange="htmx.trigger('#dashboardFilterForm', 'change')">
+            <select id="fsnSelect" name="fsn" class="filter-select-top" multiple
+                onchange="htmx.trigger('#dashboardFilterForm', 'submit')">
                 {% for f in payload.filters.fsns %}
                 <option value="{{ f }}" {% if selected_filters.fsns and f in selected_filters.fsns %}selected{% endif %}>{{ f }}</option>
                 {% endfor %}
@@ -134,8 +149,8 @@
     window.DASHBOARD_VIEW_TYPE = document.querySelector('[data-view-type]')?.getAttribute('data-view-type') || 'business';
 
     // Update window payload from the newly loaded content
-    window.DASHBOARD_PAYLOAD = {{ payload_json | safe |default:"null" }};
-    window.SELECTED_FILTERS  = {{ selected_filters_json | safe |default:"{}" }};
+    window.DASHBOARD_PAYLOAD = {{ payload_json|safe|default:"null" }};
+    window.SELECTED_FILTERS = {{ selected_filters_json|safe|default:"{}" }};
 
     // Signal that content has loaded — fires AFTER all OOB swaps are applied
     // so repopulateFilterDropdowns / syncExportSection / initCharts all see

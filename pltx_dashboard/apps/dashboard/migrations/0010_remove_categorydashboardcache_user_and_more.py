@@ -4,38 +4,37 @@ from django.db import migrations
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('dashboard', '0009_flipkartprocesseddashboarddata_idx_fk_user_date_and_more'),
+        ("dashboard", "0009_flipkartprocesseddashboarddata_idx_fk_user_date_and_more"),
     ]
 
     operations = [
         migrations.RemoveField(
-            model_name='categorydashboardcache',
-            name='user',
+            model_name="categorydashboardcache",
+            name="user",
         ),
         migrations.RemoveField(
-            model_name='ceodashboardcache',
-            name='user',
+            model_name="ceodashboardcache",
+            name="user",
         ),
         migrations.AlterUniqueTogether(
-            name='dashboardfiltercache',
+            name="dashboardfiltercache",
             unique_together=None,
         ),
         migrations.RemoveField(
-            model_name='dashboardfiltercache',
-            name='user',
+            model_name="dashboardfiltercache",
+            name="user",
         ),
         migrations.DeleteModel(
-            name='BusinessDashboardCache',
+            name="BusinessDashboardCache",
         ),
         migrations.DeleteModel(
-            name='CategoryDashboardCache',
+            name="CategoryDashboardCache",
         ),
         migrations.DeleteModel(
-            name='CeoDashboardCache',
+            name="CeoDashboardCache",
         ),
         migrations.DeleteModel(
-            name='DashboardFilterCache',
+            name="DashboardFilterCache",
         ),
     ]

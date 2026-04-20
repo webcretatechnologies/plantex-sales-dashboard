@@ -4,27 +4,30 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('accounts', '0003_remove_users_is_main_user'),
-        ('dashboard', '0008_remove_unused_flipkart_models'),
+        ("accounts", "0003_remove_users_is_main_user"),
+        ("dashboard", "0008_remove_unused_flipkart_models"),
     ]
 
     operations = [
         migrations.AddIndex(
-            model_name='flipkartprocesseddashboarddata',
-            index=models.Index(fields=['user', 'date'], name='idx_fk_user_date'),
+            model_name="flipkartprocesseddashboarddata",
+            index=models.Index(fields=["user", "date"], name="idx_fk_user_date"),
         ),
         migrations.AddIndex(
-            model_name='flipkartprocesseddashboarddata',
-            index=models.Index(fields=['user', 'fsn', 'date'], name='idx_fk_user_fsn_date'),
+            model_name="flipkartprocesseddashboarddata",
+            index=models.Index(
+                fields=["user", "fsn", "date"], name="idx_fk_user_fsn_date"
+            ),
         ),
         migrations.AddIndex(
-            model_name='processeddashboarddata',
-            index=models.Index(fields=['user', 'date'], name='idx_user_date'),
+            model_name="processeddashboarddata",
+            index=models.Index(fields=["user", "date"], name="idx_user_date"),
         ),
         migrations.AddIndex(
-            model_name='processeddashboarddata',
-            index=models.Index(fields=['user', 'asin', 'date'], name='idx_user_asin_date'),
+            model_name="processeddashboarddata",
+            index=models.Index(
+                fields=["user", "asin", "date"], name="idx_user_asin_date"
+            ),
         ),
     ]

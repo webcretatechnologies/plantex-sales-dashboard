@@ -4,15 +4,15 @@ from channels.routing import ProtocolTypeRouter, URLRouter
 from channels.auth import AuthMiddlewareStack
 import apps.upload.routing
 
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'pltx_dashboard.settings')
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "pltx_dashboard.settings")
 
 django_asgi_app = get_asgi_application()
 
-application = ProtocolTypeRouter({
-    "http": django_asgi_app,
-    "websocket": AuthMiddlewareStack(
-        URLRouter(
-            apps.upload.routing.websocket_urlpatterns
-        )
-    ),
-})
+application = ProtocolTypeRouter(
+    {
+        "http": django_asgi_app,
+        "websocket": AuthMiddlewareStack(
+            URLRouter(apps.upload.routing.websocket_urlpatterns)
+        ),
+    }
+)

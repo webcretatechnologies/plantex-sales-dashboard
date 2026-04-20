@@ -4,14 +4,13 @@ from django.db import migrations
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('accounts', '0002_feature_users_created_by_users_is_main_user_role_and_more'),
+        ("accounts", "0002_feature_users_created_by_users_is_main_user_role_and_more"),
     ]
 
     operations = [
         migrations.RemoveField(
-            model_name='users',
-            name='is_main_user',
+            model_name="users",
+            name="is_main_user",
         ),
     ]

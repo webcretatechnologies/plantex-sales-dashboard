@@ -5,15 +5,17 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('upload', '0001_initial'),
+        ("upload", "0001_initial"),
     ]
 
     operations = [
         migrations.AlterField(
-            model_name='uploadedfile',
-            name='file',
-            field=models.FileField(storage=apps.upload.models.OverwriteStorage(), upload_to=apps.upload.models.user_directory_path),
+            model_name="uploadedfile",
+            name="file",
+            field=models.FileField(
+                storage=apps.upload.models.OverwriteStorage(),
+                upload_to=apps.upload.models.user_directory_path,
+            ),
         ),
     ]

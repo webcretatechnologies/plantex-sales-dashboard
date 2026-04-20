@@ -4,15 +4,16 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('accounts', '0002_feature_users_created_by_users_is_main_user_role_and_more'),
-        ('dashboard', '0002_businessdashboardcache_categorydashboardcache_and_more'),
+        ("accounts", "0002_feature_users_created_by_users_is_main_user_role_and_more"),
+        ("dashboard", "0002_businessdashboardcache_categorydashboardcache_and_more"),
     ]
 
     operations = [
         migrations.AddIndex(
-            model_name='processeddashboarddata',
-            index=models.Index(fields=['user', 'category', 'date'], name='idx_user_cat_date'),
+            model_name="processeddashboarddata",
+            index=models.Index(
+                fields=["user", "category", "date"], name="idx_user_cat_date"
+            ),
         ),
     ]

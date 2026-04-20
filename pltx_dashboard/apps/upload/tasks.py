@@ -1,5 +1,4 @@
 import os
-import tempfile
 import logging
 from celery import shared_task
 from asgiref.sync import async_to_sync
@@ -13,20 +12,28 @@ def _send_ws(user_id, message, status):
     try:
         channel_layer = get_channel_layer()
         async_to_sync(channel_layer.group_send)(
-            f'user_{user_id}',
+            f"user_{user_id}",
             {
-                'type': 'upload_progress',
-                'message': message,
-                'status': status,
-            }
+                "type": "upload_progress",
+                "message": message,
+                "status": status,
+            },
         )
     except Exception as exc:
         logger.warning("[UploadTask] WebSocket send failed: %s", exc)
 
 
 @shared_task(bind=True)
-def process_upload_file_task(self, file_path, file_type, user_id, data_owner_id,
-                             date_str='', is_last=False, is_flipkart=False):
+def process_upload_file_task(
+    self,
+    file_path,
+    file_type,
+    user_id,
+    data_owner_id,
+    date_str="",
+    is_last=False,
+    is_flipkart=False,
+):
     """
     Celery task that processes a single uploaded file.
 
@@ -50,45 +57,51 @@ def process_upload_file_task(self, file_path, file_type, user_id, data_owner_id,
     is_flipkart : bool
         Whether this file belongs to the Flipkart pipeline.
     """
-    from apps.accounts.models import Users  # noqa: late import to avoid AppRegistryNotReady
+    from apps.accounts.models import Users  # noqa: F401
     from apps.upload.services import (
-        process_category_file, process_price_file,
-        process_spend_file, process_sales_file,
+        process_category_file,
+        process_price_file,
+        process_spend_file,
+        process_sales_file,
         generate_dashboard_data,
-        process_fk_search_traffic, process_fk_category,
-        process_fk_price, process_fk_pca, process_fk_pla,
-        process_fk_sales_invoice, process_fk_coupon,
+        process_fk_search_traffic,
+        process_fk_category,
+        process_fk_price,
+        process_fk_pca,
+        process_fk_pla,
+        process_fk_sales_invoice,
+        process_fk_coupon,
         generate_flipkart_dashboard_data,
     )
 
-    _send_ws(user_id, f'Processing {file_type} file...', 'processing')
+    _send_ws(user_id, f"Processing {file_type} file...", "processing")
 
     try:
         data_owner = Users.objects.get(pk=data_owner_id)
 
         # Open the file from disk
-        with open(file_path, 'rb') as fh:
-            if file_type == 'category':
+        with open(file_path, "rb") as fh:
+            if file_type == "category":
                 process_category_file(fh, data_owner)
-            elif file_type == 'price':
+            elif file_type == "price":
                 process_price_file(fh, data_owner)
-            elif file_type == 'spend':
+            elif file_type == "spend":
                 process_spend_file(fh, data_owner)
-            elif file_type == 'sales':
+            elif file_type == "sales":
                 process_sales_file(fh, date_str, data_owner)
-            elif file_type == 'fk_search_traffic':
+            elif file_type == "fk_search_traffic":
                 process_fk_search_traffic(fh, data_owner)
-            elif file_type == 'fk_category':
+            elif file_type == "fk_category":
                 process_fk_category(fh, data_owner)
-            elif file_type == 'fk_price':
+            elif file_type == "fk_price":
                 process_fk_price(fh, data_owner)
-            elif file_type == 'fk_pca':
+            elif file_type == "fk_pca":
                 process_fk_pca(fh, data_owner)
-            elif file_type == 'fk_pla':
+            elif file_type == "fk_pla":
                 process_fk_pla(fh, data_owner)
-            elif file_type == 'fk_sales_invoice':
+            elif file_type == "fk_sales_invoice":
                 process_fk_sales_invoice(fh, data_owner)
-            elif file_type == 'fk_coupon':
+            elif file_type == "fk_coupon":
                 process_fk_coupon(fh, data_owner)
 
         # Clean up temp file after processing
@@ -98,24 +111,24 @@ def process_upload_file_task(self, file_path, file_type, user_id, data_owner_id,
             pass
 
         if is_last:
-            _send_ws(user_id, 'Generating final dashboard data...', 'processing')
+            _send_ws(user_id, "Generating final dashboard data...", "processing")
             if is_flipkart:
                 generate_flipkart_dashboard_data(data_owner)
             else:
                 generate_dashboard_data(data_owner)
-            _send_ws(user_id, 'All files processed successfully!', 'complete')
+            _send_ws(user_id, "All files processed successfully!", "complete")
         else:
-            _send_ws(user_id, f'{file_type} processed successfully.', 'partial')
+            _send_ws(user_id, f"{file_type} processed successfully.", "partial")
 
         return {
-            'status': 'success',
-            'file_type': file_type,
-            'is_last': is_last,
+            "status": "success",
+            "file_type": file_type,
+            "is_last": is_last,
         }
 
     except Exception as exc:
         logger.exception("[UploadTask] Error processing %s: %s", file_type, exc)
-        _send_ws(user_id, f'Error processing file: {str(exc)}', 'error')
+        _send_ws(user_id, f"Error processing file: {str(exc)}", "error")
 
         # Clean up temp file on error too
         try:
@@ -124,9 +137,9 @@ def process_upload_file_task(self, file_path, file_type, user_id, data_owner_id,
             pass
 
         return {
-            'status': 'error',
-            'file_type': file_type,
-            'message': str(exc),
+            "status": "error",
+            "file_type": file_type,
+            "message": str(exc),
         }
 
 
@@ -143,7 +156,7 @@ def generate_dashboard_task(self, user_id, data_owner_id, is_flipkart=False):
         generate_flipkart_dashboard_data,
     )
 
-    _send_ws(user_id, 'Regenerating dashboard data...', 'processing')
+    _send_ws(user_id, "Regenerating dashboard data...", "processing")
 
     try:
         data_owner = Users.objects.get(pk=data_owner_id)
@@ -153,11 +166,11 @@ def generate_dashboard_task(self, user_id, data_owner_id, is_flipkart=False):
         else:
             generate_dashboard_data(data_owner)
 
-        _send_ws(user_id, 'Dashboard data regenerated successfully!', 'complete')
+        _send_ws(user_id, "Dashboard data regenerated successfully!", "complete")
 
-        return {'status': 'success'}
+        return {"status": "success"}
 
     except Exception as exc:
         logger.exception("[DashboardTask] Error: %s", exc)
-        _send_ws(user_id, f'Error regenerating dashboard: {str(exc)}', 'error')
-        return {'status': 'error', 'message': str(exc)}
+        _send_ws(user_id, f"Error regenerating dashboard: {str(exc)}", "error")
+        return {"status": "error", "message": str(exc)}
