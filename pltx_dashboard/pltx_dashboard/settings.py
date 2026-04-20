@@ -26,7 +26,14 @@ SECRET_KEY = "django-insecure-@9e3vk548@g^lc3ke$4_s^sh%(pj=3utzz7=5^*ea34p8g!0gh
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['209.182.233.109','admin.plantex.work']
+
+CSRF_TRUSTED_ORIGINS = [
+    'https://admin.plantex.work',
+    'http://admin.plantex.work',
+    'https://209.182.233.109',
+    'http://209.182.233.109',
+]
 
 
 # Application definition
@@ -80,37 +87,36 @@ WSGI_APPLICATION = "pltx_dashboard.wsgi.application"
 ASGI_APPLICATION = "pltx_dashboard.asgi.application"
 
 CHANNEL_LAYERS = {
-    "default": {
-        "BACKEND": "channels_redis.core.RedisChannelLayer",
-        "CONFIG": {
-            "hosts": [("127.0.0.1", 6379)],
+    'default': {
+        'BACKEND': 'channels_redis.core.RedisChannelLayer',
+        'CONFIG': {
+            "hosts": [('redis', 6379)],   # 🔥 FIX
         },
     },
 }
 
 # Celery Configuration Options
-CELERY_BROKER_URL = "redis://127.0.0.1:6379/0"
-CELERY_RESULT_BACKEND = "redis://127.0.0.1:6379/0"
-CELERY_ACCEPT_CONTENT = ["json"]
-CELERY_TASK_SERIALIZER = "json"
-CELERY_RESULT_SERIALIZER = "json"
-CELERY_TIMEZONE = "Asia/Kolkata"
+CELERY_BROKER_URL = 'redis://redis:6379/0'      # 🔥 FIX
+CELERY_RESULT_BACKEND = 'redis://redis:6379/0'  # 🔥 FIX
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TIMEZONE = 'Asia/Kolkata'
 
 
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
 DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.mysql",
-        "NAME": "pltx_dashboard",
-        "USER": "root",
-        "PASSWORD": "",
-        "HOST": "localhost",
-        "PORT": "3306",
+    'default': {
+        'ENGINE': 'django.db.backends.mysql',
+        'NAME': 'plantex_db',
+        'USER': 'plantex',
+        'PASSWORD': 'strongAppPass123',
+        'HOST': 'mysql',   # 🔥 THIS IS THE FIX
+        'PORT': '3306',
     }
 }
-
 
 # Password validation
 # https://docs.djangoproject.com/en/6.0/ref/settings/#auth-password-validators
@@ -146,8 +152,9 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
-STATIC_URL = "static/"
-STATICFILES_DIRS = [os.path.join(BASE_DIR, "static")]
+STATIC_URL = 'static/'
+STATICFILES_DIRS = [os.path.join(BASE_DIR, 'static')]
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')  # ✅ ADD THIS
 
 MEDIA_URL = "/media/"
 MEDIA_ROOT = os.path.join(BASE_DIR, "media")
@@ -160,6 +167,6 @@ LOGIN_URL = "/accounts/login/"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # File upload limits — reports can be large
-DATA_UPLOAD_MAX_MEMORY_SIZE = 209715200  # 200 MB
-FILE_UPLOAD_MAX_MEMORY_SIZE = 209715200  # 200 MB
+DATA_UPLOAD_MAX_MEMORY_SIZE = 629145600   # 200 MB
+FILE_UPLOAD_MAX_MEMORY_SIZE = 629145600   # 200 MB
 DATA_UPLOAD_MAX_NUMBER_FILES = 20
