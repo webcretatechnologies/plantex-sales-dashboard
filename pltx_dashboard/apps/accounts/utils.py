@@ -1,8 +1,9 @@
 from apps.accounts.models import Users
 
+
 def get_logged_in_user(request):
     """Get the logged-in Users instance from session, or None."""
-    user_id = request.session.get('user_id')
+    user_id = request.session.get("user_id")
     if not user_id:
         return None
     try:

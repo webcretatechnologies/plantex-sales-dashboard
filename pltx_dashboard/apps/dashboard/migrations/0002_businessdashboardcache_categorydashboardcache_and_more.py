@@ -6,50 +6,85 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('accounts', '0002_feature_users_created_by_users_is_main_user_role_and_more'),
-        ('dashboard', '0001_initial'),
+        ("accounts", "0002_feature_users_created_by_users_is_main_user_role_and_more"),
+        ("dashboard", "0001_initial"),
     ]
 
     operations = [
         migrations.CreateModel(
-            name='BusinessDashboardCache',
+            name="BusinessDashboardCache",
             fields=[
-                ('user', models.OneToOneField(on_delete=django.db.models.deletion.CASCADE, primary_key=True, related_name='business_dashboard_cache', serialize=False, to='accounts.users')),
-                ('payload_json', models.JSONField(default=dict)),
-                ('refreshed_at', models.DateTimeField(default=django.utils.timezone.now)),
+                (
+                    "user",
+                    models.OneToOneField(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        primary_key=True,
+                        related_name="business_dashboard_cache",
+                        serialize=False,
+                        to="accounts.users",
+                    ),
+                ),
+                ("payload_json", models.JSONField(default=dict)),
+                (
+                    "refreshed_at",
+                    models.DateTimeField(default=django.utils.timezone.now),
+                ),
             ],
             options={
-                'verbose_name': 'Business Dashboard Cache',
-                'verbose_name_plural': 'Business Dashboard Caches',
-                'db_table': 'dashboard_business_cache',
+                "verbose_name": "Business Dashboard Cache",
+                "verbose_name_plural": "Business Dashboard Caches",
+                "db_table": "dashboard_business_cache",
             },
         ),
         migrations.CreateModel(
-            name='CategoryDashboardCache',
+            name="CategoryDashboardCache",
             fields=[
-                ('user', models.OneToOneField(on_delete=django.db.models.deletion.CASCADE, primary_key=True, related_name='category_dashboard_cache', serialize=False, to='accounts.users')),
-                ('payload_json', models.JSONField(default=dict)),
-                ('refreshed_at', models.DateTimeField(default=django.utils.timezone.now)),
+                (
+                    "user",
+                    models.OneToOneField(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        primary_key=True,
+                        related_name="category_dashboard_cache",
+                        serialize=False,
+                        to="accounts.users",
+                    ),
+                ),
+                ("payload_json", models.JSONField(default=dict)),
+                (
+                    "refreshed_at",
+                    models.DateTimeField(default=django.utils.timezone.now),
+                ),
             ],
             options={
-                'verbose_name': 'Category Dashboard Cache',
-                'verbose_name_plural': 'Category Dashboard Caches',
-                'db_table': 'dashboard_category_cache',
+                "verbose_name": "Category Dashboard Cache",
+                "verbose_name_plural": "Category Dashboard Caches",
+                "db_table": "dashboard_category_cache",
             },
         ),
         migrations.CreateModel(
-            name='CeoDashboardCache',
+            name="CeoDashboardCache",
             fields=[
-                ('user', models.OneToOneField(on_delete=django.db.models.deletion.CASCADE, primary_key=True, related_name='ceo_dashboard_cache', serialize=False, to='accounts.users')),
-                ('payload_json', models.JSONField(default=dict)),
-                ('refreshed_at', models.DateTimeField(default=django.utils.timezone.now)),
+                (
+                    "user",
+                    models.OneToOneField(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        primary_key=True,
+                        related_name="ceo_dashboard_cache",
+                        serialize=False,
+                        to="accounts.users",
+                    ),
+                ),
+                ("payload_json", models.JSONField(default=dict)),
+                (
+                    "refreshed_at",
+                    models.DateTimeField(default=django.utils.timezone.now),
+                ),
             ],
             options={
-                'verbose_name': 'CEO Dashboard Cache',
-                'verbose_name_plural': 'CEO Dashboard Caches',
-                'db_table': 'dashboard_ceo_cache',
+                "verbose_name": "CEO Dashboard Cache",
+                "verbose_name_plural": "CEO Dashboard Caches",
+                "db_table": "dashboard_ceo_cache",
             },
         ),
     ]

@@ -8,13 +8,21 @@ class Feature(models.Model):
     def __str__(self):
         return self.name
 
+
 class Role(models.Model):
     name = models.CharField(max_length=255)
-    created_by = models.ForeignKey('Users', on_delete=models.CASCADE, related_name='created_roles', null=True, blank=True)
+    created_by = models.ForeignKey(
+        "Users",
+        on_delete=models.CASCADE,
+        related_name="created_roles",
+        null=True,
+        blank=True,
+    )
     features = models.ManyToManyField(Feature, blank=True)
 
     def __str__(self):
         return self.name
+
 
 class Users(models.Model):
     fname = models.CharField(max_length=255, null=False, blank=False)
@@ -25,16 +33,22 @@ class Users(models.Model):
 
     # RBAC and sub-user fields
     # Removed boolean field for is_main_user, using a property instead
-    created_by = models.ForeignKey('self', on_delete=models.CASCADE, related_name='sub_users', null=True, blank=True)
+    created_by = models.ForeignKey(
+        "self",
+        on_delete=models.CASCADE,
+        related_name="sub_users",
+        null=True,
+        blank=True,
+    )
     role = models.ForeignKey(Role, on_delete=models.SET_NULL, null=True, blank=True)
 
     class Meta:
-        verbose_name = 'User'
-        verbose_name_plural = 'Users'
+        verbose_name = "User"
+        verbose_name_plural = "Users"
 
     @property
     def is_main_user(self):
-        return self.role is not None and self.role.name.lower() == 'admin'
+        return self.role is not None and self.role.name.lower() == "admin"
 
     def __str__(self):
         return f"{self.fname} {self.lname}"

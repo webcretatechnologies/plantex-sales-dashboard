@@ -4,24 +4,23 @@ from django.db import migrations
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('dashboard', '0011_flipkartcurrentinventoryreport_flipkartsalesreport'),
+        ("dashboard", "0011_flipkartcurrentinventoryreport_flipkartsalesreport"),
     ]
 
     operations = [
         migrations.AlterUniqueTogether(
-            name='flipkartsalesreport',
+            name="flipkartsalesreport",
             unique_together=None,
         ),
         migrations.RemoveField(
-            model_name='flipkartsalesreport',
-            name='user',
+            model_name="flipkartsalesreport",
+            name="user",
         ),
         migrations.DeleteModel(
-            name='FlipkartCurrentInventoryReport',
+            name="FlipkartCurrentInventoryReport",
         ),
         migrations.DeleteModel(
-            name='FlipkartSalesReport',
+            name="FlipkartSalesReport",
         ),
     ]

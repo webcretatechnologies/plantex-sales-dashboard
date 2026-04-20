@@ -5,141 +5,293 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('accounts', '0003_remove_users_is_main_user'),
-        ('dashboard', '0006_alter_flipkartcurrentinventoryreport_unique_together_and_more'),
+        ("accounts", "0003_remove_users_is_main_user"),
+        (
+            "dashboard",
+            "0006_alter_flipkartcurrentinventoryreport_unique_together_and_more",
+        ),
     ]
 
     operations = [
         migrations.CreateModel(
-            name='FlipkartCategoryMap',
+            name="FlipkartCategoryMap",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('fsn', models.CharField(db_index=True, max_length=50)),
-                ('sku', models.CharField(blank=True, max_length=100, null=True)),
-                ('portfolio', models.CharField(blank=True, max_length=100, null=True)),
-                ('category', models.CharField(blank=True, max_length=100, null=True)),
-                ('subcategory', models.CharField(blank=True, max_length=100, null=True)),
-                ('user', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='fk_category_maps', to='accounts.users')),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("fsn", models.CharField(db_index=True, max_length=50)),
+                ("sku", models.CharField(blank=True, max_length=100, null=True)),
+                ("portfolio", models.CharField(blank=True, max_length=100, null=True)),
+                ("category", models.CharField(blank=True, max_length=100, null=True)),
+                (
+                    "subcategory",
+                    models.CharField(blank=True, max_length=100, null=True),
+                ),
+                (
+                    "user",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="fk_category_maps",
+                        to="accounts.users",
+                    ),
+                ),
             ],
             options={
-                'unique_together': {('user', 'fsn')},
+                "unique_together": {("user", "fsn")},
             },
         ),
         migrations.CreateModel(
-            name='FlipkartCoupon',
+            name="FlipkartCoupon",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('fsn', models.CharField(db_index=True, max_length=50)),
-                ('coupon_value', models.FloatField(default=0.0)),
-                ('user', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='fk_coupon_data', to='accounts.users')),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("fsn", models.CharField(db_index=True, max_length=50)),
+                ("coupon_value", models.FloatField(default=0.0)),
+                (
+                    "user",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="fk_coupon_data",
+                        to="accounts.users",
+                    ),
+                ),
             ],
             options={
-                'unique_together': {('user', 'fsn')},
+                "unique_together": {("user", "fsn")},
             },
         ),
         migrations.CreateModel(
-            name='FlipkartPCA',
+            name="FlipkartPCA",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('campaign_id', models.CharField(db_index=True, max_length=100)),
-                ('campaign_name', models.CharField(blank=True, max_length=255, null=True)),
-                ('date', models.DateField(blank=True, db_index=True, null=True)),
-                ('fsn_id', models.CharField(db_index=True, max_length=100)),
-                ('user', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='fk_pca_reports', to='accounts.users')),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("campaign_id", models.CharField(db_index=True, max_length=100)),
+                (
+                    "campaign_name",
+                    models.CharField(blank=True, max_length=255, null=True),
+                ),
+                ("date", models.DateField(blank=True, db_index=True, null=True)),
+                ("fsn_id", models.CharField(db_index=True, max_length=100)),
+                (
+                    "user",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="fk_pca_reports",
+                        to="accounts.users",
+                    ),
+                ),
             ],
             options={
-                'unique_together': {('user', 'campaign_id', 'fsn_id', 'date')},
+                "unique_together": {("user", "campaign_id", "fsn_id", "date")},
             },
         ),
         migrations.CreateModel(
-            name='FlipkartPLA',
+            name="FlipkartPLA",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('campaign_id', models.CharField(db_index=True, max_length=100)),
-                ('fsn_id', models.CharField(db_index=True, max_length=100)),
-                ('ad_spend', models.FloatField(default=0.0)),
-                ('user', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='fk_pla_reports', to='accounts.users')),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("campaign_id", models.CharField(db_index=True, max_length=100)),
+                ("fsn_id", models.CharField(db_index=True, max_length=100)),
+                ("ad_spend", models.FloatField(default=0.0)),
+                (
+                    "user",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="fk_pla_reports",
+                        to="accounts.users",
+                    ),
+                ),
             ],
             options={
-                'unique_together': {('user', 'campaign_id', 'fsn_id')},
+                "unique_together": {("user", "campaign_id", "fsn_id")},
             },
         ),
         migrations.CreateModel(
-            name='FlipkartPrice',
+            name="FlipkartPrice",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('fsn', models.CharField(db_index=True, max_length=50)),
-                ('price', models.FloatField(default=0.0)),
-                ('user', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='fk_price_data', to='accounts.users')),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("fsn", models.CharField(db_index=True, max_length=50)),
+                ("price", models.FloatField(default=0.0)),
+                (
+                    "user",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="fk_price_data",
+                        to="accounts.users",
+                    ),
+                ),
             ],
             options={
-                'unique_together': {('user', 'fsn')},
+                "unique_together": {("user", "fsn")},
             },
         ),
         migrations.CreateModel(
-            name='FlipkartProcessedDashboardData',
+            name="FlipkartProcessedDashboardData",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('date', models.DateField(db_index=True)),
-                ('fsn', models.CharField(db_index=True, max_length=50)),
-                ('platform', models.CharField(default='Flipkart', max_length=20)),
-                ('portfolio', models.CharField(blank=True, db_index=True, max_length=100, null=True)),
-                ('category', models.CharField(blank=True, db_index=True, max_length=100, null=True)),
-                ('subcategory', models.CharField(blank=True, db_index=True, max_length=100, null=True)),
-                ('price', models.FloatField(default=0.0)),
-                ('pageviews', models.IntegerField(default=0)),
-                ('units', models.IntegerField(default=0)),
-                ('orders', models.IntegerField(default=0)),
-                ('revenue', models.FloatField(default=0.0)),
-                ('total_spend', models.FloatField(default=0.0)),
-                ('spend_sp', models.FloatField(default=0.0)),
-                ('spend_sb', models.FloatField(default=0.0)),
-                ('spend_sd', models.FloatField(default=0.0)),
-                ('taxable_value', models.FloatField(default=0.0)),
-                ('invoice_amount', models.FloatField(default=0.0)),
-                ('coupon_total', models.FloatField(default=0.0)),
-                ('coupon_error', models.BooleanField(default=False)),
-                ('user', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='fk_processed_dashboard', to='accounts.users')),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("date", models.DateField(db_index=True)),
+                ("fsn", models.CharField(db_index=True, max_length=50)),
+                ("platform", models.CharField(default="Flipkart", max_length=20)),
+                (
+                    "portfolio",
+                    models.CharField(
+                        blank=True, db_index=True, max_length=100, null=True
+                    ),
+                ),
+                (
+                    "category",
+                    models.CharField(
+                        blank=True, db_index=True, max_length=100, null=True
+                    ),
+                ),
+                (
+                    "subcategory",
+                    models.CharField(
+                        blank=True, db_index=True, max_length=100, null=True
+                    ),
+                ),
+                ("price", models.FloatField(default=0.0)),
+                ("pageviews", models.IntegerField(default=0)),
+                ("units", models.IntegerField(default=0)),
+                ("orders", models.IntegerField(default=0)),
+                ("revenue", models.FloatField(default=0.0)),
+                ("total_spend", models.FloatField(default=0.0)),
+                ("spend_sp", models.FloatField(default=0.0)),
+                ("spend_sb", models.FloatField(default=0.0)),
+                ("spend_sd", models.FloatField(default=0.0)),
+                ("taxable_value", models.FloatField(default=0.0)),
+                ("invoice_amount", models.FloatField(default=0.0)),
+                ("coupon_total", models.FloatField(default=0.0)),
+                ("coupon_error", models.BooleanField(default=False)),
+                (
+                    "user",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="fk_processed_dashboard",
+                        to="accounts.users",
+                    ),
+                ),
             ],
             options={
-                'indexes': [models.Index(fields=['user', 'category', 'date'], name='idx_fk_user_cat_date')],
-                'unique_together': {('user', 'date', 'fsn')},
+                "indexes": [
+                    models.Index(
+                        fields=["user", "category", "date"], name="idx_fk_user_cat_date"
+                    )
+                ],
+                "unique_together": {("user", "date", "fsn")},
             },
         ),
         migrations.CreateModel(
-            name='FlipkartSalesInvoice',
+            name="FlipkartSalesInvoice",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('order_id', models.CharField(db_index=True, max_length=100)),
-                ('order_item_id', models.CharField(db_index=True, max_length=100)),
-                ('fsn', models.CharField(blank=True, db_index=True, max_length=100, null=True)),
-                ('item_quantity', models.IntegerField(default=0)),
-                ('taxable_value', models.FloatField(default=0.0)),
-                ('invoice_amount', models.FloatField(default=0.0)),
-                ('user', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='fk_sales_invoices', to='accounts.users')),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("order_id", models.CharField(db_index=True, max_length=100)),
+                ("order_item_id", models.CharField(db_index=True, max_length=100)),
+                (
+                    "fsn",
+                    models.CharField(
+                        blank=True, db_index=True, max_length=100, null=True
+                    ),
+                ),
+                ("item_quantity", models.IntegerField(default=0)),
+                ("taxable_value", models.FloatField(default=0.0)),
+                ("invoice_amount", models.FloatField(default=0.0)),
+                (
+                    "user",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="fk_sales_invoices",
+                        to="accounts.users",
+                    ),
+                ),
             ],
             options={
-                'unique_together': {('user', 'order_id', 'order_item_id')},
+                "unique_together": {("user", "order_id", "order_item_id")},
             },
         ),
         migrations.CreateModel(
-            name='FlipkartSearchTraffic',
+            name="FlipkartSearchTraffic",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('fsn', models.CharField(db_index=True, max_length=50)),
-                ('sku', models.CharField(blank=True, max_length=100, null=True)),
-                ('vertical', models.CharField(blank=True, max_length=100, null=True)),
-                ('date', models.DateField(db_index=True)),
-                ('page_views', models.IntegerField(default=0)),
-                ('product_clicks', models.IntegerField(default=0)),
-                ('sales', models.IntegerField(default=0)),
-                ('revenue', models.FloatField(default=0.0)),
-                ('user', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='fk_search_traffic', to='accounts.users')),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("fsn", models.CharField(db_index=True, max_length=50)),
+                ("sku", models.CharField(blank=True, max_length=100, null=True)),
+                ("vertical", models.CharField(blank=True, max_length=100, null=True)),
+                ("date", models.DateField(db_index=True)),
+                ("page_views", models.IntegerField(default=0)),
+                ("product_clicks", models.IntegerField(default=0)),
+                ("sales", models.IntegerField(default=0)),
+                ("revenue", models.FloatField(default=0.0)),
+                (
+                    "user",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="fk_search_traffic",
+                        to="accounts.users",
+                    ),
+                ),
             ],
             options={
-                'unique_together': {('user', 'fsn', 'date')},
+                "unique_together": {("user", "fsn", "date")},
             },
         ),
     ]

@@ -2,6 +2,7 @@ from django import template
 
 register = template.Library()
 
+
 @register.filter
 def fmt_rupee(value):
     """Compact rupee format: ₹18.3 L, ₹1.20 Cr, ₹4.5 K — handles negatives."""
@@ -9,7 +10,7 @@ def fmt_rupee(value):
         n = float(value)
     except (ValueError, TypeError):
         return "₹0"
-    sign = '-' if n < 0 else ''
+    sign = "-" if n < 0 else ""
     n = abs(n)
     if n >= 1e7:
         return f"{sign}₹{n / 1e7:.2f} Cr"
@@ -18,6 +19,7 @@ def fmt_rupee(value):
     if n >= 1e3:
         return f"{sign}₹{n / 1e3:.1f} K"
     return f"{sign}₹{int(n):,}"
+
 
 @register.filter
 def fmt_num(value):
@@ -29,6 +31,7 @@ def fmt_num(value):
         return f"{int(n):,}"
     return f"{n:,.2f}"
 
+
 @register.filter
 def fmt_pct(value):
     try:
@@ -36,6 +39,7 @@ def fmt_pct(value):
     except (ValueError, TypeError):
         return "0%"
     return f"{n:.1f}%"
+
 
 @register.filter
 def abs_val(value):
@@ -45,14 +49,17 @@ def abs_val(value):
     except (ValueError, TypeError):
         return 0
 
+
 @register.filter
 def tojson(value):
     import json
     from django.core.serializers.json import DjangoJSONEncoder
+
     try:
         return json.dumps(value, cls=DjangoJSONEncoder)
     except Exception:
         return "{}"
+
 
 @register.filter
 def multiply(value, arg):
@@ -61,6 +68,7 @@ def multiply(value, arg):
         return float(value) * float(arg)
     except (ValueError, TypeError):
         return 0
+
 
 @register.filter
 def subtract(value, arg):

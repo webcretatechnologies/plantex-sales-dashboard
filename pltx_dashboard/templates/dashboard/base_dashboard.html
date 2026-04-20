@@ -324,30 +324,39 @@
             {% if request.resolver_match.url_name == 'ceo-dashboard' or request.resolver_match.url_name == 'business-dashboard' or request.resolver_match.url_name == 'category-dashboard' %}
             <form method="GET" action="" class="topbar-filters" style="margin:0;" id="dashboardFilterForm"
                 hx-get="{{ request.path }}" hx-target=".dash-body" hx-push-url="true" hx-swap="innerHTML"
-                hx-trigger="change">
+                hx-trigger="submit">
 
                 <div class="topbar-filter-group">
                     <span class="filter-label">Date Range</span>
                     <select class="filter-select-top" id="dateRangeSelect" name="date_range"
-                        onchange="handleDateRangeChange(this)">
+                        onchange="handleDateRangeChange(event, this)">
                         <option value="">All Time</option>
-                        <option value="yesterday" {% if request.GET.date_range == 'yesterday' %}selected{% endif %}>Yesterday</option>
-                        <option value="last_7_days" {% if request.GET.date_range == 'last_7_days' %}selected{% endif %}>Last 7 Days</option>
-                        <option value="last_15_days" {% if request.GET.date_range == 'last_15_days' %}selected{% endif %}>Last 15 Days</option>
-                        <option value="last_month" {% if request.GET.date_range == 'last_month' %}selected{% endif %}>Last Month</option>
+                        <option value="yesterday" {% if request.GET.date_range == 'yesterday' %}selected{% endif %}>
+                            Yesterday</option>
+                        <option value="last_7_days" {% if request.GET.date_range == 'last_7_days' %}selected{% endif %}>
+                            Last 7 Days</option>
+                        <option value="last_15_days" {% if request.GET.date_range == 'last_15_days' %}selected{% endif %}>
+                            Last 15 Days</option>
+                        <option value="last_month" {% if request.GET.date_range == 'last_month' %}selected{% endif %}>Last
+                            Month</option>
                         <option value="last_3_months" {% if request.GET.date_range == 'last_3_months' %}selected{% endif %}>Last 3 Months</option>
                         <option value="last_6_months" {% if request.GET.date_range == 'last_6_months' %}selected{% endif %}>Last 6 Months</option>
-                        <option value="last_1_year" {% if request.GET.date_range == 'last_1_year' %}selected{% endif %}>Last 1 Year</option>
-                        <option value="custom" {% if request.GET.date_range == 'custom' %}selected{% endif %}>Custom Dates</option>
+                        <option value="last_1_year" {% if request.GET.date_range == 'last_1_year' %}selected{% endif %}>
+                            Last 1 Year</option>
+                        <option value="custom" {% if request.GET.date_range == 'custom' %}selected{% endif %}>Custom Dates
+                        </option>
                     </select>
                 </div>
                 <div class="topbar-filter-group custom-date-group" id="customDateGroup"
                     style="display: {% if request.GET.date_range == 'custom' %}flex{% else %}none{% endif %}; margin-left: 4px;">
                     <span class="filter-label">&nbsp;</span>
                     <div style="display: flex; flex-direction: row; align-items: center; gap: 8px;">
-                        <input type="text" id="flatpickrRange" placeholder="Select Dates..."
-                            style="width: 220px; background: #ffffff; border: 1px solid #cbd5e1; border-radius: 6px; padding: 7px 12px; font-size: 13px; font-family: 'Inter', sans-serif; color: #0f172a; outline: none; cursor: pointer; transition: border-color 0.2s;"
-                            onfocus="this.style.borderColor='#3b82f6'">
+                        <div style="position: relative; width: 220px; overflow: visible;">
+                            <input type="text" id="flatpickrRange" placeholder="Select Dates..."
+                                style="width: 100%; background: #ffffff; border: 1px solid #cbd5e1; border-radius: 6px; padding: 7px 12px; padding-right: 36px; font-size: 13px; font-family: 'Inter', sans-serif; color: #0f172a; outline: none; cursor: pointer; transition: border-color 0.2s; position: relative; z-index: 1;"
+                                onfocus="this.style.borderColor='#3b82f6'">
+                            <span class="material-icons-round" onclick="document.getElementById('flatpickrRange').click()" style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); cursor: pointer; font-size: 18px; color: #64748b; transition: color 0.2s; z-index: 2; pointer-events: auto;" onmouseover="this.style.color='#0f172a'" onmouseout="this.style.color='#64748b'">calendar_month</span>
+                        </div>
                         <input type="hidden" id="customStartDate" name="start_date"
                             value="{{ request.GET.start_date }}">
                         <input type="hidden" id="customEndDate" name="end_date" value="{{ request.GET.end_date }}">
@@ -361,15 +370,17 @@
                 <div class="topbar-filter-group">
                     <span class="filter-label">Platform</span>
                     <select class="filter-select-top" id="platformSelect" name="platform"
-                        onchange="syncFilterVisibility()">
+                        onchange="syncFilterVisibility(); htmx.trigger('#dashboardFilterForm', 'submit')">
                         <option value="">All</option>
                         {% if payload.filters.platforms %}
                         {% for p in payload.filters.platforms %}
                         <option value="{{ p }}" {% if request.GET.platform == p %}selected{% endif %}>{{ p }}</option>
                         {% endfor %}
                         {% else %}
-                        <option value="Amazon" {% if request.GET.platform == 'Amazon' %}selected{% endif %}>Amazon</option>
-                        <option value="Flipkart" {% if request.GET.platform == 'Flipkart' %}selected{% endif %}>Flipkart</option>
+                        <option value="Amazon" {% if request.GET.platform == 'Amazon' %}selected{% endif %}>Amazon
+                        </option>
+                        <option value="Flipkart" {% if request.GET.platform == 'Flipkart' %}selected{% endif %}>Flipkart
+                        </option>
                         {% endif %}
                     </select>
                 </div>
@@ -380,7 +391,7 @@
                             style="font-size:11px;vertical-align:middle;margin-right:3px;">category</span>Category
                     </span>
                     <select id="categorySelect" name="category" class="filter-select-top" multiple
-                        onchange="htmx.trigger('#dashboardFilterForm', 'change')">
+                        onchange="htmx.trigger('#dashboardFilterForm', 'submit')">
                         {% for c in payload.filters.categories %}
                         <option value="{{ c }}" {% if selected_filters.categories and c in selected_filters.categories %}selected{% endif %}>{{ c }}</option>
                         {% endfor %}
@@ -392,7 +403,7 @@
                             style="font-size:11px;vertical-align:middle;margin-right:3px;">qr_code</span>ASIN
                     </span>
                     <select id="asinSelect" name="asin" class="filter-select-top" multiple
-                        onchange="htmx.trigger('#dashboardFilterForm', 'change')">
+                        onchange="htmx.trigger('#dashboardFilterForm', 'submit')">
                         {% for a in payload.filters.asins %}
                         <option value="{{ a }}" {% if selected_filters.asins and a in selected_filters.asins %}selected{% endif %}>{{ a }}</option>
                         {% endfor %}
@@ -404,7 +415,7 @@
                             style="font-size:11px;vertical-align:middle;margin-right:3px;">qr_code</span>FSN
                     </span>
                     <select id="fsnSelect" name="fsn" class="filter-select-top" multiple
-                        onchange="htmx.trigger('#dashboardFilterForm', 'change')">
+                        onchange="htmx.trigger('#dashboardFilterForm', 'submit')">
                         {% for f in payload.filters.fsns %}
                         <option value="{{ f }}" {% if selected_filters.fsns and f in selected_filters.fsns %}selected{% endif %}>{{ f }}</option>
                         {% endfor %}
@@ -457,8 +468,8 @@
 
     <script>
         window.DASHBOARD_VIEW_TYPE = "{% block view_type %}business{% endblock %}";
-        window.DASHBOARD_PAYLOAD = {{ payload_json | safe |default:"null" }};
-        window.SELECTED_FILTERS = {{ selected_filters_json | safe |default:"{}" }};
+        window.DASHBOARD_PAYLOAD = {{ payload_json|safe|default:"null" }};
+        window.SELECTED_FILTERS = {{ selected_filters_json|safe|default:"{}" }};
 
         // Function to update active nav item based on view type
         function updateActiveNav(viewType) {
@@ -504,31 +515,52 @@
                 || window.DASHBOARD_VIEW_TYPE;
             window.DASHBOARD_VIEW_TYPE = newViewType;
             updateActiveNav(newViewType);
+
+            // Re-initialize flatpickr to attach to the newly swapped DOM element
+            if (typeof initFlatpickr === 'function') initFlatpickr();
+
+            // Restore custom date group visibility if 'custom' date range is selected
+            // After OOB swap of secondary filter bar, customDateGroup gets reset to server state
+            var dateRangeSelect = document.getElementById('dateRangeSelect');
+            var customDateGroup = document.getElementById('customDateGroup');
+            if (dateRangeSelect && customDateGroup && dateRangeSelect.value === 'custom') {
+                customDateGroup.style.display = 'flex';
+            }
         });
 
         let fpInstance;
-        document.addEventListener("DOMContentLoaded", function () {
-            var defaultStart = "{{ request.GET.start_date|default:'' }}";
-            var defaultEnd = "{{ request.GET.end_date|default:'' }}";
+        function initFlatpickr() {
+            var defaultStart = document.getElementById('customStartDate') ? document.getElementById('customStartDate').value : "{{ request.GET.start_date|default:'' }}";
+            var defaultEnd = document.getElementById('customEndDate') ? document.getElementById('customEndDate').value : "{{ request.GET.end_date|default:'' }}";
             var defaultDates = [];
             if (defaultStart && defaultEnd) {
                 defaultDates = [defaultStart, defaultEnd];
             }
 
-            fpInstance = flatpickr("#flatpickrRange", {
-                mode: "range",
-                dateFormat: "Y-m-d",
-                defaultDate: defaultDates,
-                onChange: function (selectedDates, dateStr, instance) {
-                    if (selectedDates.length === 2) {
-                        document.getElementById('customStartDate').value = instance.formatDate(selectedDates[0], "Y-m-d");
-                        document.getElementById('customEndDate').value = instance.formatDate(selectedDates[1], "Y-m-d");
-                    } else {
-                        document.getElementById('customStartDate').value = '';
-                        document.getElementById('customEndDate').value = '';
-                    }
+            var fpEl = document.getElementById("flatpickrRange");
+            if (fpEl) {
+                if (fpEl._flatpickr) {
+                    fpEl._flatpickr.destroy();
                 }
-            });
+                fpInstance = flatpickr(fpEl, {
+                    mode: "range",
+                    dateFormat: "Y-m-d",
+                    defaultDate: defaultDates,
+                    onChange: function (selectedDates, dateStr, instance) {
+                        if (selectedDates.length === 2) {
+                            document.getElementById('customStartDate').value = instance.formatDate(selectedDates[0], "Y-m-d");
+                            document.getElementById('customEndDate').value = instance.formatDate(selectedDates[1], "Y-m-d");
+                        } else {
+                            document.getElementById('customStartDate').value = '';
+                            document.getElementById('customEndDate').value = '';
+                        }
+                    }
+                });
+            }
+        }
+
+        document.addEventListener("DOMContentLoaded", function () {
+            initFlatpickr();
 
             // ── Choices.js multi-select init (centralized, with instance tracking) ──
             initChoicesJs();
@@ -537,8 +569,9 @@
             syncFilterVisibility();
         });
 
-        function handleDateRangeChange(selectElement) {
+        function handleDateRangeChange(event, selectElement) {
             if (selectElement.value === 'custom') {
+                if (event) event.stopPropagation();
                 document.getElementById('customDateGroup').style.display = 'flex';
                 if (fpInstance) fpInstance.open();
             } else {
@@ -546,7 +579,7 @@
                 document.getElementById('customStartDate').value = '';
                 document.getElementById('customEndDate').value = '';
                 // Explicitly trigger form submission to ensure UI updates immediately
-                htmx.trigger('#dashboardFilterForm', 'change');
+                htmx.trigger('#dashboardFilterForm', 'submit');
             }
         }
 
@@ -656,9 +689,19 @@
 
             // 1. Initialize choices on fresh, server-rendered select elements
             initChoicesJs();
+            if (typeof initFlatpickr === 'function') initFlatpickr();
             if (typeof syncFilterVisibility === 'function') syncFilterVisibility();
 
-            // 2. Show/hide the export buttons
+            // 2. Restore custom date group visibility if 'custom' date range is selected
+            //    After HTMX loads, the customDateGroup is re-rendered with server-side state
+            //    (hidden by default), but we need to show it if 'custom' is still selected.
+            var dateRangeSelect = document.getElementById('dateRangeSelect');
+            var customDateGroup = document.getElementById('customDateGroup');
+            if (dateRangeSelect && customDateGroup && dateRangeSelect.value === 'custom') {
+                customDateGroup.style.display = 'flex';
+            }
+
+            // 3. Show/hide the export buttons
             syncExportSection();
         });
 

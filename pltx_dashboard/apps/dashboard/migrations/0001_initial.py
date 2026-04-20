@@ -5,93 +5,182 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     initial = True
 
     dependencies = [
-        ('accounts', '0001_initial'),
+        ("accounts", "0001_initial"),
     ]
 
     operations = [
         migrations.CreateModel(
-            name='CategoryMapping',
+            name="CategoryMapping",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('asin', models.CharField(db_index=True, max_length=50)),
-                ('portfolio', models.CharField(max_length=100)),
-                ('category', models.CharField(max_length=100)),
-                ('subcategory', models.CharField(max_length=100)),
-                ('user', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='category_mappings', to='accounts.users')),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("asin", models.CharField(db_index=True, max_length=50)),
+                ("portfolio", models.CharField(max_length=100)),
+                ("category", models.CharField(max_length=100)),
+                ("subcategory", models.CharField(max_length=100)),
+                (
+                    "user",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="category_mappings",
+                        to="accounts.users",
+                    ),
+                ),
             ],
             options={
-                'unique_together': {('user', 'asin')},
+                "unique_together": {("user", "asin")},
             },
         ),
         migrations.CreateModel(
-            name='PriceData',
+            name="PriceData",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('asin', models.CharField(db_index=True, max_length=50)),
-                ('price', models.FloatField(default=0.0)),
-                ('user', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='price_data', to='accounts.users')),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("asin", models.CharField(db_index=True, max_length=50)),
+                ("price", models.FloatField(default=0.0)),
+                (
+                    "user",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="price_data",
+                        to="accounts.users",
+                    ),
+                ),
             ],
             options={
-                'unique_together': {('user', 'asin')},
+                "unique_together": {("user", "asin")},
             },
         ),
         migrations.CreateModel(
-            name='ProcessedDashboardData',
+            name="ProcessedDashboardData",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('date', models.DateField(db_index=True)),
-                ('asin', models.CharField(db_index=True, max_length=50)),
-                ('portfolio', models.CharField(blank=True, db_index=True, max_length=100, null=True)),
-                ('category', models.CharField(blank=True, db_index=True, max_length=100, null=True)),
-                ('subcategory', models.CharField(blank=True, db_index=True, max_length=100, null=True)),
-                ('price', models.FloatField(default=0.0)),
-                ('pageviews', models.IntegerField(default=0)),
-                ('units', models.IntegerField(default=0)),
-                ('orders', models.IntegerField(default=0)),
-                ('revenue', models.FloatField(default=0.0)),
-                ('spend_sp', models.FloatField(default=0.0)),
-                ('spend_sb', models.FloatField(default=0.0)),
-                ('spend_sd', models.FloatField(default=0.0)),
-                ('total_spend', models.FloatField(default=0.0)),
-                ('user', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='processed_dashboard_data', to='accounts.users')),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("date", models.DateField(db_index=True)),
+                ("asin", models.CharField(db_index=True, max_length=50)),
+                (
+                    "portfolio",
+                    models.CharField(
+                        blank=True, db_index=True, max_length=100, null=True
+                    ),
+                ),
+                (
+                    "category",
+                    models.CharField(
+                        blank=True, db_index=True, max_length=100, null=True
+                    ),
+                ),
+                (
+                    "subcategory",
+                    models.CharField(
+                        blank=True, db_index=True, max_length=100, null=True
+                    ),
+                ),
+                ("price", models.FloatField(default=0.0)),
+                ("pageviews", models.IntegerField(default=0)),
+                ("units", models.IntegerField(default=0)),
+                ("orders", models.IntegerField(default=0)),
+                ("revenue", models.FloatField(default=0.0)),
+                ("spend_sp", models.FloatField(default=0.0)),
+                ("spend_sb", models.FloatField(default=0.0)),
+                ("spend_sd", models.FloatField(default=0.0)),
+                ("total_spend", models.FloatField(default=0.0)),
+                (
+                    "user",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="processed_dashboard_data",
+                        to="accounts.users",
+                    ),
+                ),
             ],
             options={
-                'unique_together': {('user', 'date', 'asin')},
+                "unique_together": {("user", "date", "asin")},
             },
         ),
         migrations.CreateModel(
-            name='SalesData',
+            name="SalesData",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('date', models.DateField(db_index=True)),
-                ('asin', models.CharField(db_index=True, max_length=50)),
-                ('pageviews', models.IntegerField(default=0)),
-                ('units', models.IntegerField(default=0)),
-                ('orders', models.IntegerField(default=0)),
-                ('revenue', models.FloatField(default=0.0)),
-                ('user', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='sales_records', to='accounts.users')),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("date", models.DateField(db_index=True)),
+                ("asin", models.CharField(db_index=True, max_length=50)),
+                ("pageviews", models.IntegerField(default=0)),
+                ("units", models.IntegerField(default=0)),
+                ("orders", models.IntegerField(default=0)),
+                ("revenue", models.FloatField(default=0.0)),
+                (
+                    "user",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="sales_records",
+                        to="accounts.users",
+                    ),
+                ),
             ],
             options={
-                'unique_together': {('user', 'date', 'asin')},
+                "unique_together": {("user", "date", "asin")},
             },
         ),
         migrations.CreateModel(
-            name='SpendData',
+            name="SpendData",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('date', models.DateField(db_index=True)),
-                ('asin', models.CharField(db_index=True, max_length=50)),
-                ('ad_account', models.CharField(max_length=100)),
-                ('ad_type', models.CharField(max_length=10)),
-                ('spend', models.FloatField(default=0.0)),
-                ('user', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='spend_records', to='accounts.users')),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("date", models.DateField(db_index=True)),
+                ("asin", models.CharField(db_index=True, max_length=50)),
+                ("ad_account", models.CharField(max_length=100)),
+                ("ad_type", models.CharField(max_length=10)),
+                ("spend", models.FloatField(default=0.0)),
+                (
+                    "user",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="spend_records",
+                        to="accounts.users",
+                    ),
+                ),
             ],
             options={
-                'unique_together': {('user', 'date', 'asin', 'ad_account', 'ad_type')},
+                "unique_together": {("user", "date", "asin", "ad_account", "ad_type")},
             },
         ),
     ]
