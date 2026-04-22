@@ -30,6 +30,8 @@ class UserManagementView(View):
                 "roles": roles,
                 "logged_user": request.user,
                 "user_features": user_features,
+                "payload_json": "null",
+                "selected_filters_json": "{}",
             },
         )
 
@@ -121,6 +123,8 @@ class RoleManagementView(View):
                 "features": features,
                 "logged_user": request.user,
                 "user_features": user_features,
+                "payload_json": "null",
+                "selected_filters_json": "{}",
             },
         )
 

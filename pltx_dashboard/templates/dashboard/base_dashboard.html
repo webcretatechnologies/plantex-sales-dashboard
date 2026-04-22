@@ -20,7 +20,7 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
     <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
     <link rel="stylesheet" href="/static/css/dashboard.css">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/choices.js/public/assets/styles/choices.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/choices.js@10.2.0/public/assets/styles/choices.min.css">
     <style>
         /* ── Export Calculated Data Section ── */
         .download-export-section {
@@ -202,6 +202,65 @@
         }
     </style>
 
+    <!-- Django Messages Toast Notifications -->
+    {% if messages %}
+    <div id="toastContainer" style="
+        position: fixed;
+        top: 24px;
+        right: 24px;
+        z-index: 99999;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        pointer-events: none;
+    ">
+        {% for message in messages %}
+        <div class="toast-msg toast-{{ message.tags }}" style="
+            background: {% if 'error' in message.tags %}#fef2f2{% elif 'success' in message.tags %}#f0fdf4{% else %}#f8fafc{% endif %};
+            border: 1px solid {% if 'error' in message.tags %}#fca5a5{% elif 'success' in message.tags %}#86efac{% else %}#e2e8f0{% endif %};
+            border-left: 4px solid {% if 'error' in message.tags %}#ef4444{% elif 'success' in message.tags %}#22c55e{% else %}#64748b{% endif %};
+            color: {% if 'error' in message.tags %}#991b1b{% elif 'success' in message.tags %}#166534{% else %}#334155{% endif %};
+            padding: 14px 20px;
+            border-radius: 12px;
+            font-size: 13px;
+            font-weight: 600;
+            font-family: 'Inter', sans-serif;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            min-width: 280px;
+            max-width: 400px;
+            pointer-events: auto;
+            animation: toastSlideIn 0.3s cubic-bezier(0.4,0,0.2,1);
+        ">
+            <span class="material-icons-round" style="font-size:18px;">{% if 'error' in message.tags %}error{% elif 'success' in message.tags %}check_circle{% else %}info{% endif %}</span>
+            {{ message }}
+        </div>
+        {% endfor %}
+    </div>
+    <style>
+        @keyframes toastSlideIn {
+            from { opacity: 0; transform: translateX(40px); }
+            to   { opacity: 1; transform: translateX(0); }
+        }
+        @keyframes toastFadeOut {
+            to { opacity: 0; transform: translateX(40px); }
+        }
+    </style>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            var toasts = document.querySelectorAll('.toast-msg');
+            toasts.forEach(function(t) {
+                setTimeout(function() {
+                    t.style.animation = 'toastFadeOut 0.4s ease forwards';
+                    setTimeout(function() { t.remove(); }, 400);
+                }, 4000);
+            });
+        });
+    </script>
+    {% endif %}
+
     <!-- Sidebar Navigation -->
     <div class="app-sidebar">
         <div class="sidebar-brand">
@@ -308,7 +367,10 @@
                 {% endblock %}
             </div>
             <div class="user-profile">
-                <div class="user-avatar">{{ logged_user.fname|default:"U"|truncatechars:1 }}{{ logged_user.lname|default:"N"|truncatechars:1 }}</div>
+                <div class="user-avatar">
+                    {{ logged_user.fname|default:"U"|truncatechars:1 }}
+                    {{ logged_user.lname|default:"N"|truncatechars:1 }}
+                </div>
                 <div class="user-info">
                     <span class="user-name">{{ logged_user.fname }} {{ logged_user.lname }}</span>
                     <span class="user-role" id="page-user-role">{% block user_role %}Business Head{% endblock %}</span>
@@ -355,7 +417,11 @@
                             <input type="text" id="flatpickrRange" placeholder="Select Dates..."
                                 style="width: 100%; background: #ffffff; border: 1px solid #cbd5e1; border-radius: 6px; padding: 7px 12px; padding-right: 36px; font-size: 13px; font-family: 'Inter', sans-serif; color: #0f172a; outline: none; cursor: pointer; transition: border-color 0.2s; position: relative; z-index: 1;"
                                 onfocus="this.style.borderColor='#3b82f6'">
-                            <span class="material-icons-round" onclick="document.getElementById('flatpickrRange').click()" style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); cursor: pointer; font-size: 18px; color: #64748b; transition: color 0.2s; z-index: 2; pointer-events: auto;" onmouseover="this.style.color='#0f172a'" onmouseout="this.style.color='#64748b'">calendar_month</span>
+                            <span class="material-icons-round"
+                                onclick="document.getElementById('flatpickrRange').click()"
+                                style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); cursor: pointer; font-size: 18px; color: #64748b; transition: color 0.2s; z-index: 2; pointer-events: auto;"
+                                onmouseover="this.style.color='#0f172a'"
+                                onmouseout="this.style.color='#64748b'">calendar_month</span>
                         </div>
                         <input type="hidden" id="customStartDate" name="start_date"
                             value="{{ request.GET.start_date }}">
@@ -468,8 +534,8 @@
 
     <script>
         window.DASHBOARD_VIEW_TYPE = "{% block view_type %}business{% endblock %}";
-        window.DASHBOARD_PAYLOAD = {{ payload_json|safe|default:"null" }};
-        window.SELECTED_FILTERS = {{ selected_filters_json|safe|default:"{}" }};
+        window.DASHBOARD_PAYLOAD = {{ payload_json |safe |default:"null" }};
+        window.SELECTED_FILTERS = {{ selected_filters_json | safe |default:"{}" }};
 
         // Function to update active nav item based on view type
         function updateActiveNav(viewType) {
@@ -612,7 +678,7 @@
             }
         }
     </script>
-    <script src="https://cdn.jsdelivr.net/npm/choices.js/public/assets/scripts/choices.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/choices.js@10.2.0/public/assets/scripts/choices.min.js"></script>
     <script src="/static/js/filters.js"></script>
     <script src="/static/js/spa.js"></script>
     <script src="/static/js/charts.js"></script>
@@ -654,15 +720,8 @@
             });
         }
 
-        /**
-         * repopulateFilterDropdowns()
-         * After an HTMX navigation, the topbar filter <select> elements still exist
-         * in the DOM but their <option> tags were rendered from an earlier server
-         * response that may have had no payload (e.g. Upload / User-Management pages
-         * have no dashboard data). This function rebuilds the options from
-         * window.DASHBOARD_PAYLOAD.filters so filters always reflect the current
-         * dashboard's available categories / ASINs / FSNs.
-         */
+
+
         // ── Export / Download section visibility ─────────────────────────────────
         var DASHBOARD_EXPORT_VIEWS = ['business', 'ceo', 'category'];
 

@@ -6,7 +6,6 @@ from apps.dashboard.services.analytics_services_orm import (
 )
 from apps.dashboard.services.analytics_services_orm_tables import (
     generate_bi_data_orm,
-    generate_grouped_table_orm,
 )
 
 
@@ -94,11 +93,21 @@ def get_available_filters_orm(qs, fk_qs):
     """
 
     def clean_qs_vals(qs, field):
+        if qs is None:
+            return []
+        vals = (
+            qs.exclude(**{f"{field}__isnull": True})
+            .exclude(**{f"{field}": ""})
+            .values_list(field, flat=True)
+            .distinct()
+        )
         return sorted(
-            set(
-                str(v)
-                for v in qs.values_list(field, flat=True).distinct()
-                if v and str(v).strip() and str(v) not in ("nan", "None", "null")
+            list(
+                set(
+                    str(v)
+                    for v in vals
+                    if v and str(v).strip() and str(v) not in ("nan", "None", "null")
+                )
             )
         )
 
@@ -132,7 +141,30 @@ def get_available_filters_orm(qs, fk_qs):
         "dates": [],  # not used for UI dropdown
     }
 
+from django.core.cache import cache
 
+def get_available_filters_orm_cached(qs, fk_qs, data_owner_id, show_amazon=True, show_flipkart=True):
+    cache_key = f"dashboard_filters_{data_owner_id}_{show_amazon}_{show_flipkart}"
+    filters = cache.get(cache_key)
+    if filters:
+        return filters
+    filters = get_available_filters_orm(qs, fk_qs)
+    
+    # Ensure the platforms list always shows all platforms the user has data for,
+    # so they can switch back after filtering by platform.
+    from apps.dashboard.models import ProcessedDashboardData, FlipkartProcessedDashboardData
+    platforms = []
+    if ProcessedDashboardData.objects.filter(user_id=data_owner_id).exists():
+        platforms.append("Amazon")
+    if FlipkartProcessedDashboardData.objects.filter(user_id=data_owner_id).exists():
+        platforms.append("Flipkart")
+    filters["platforms"] = platforms
+    
+    cache.set(cache_key, filters, timeout=3600) # cache for 1 hour
+    return filters
+
+
+import time
 def run_orm_computation(
     qs, fk_qs, spend_qs, filters, user, cached_filter_metadata=None
 ):
@@ -146,8 +178,55 @@ def run_orm_computation(
     qs_prev_f = apply_global_filters_orm(qs_prev, {}) if qs_prev is not None else None
     fk_prev_f = apply_global_filters_orm(fk_prev, {}) if fk_prev is not None else None
 
+    # ── Master table data (used to eliminate duplicate DB hits) ──
+    table_data = generate_bi_data_orm(qs_f, fk_qs_f)
+    
+    # ── Master prev table data for growth calculations ──
+    if qs_prev_f is not None or fk_prev_f is not None:
+        table_data_prev = generate_bi_data_orm(qs_prev_f, fk_prev_f)
+    else:
+        table_data_prev = []
+        
+    prev_rev_by_asin = {r["asin"]: r["revenue"] for r in table_data_prev}
+    prev_rev_by_port = {}
+    for r in table_data_prev:
+        port = r.get("portfolio") or "Unknown"
+        prev_rev_by_port[port] = prev_rev_by_port.get(port, 0) + r["revenue"]
+    
+    total_revenue = sum(r["revenue"] for r in table_data)
+    total_spend = sum(r["total_spend"] for r in table_data)
+    
     # 3. KPIs
-    kpis = generate_kpis_orm(qs_f, fk_qs_f, spend_qs)
+    kpis = {
+        "revenue": total_revenue,
+        "orders": sum(r["orders"] for r in table_data),
+        "units": sum(r["units"] for r in table_data),
+        "pageviews": sum(r["pageviews"] for r in table_data),
+        "spend": total_spend,
+        "active_asins": len(table_data),
+        "cogs": 0.0,
+    }
+    
+    roas = (kpis["revenue"] / kpis["spend"]) if kpis["spend"] > 0 else 0
+    conversion = (kpis["orders"] / kpis["pageviews"] * 100) if kpis["pageviews"] > 0 else 0
+    aov = (kpis["revenue"] / kpis["orders"]) if kpis["orders"] > 0 else 0
+    tacos = (kpis["spend"] / kpis["revenue"] * 100) if kpis["revenue"] > 0 else 0
+    gross_margin = kpis["revenue"] - kpis["cogs"]
+    gross_margin_pct = (gross_margin / kpis["revenue"] * 100) if kpis["revenue"] > 0 else 0
+    net_profit = gross_margin - kpis["spend"]
+    contribution_margin = round(gross_margin_pct - tacos, 1)
+
+    kpis.update({
+        "roas": round(roas, 2),
+        "conversion": round(conversion, 2),
+        "aov": round(aov, 2),
+        "tacos": round(tacos, 2),
+        "gross_margin": gross_margin,
+        "gross_margin_pct": round(gross_margin_pct, 2),
+        "net_profit": net_profit,
+        "contribution_margin": contribution_margin,
+    })
+
     kpis_prev = generate_kpis_orm(qs_prev_f, fk_prev_f, spend_qs)
 
     # 4. Populate growth fields in-place
@@ -156,175 +235,110 @@ def run_orm_computation(
         prev = kpis_prev.get(key, 0)
         kpis[f"{key}_change"] = _safe_growth(curr, prev)
 
-    # mom_growth = revenue_change for the current period (simplified)
     kpis["mom_growth"] = kpis.get("revenue_change", 0)
     kpis["yoy_growth"] = kpis.get("revenue_change", 0)
     kpis["prev_mom"] = round(kpis_prev.get("mom_growth", 0), 1)
     kpis["prev_yoy"] = 0
-
-    profit_change = _safe_growth(kpis["net_profit"], kpis_prev.get("net_profit", 0))
-    kpis["profit_change"] = profit_change
+    kpis["profit_change"] = _safe_growth(kpis["net_profit"], kpis_prev.get("net_profit", 0))
 
     # 5. Charts
-    charts = generate_charts_data_orm(qs_f, fk_qs_f)
+    charts = generate_charts_data_orm(qs_f, fk_qs_f, table_data=table_data)
 
     # 6. Platform breakdown
-    platforms_dict = {}
-    az_rev = 0.0
-    fk_rev = 0.0
-    if qs_f is not None:
-        from django.db.models import Sum as _Sum
-
-        az_agg = qs_f.aggregate(r=_Sum("revenue"))
-        az_rev = float(az_agg.get("r") or 0)
-    if fk_qs_f is not None:
-        from django.db.models import Sum as _Sum
-
-        fk_agg = fk_qs_f.aggregate(r=_Sum("taxable_value"))
-        fk_rev = float(fk_agg.get("r") or 0)
-
-    total_rev = kpis["revenue"]
+    az_rev = sum(r.get("az_revenue", 0) for r in table_data)
+    fk_rev = sum(r.get("fk_revenue", 0) for r in table_data)
     az_prev_rev = float(kpis_prev.get("revenue", 0)) if kpis_prev else 0
 
+    platforms_dict = {}
     if az_rev > 0:
         platforms_dict["Amazon"] = {
             "revenue": az_rev,
-            "pct": round(az_rev / total_rev * 100, 1) if total_rev > 0 else 0,
+            "pct": round(az_rev / total_revenue * 100, 1) if total_revenue > 0 else 0,
             "growth": _safe_growth(az_rev, az_prev_rev),
         }
     if fk_rev > 0:
         platforms_dict["Flipkart"] = {
             "revenue": fk_rev,
-            "pct": round(fk_rev / total_rev * 100, 1) if total_rev > 0 else 0,
+            "pct": round(fk_rev / total_revenue * 100, 1) if total_revenue > 0 else 0,
             "growth": _safe_growth(fk_rev, 0),
         }
 
     # 7. Category performance
-    cat_perf = generate_grouped_table_orm(qs_f, fk_qs_f, "category")
+    cat_perf_dict = {}
+    for r in table_data:
+        cat = r.get("category") or "Unknown"
+        if cat not in cat_perf_dict:
+            cat_perf_dict[cat] = {"name": cat, "revenue": 0.0}
+        cat_perf_dict[cat]["revenue"] += r["revenue"]
+
     cat_perf_list = [
         {
-            "category": r["name"],
-            "revenue": r["revenue"],
-            "growth": round(r.get("revenue_change", 0), 1),
-            "contribution": round(r["revenue"] / total_rev * 100, 1)
-            if total_rev > 0
-            else 0,
+            "category": v["name"],
+            "revenue": v["revenue"],
+            "growth": 0.0,
+            "contribution": round(v["revenue"] / total_revenue * 100, 1) if total_revenue > 0 else 0,
         }
-        for r in cat_perf
+        for v in cat_perf_dict.values()
     ]
+    cat_perf_list.sort(key=lambda x: x["revenue"], reverse=True)
 
-    # 8. Filter metadata for dropdowns — ALWAYS use the base (unfiltered) querysets
-    #    so that category/ASIN/FSN dropdowns are populated even when the filtered
-    #    result set is empty (e.g. after navigating back from Upload page).
+    # 8. Filter metadata for dropdowns
     filter_meta = cached_filter_metadata or get_available_filters_orm(qs, fk_qs)
 
-    # ── 9. Real computed metrics (replacing stub zeros) ──────────────────────
-
-    # ── Returns & VOC (no rating data in DB yet — keep at 0) ──
     returns_ratings = {
-        "rate": 0,
-        "change": 0,
-        "reasons": [],
-        "avg_rating": 0,
-        "avg_rating_change": 0,
-        "low_rating_count": 0,
+        "rate": 0, "change": 0, "reasons": [], "avg_rating": 0, "avg_rating_change": 0, "low_rating_count": 0,
     }
 
-    # ── Profit summary ──
-    net_profit_pct = (
-        round(kpis["net_profit"] / kpis["revenue"] * 100, 1)
-        if kpis["revenue"] > 0
-        else 0
-    )
+    net_profit_pct = round(kpis["net_profit"] / kpis["revenue"] * 100, 1) if kpis["revenue"] > 0 else 0
     profit_summary = {
-        "revenue": kpis["revenue"],
-        "ad_spend": kpis["spend"],
-        "gross_margin": kpis["gross_margin"],
-        "gross_margin_pct": kpis["gross_margin_pct"],
-        "net_profit": kpis["net_profit"],
-        "net_profit_pct": net_profit_pct,
+        "revenue": kpis["revenue"], "ad_spend": kpis["spend"], "gross_margin": kpis["gross_margin"],
+        "gross_margin_pct": kpis["gross_margin_pct"], "net_profit": kpis["net_profit"], "net_profit_pct": net_profit_pct,
     }
 
-    # ── Marketing summary ──
     marketing = {
-        "ad_spend": kpis["spend"],
-        "roas": kpis["roas"],
-        "roas_change_pct": 0,
-        "tacos": kpis["tacos"],
-        "tacos_change": 0,
+        "ad_spend": kpis["spend"], "roas": kpis["roas"], "roas_change_pct": 0, "tacos": kpis["tacos"], "tacos_change": 0,
     }
 
-    # ── Inventory health: classify ASINs by total units sold in period ──
-    #    >  0 units              → In Stock
-    #    == 0 units (had orders) → OOS (sold before but nothing now)
-    #    high units (>2× avg)    → Overstock
-    #    low units (1–25 % avg)  → Low Stock
-    in_stock_count = low_stock_count = oos_count = overstock_count = 0
-    oos_skus = 0
+    in_stock_count = low_stock_count = oos_count = overstock_count = oos_skus = 0
     total_lost_sales = 0.0
 
-    if qs_f is not None:
-        from django.db.models import Sum as _Sum
+    all_units = [r["units"] for r in table_data if r["units"] > 0]
+    avg_units = sum(all_units) / len(all_units) if all_units else 1
 
-        asin_units = list(
-            qs_f.values("asin")
-            .annotate(tot_units=_Sum("units"), tot_rev=_Sum("revenue"))
-            .values_list("asin", "tot_units", "tot_rev")
-        )
-        if asin_units:
-            all_units = [u for _, u, _ in asin_units if u is not None]
-            avg_units = sum(all_units) / len(all_units) if all_units else 1
-            for asin, units_val, rev_val in asin_units:
-                u = units_val or 0
-                if u == 0:
-                    oos_count += 1
-                    oos_skus += 1
-                    total_lost_sales += float(rev_val or 0)
-                elif u >= avg_units * 2:
-                    overstock_count += 1
-                elif u <= avg_units * 0.25:
-                    low_stock_count += 1
-                else:
-                    in_stock_count += 1
+    for r in table_data:
+        u = r["units"]
+        rev = r["revenue"]
+        if u == 0:
+            oos_count += 1
+            oos_skus += 1
+            total_lost_sales += rev
+        elif u >= avg_units * 2:
+            overstock_count += 1
+        elif u <= avg_units * 0.25:
+            low_stock_count += 1
+        else:
+            in_stock_count += 1
 
     inventory = {
-        "in_stock": in_stock_count,
-        "low_stock": low_stock_count,
-        "oos": oos_count,
-        "overstock": overstock_count,
+        "in_stock": in_stock_count, "low_stock": low_stock_count, "oos": oos_count, "overstock": overstock_count,
     }
 
-    # ── OOS Impact ──
-    oos_impact = {
-        "lost_sales": round(total_lost_sales, 2),
-        "skus_affected": oos_skus,
-        "orders_lost": 0,
-    }
+    oos_impact = {"lost_sales": round(total_lost_sales, 2), "skus_affected": oos_skus, "orders_lost": 0}
 
-    # ── Inventory Position (days-of-cover buckets for category dashboard) ──
-    #    We bucket ASINs by how many days their stock might last:
-    #    Green (>30d), Amber (15–30d), Orange (7–14d), Red (<7d)
     inventory_position = []
-    if qs_f is not None and total_rev > 0:
-        from django.db.models import Sum as _Sum
-
+    if total_revenue > 0:
         cat_buckets = {"in_stock": 0.0, "low_stock": 0.0, "oos": 0.0, "critical": 0.0}
-        cat_rev = list(
-            qs_f.values("asin")
-            .annotate(tot_rev=_Sum("revenue"), tot_units=_Sum("units"))
-            .values_list("tot_rev", "tot_units")
-        )
-        for rev_v, units_v in cat_rev:
-            r = float(rev_v or 0)
-            u = int(units_v or 0)
+        for r in table_data:
+            rev_val = r.get("az_revenue", 0)  # inventory based on amazon originally
+            u = r["units"]
             if u == 0:
-                cat_buckets["oos"] += r
+                cat_buckets["oos"] += rev_val
             elif u <= 10:
-                cat_buckets["critical"] += r
+                cat_buckets["critical"] += rev_val
             elif u <= 30:
-                cat_buckets["low_stock"] += r
+                cat_buckets["low_stock"] += rev_val
             else:
-                cat_buckets["in_stock"] += r
+                cat_buckets["in_stock"] += rev_val
 
         bucket_defs = [
             ("In Stock (>30 Days)", "in_stock", "green"),
@@ -334,259 +348,108 @@ def run_orm_computation(
         ]
         for label, key, color in bucket_defs:
             rev_val = cat_buckets[key]
-            pct = round(rev_val / total_rev * 100, 1) if total_rev > 0 else 0
-            inventory_position.append(
-                {
-                    "label": label,
-                    "revenue": rev_val,
-                    "pct": pct,
-                    "color": color,
-                }
-            )
+            pct = round(rev_val / total_revenue * 100, 1) if total_revenue > 0 else 0
+            inventory_position.append({"label": label, "revenue": rev_val, "pct": pct, "color": color})
 
-    # ── Category Health ──
-    active_skus = in_stock_count + low_stock_count + overstock_count
     category_health = {
-        "active_skus": active_skus,
-        "active_change": 0,
-        "oos": oos_count,
-        "oos_change": 0,
-        "low_stock": low_stock_count,
-        "low_stock_change": 0,
-        "at_risk_rating": 0,
-        "at_risk_change": 0,
+        "active_skus": in_stock_count + low_stock_count + overstock_count, "active_change": 0,
+        "oos": oos_count, "oos_change": 0, "low_stock": low_stock_count, "low_stock_change": 0,
+        "at_risk_rating": 0, "at_risk_change": 0,
     }
 
-    # ── Business Health Score (weighted composite 0–100) ──
     total_skus = in_stock_count + low_stock_count + oos_count + overstock_count or 1
-    # Growth component: cap revenue_change at ±50%
     growth_score = min(100, max(0, 50 + kpis.get("revenue_change", 0)))
-    # Profitability: map gross_margin_pct 0–100% → 0–100 pts
     profitability_score = min(100, max(0, kpis["gross_margin_pct"]))
-    # Inventory health: penalise OOS and overstock
-    good_skus = in_stock_count
-    inventory_score = min(100, int(good_skus / total_skus * 100))
-    # Operations: conversion rate proxy (capped at 10 % → 100 pts)
+    inventory_score = min(100, int(in_stock_count / total_skus * 100))
     ops_score = min(100, int(kpis.get("conversion", 0) * 10))
-    composite = round(
-        growth_score * 0.30
-        + profitability_score * 0.30
-        + inventory_score * 0.25
-        + ops_score * 0.15
-    )
+    
     business_health = {
-        "score": composite,
-        "breakdown": {
-            "growth": round(growth_score),
-            "profitability": round(profitability_score),
-            "inventory": round(inventory_score),
-            "operations": round(ops_score),
-        },
+        "score": round(growth_score * 0.3 + profitability_score * 0.3 + inventory_score * 0.25 + ops_score * 0.15),
+        "breakdown": {"growth": round(growth_score), "profitability": round(profitability_score), "inventory": round(inventory_score), "operations": round(ops_score)}
     }
 
-    # ── Revenue Forecast (simple linear extrapolation) ──
     import datetime as _dt
-
     today = _dt.date.today()
-    days_in_month = (
-        (today.replace(month=today.month % 12 + 1, day=1) - _dt.timedelta(days=1)).day
-        if today.month < 12
-        else 31
-    )
+    days_in_month = (today.replace(month=today.month % 12 + 1, day=1) - _dt.timedelta(days=1)).day if today.month < 12 else 31
     days_elapsed = max(today.day, 1)
     run_rate = kpis["revenue"] / days_elapsed * days_in_month if days_elapsed > 0 else 0
 
-    # Build forecast time-series for the chart:
-    # - actual = real daily revenue up to today
-    # - forecast = projected revenue from today to month end
-    # - target_line = flat target across the month
-    forecast_labels = []
-    forecast_actual = []
-    forecast_fc = []
-    forecast_target = []
+    forecast_labels, forecast_actual, forecast_fc, forecast_target = [], [], [], []
     daily_rate = kpis["revenue"] / days_elapsed if days_elapsed > 0 else 0
-    monthly_target = run_rate  # use run_rate as target when no external target set
-
-    # Build full month timeline
     for day_num in range(1, days_in_month + 1):
-        label = str(day_num)
-        forecast_labels.append(label)
+        forecast_labels.append(str(day_num))
         if day_num <= days_elapsed:
-            # Actual revenue (prorated from total)
             forecast_actual.append(round(daily_rate * day_num, 2))
-            forecast_fc.append(None)  # no forecast line in actual period
+            forecast_fc.append(None)
         else:
             forecast_actual.append(None)
-            forecast_fc.append(
-                round(kpis["revenue"] + daily_rate * (day_num - days_elapsed), 2)
-            )
-        forecast_target.append(round(monthly_target, 2))
+            forecast_fc.append(round(kpis["revenue"] + daily_rate * (day_num - days_elapsed), 2))
+        forecast_target.append(round(run_rate, 2))
 
     forecast = {
-        "predicted": round(run_rate, 2),
-        "target": 0,
-        "gap": 0,
-        "gap_pct": 0,
-        "labels": forecast_labels,
-        "actual": forecast_actual,
-        "forecast": forecast_fc,
-        "target_line": forecast_target,
+        "predicted": round(run_rate, 2), "target": 0, "gap": 0, "gap_pct": 0, "labels": forecast_labels,
+        "actual": forecast_actual, "forecast": forecast_fc, "target_line": forecast_target,
     }
 
-    # ── Waterfall data for Profitability Overview chart (Business Dashboard) ──
     waterfall = [
-        {"label": "Revenue", "value": round(kpis["revenue"], 2)},
-        {"label": "Ad Spend", "value": -round(kpis["spend"], 2)},
-        {"label": "Gross Profit", "value": round(kpis["gross_margin"], 2)},
-        {"label": "Net Profit", "value": round(kpis["net_profit"], 2)},
+        {"label": "Revenue", "value": round(kpis["revenue"], 2)}, {"label": "Ad Spend", "value": -round(kpis["spend"], 2)},
+        {"label": "Gross Profit", "value": round(kpis["gross_margin"], 2)}, {"label": "Net Profit", "value": round(kpis["net_profit"], 2)},
     ]
 
-    # ── Today's Priorities (generated from real KPI signals) ──
     priorities = []
-    rank = 1
-
-    tacos = kpis.get("tacos", 0)
-    if tacos and tacos > 15:
-        priorities.append(
-            {
-                "rank": rank,
-                "title": "Reduce Ad Spend",
-                "subtitle": f"TACoS is high at {tacos:.1f}%. Review and pause non-performing campaigns.",
-                "priority": "High",
-            }
-        )
-        rank += 1
-
+    if kpis.get("tacos", 0) > 15:
+        priorities.append({"rank": len(priorities)+1, "title": "Reduce Ad Spend", "subtitle": f"TACoS is high at {kpis['tacos']:.1f}%. Review campaigns.", "priority": "High"})
     if oos_count > 0:
-        priorities.append(
-            {
-                "rank": rank,
-                "title": f"Restock {oos_count} Out-of-Stock SKUs",
-                "subtitle": f"You have {oos_count} SKUs with zero units. Act now to prevent lost sales.",
-                "priority": "High",
-            }
-        )
-        rank += 1
-
+        priorities.append({"rank": len(priorities)+1, "title": f"Restock {oos_count} Out-of-Stock SKUs", "subtitle": "Act now to prevent lost sales.", "priority": "High"})
     if low_stock_count > 0:
-        priorities.append(
-            {
-                "rank": rank,
-                "title": f"Replenish {low_stock_count} Low-Stock SKUs",
-                "subtitle": "SKUs with low inventory may run out soon. Trigger replenishment orders.",
-                "priority": "Medium",
-            }
-        )
-        rank += 1
-
-    revenue_change = kpis.get("revenue_change", 0)
-    if revenue_change < -5:
-        priorities.append(
-            {
-                "rank": rank,
-                "title": "Investigate Revenue Drop",
-                "subtitle": f"Revenue declined {abs(revenue_change):.1f}% vs previous period. Review product and ad performance.",
-                "priority": "High",
-            }
-        )
-        rank += 1
-    elif revenue_change > 15:
-        priorities.append(
-            {
-                "rank": rank,
-                "title": "Capitalize on Revenue Growth",
-                "subtitle": f"Revenue up {revenue_change:.1f}%. Consider increasing inventory and ads for top SKUs.",
-                "priority": "Medium",
-            }
-        )
-        rank += 1
-
-    gross_margin_pct = kpis.get("gross_margin_pct", 0)
-    if gross_margin_pct < 20:
-        priorities.append(
-            {
-                "rank": rank,
-                "title": "Improve Gross Margins",
-                "subtitle": f"Gross margin is at {gross_margin_pct:.1f}%. Review pricing, COGS, and promotions.",
-                "priority": "Medium",
-            }
-        )
-        rank += 1
-
+        priorities.append({"rank": len(priorities)+1, "title": f"Replenish {low_stock_count} Low-Stock SKUs", "subtitle": "Trigger replenishment orders.", "priority": "Medium"})
+    if kpis.get("revenue_change", 0) < -5:
+        priorities.append({"rank": len(priorities)+1, "title": "Investigate Revenue Drop", "subtitle": f"Revenue declined {abs(kpis['revenue_change']):.1f}%.", "priority": "High"})
+    elif kpis.get("revenue_change", 0) > 15:
+        priorities.append({"rank": len(priorities)+1, "title": "Capitalize on Revenue Growth", "subtitle": f"Revenue up {kpis['revenue_change']:.1f}%.", "priority": "Medium"})
+    if kpis.get("gross_margin_pct", 0) < 20:
+        priorities.append({"rank": len(priorities)+1, "title": "Improve Gross Margins", "subtitle": f"Gross margin is at {kpis['gross_margin_pct']:.1f}%.", "priority": "Medium"})
     if not priorities:
-        priorities.append(
-            {
-                "rank": 1,
-                "title": "Review Dashboard Metrics",
-                "subtitle": "All key indicators are within normal range. Monitor daily.",
-                "priority": "Low",
-            }
-        )
+        priorities.append({"rank": 1, "title": "Review Dashboard Metrics", "subtitle": "All indicators normal.", "priority": "Low"})
 
-    # ── Product tables ──
-    table_data = generate_bi_data_orm(qs_f, fk_qs_f)
-    top_prods = []
-    under_prods = []
+    top_prods, under_prods = [], []
     for row in table_data:
         sku = row["asin"]
-        top_prods.append(
-            {
-                "sku": sku,
-                "product_name": f"Product {sku}",
-                "cluster": "Standard",
-                "revenue": row["revenue"],
-                "growth": 5.0,
-                "units_sold": row["units"],
-                "rating": 4.5,
-            }
-        )
-        under_prods.append(
-            {
-                "sku": sku,
-                "product_name": f"Product {sku}",
-                "revenue": row["revenue"],
-                "drop_pct": 5.0,
-                "impact": row["revenue"] * 0.05,
-            }
-        )
-    under_prods = sorted(under_prods, key=lambda x: x["revenue"])
+        curr_rev = row["revenue"]
+        prev_rev = prev_rev_by_asin.get(sku, 0)
+        growth = _safe_growth(curr_rev, prev_rev)
+        
+        top_prods.append({"sku": sku, "product_name": f"Product {sku}", "cluster": row.get("portfolio") or "Standard", "revenue": curr_rev, "growth": growth, "units_sold": row["units"], "rating": 4.5})
+        under_prods.append({"sku": sku, "product_name": f"Product {sku}", "revenue": curr_rev, "drop_pct": growth, "impact": curr_rev - prev_rev})
+    under_prods.sort(key=lambda x: x["revenue"])
 
-    cluster_perf_raw = generate_grouped_table_orm(qs_f, fk_qs_f, "portfolio")
-    cluster_performance = [
-        {
-            "cluster": r["name"],
-            "revenue": r["revenue"],
-            "growth": round(r.get("revenue_change", 5.0), 1),
-            "contribution": round(r["revenue"] / total_rev * 100, 1)
-            if total_rev > 0
-            else 0,
-        }
-        for r in cluster_perf_raw
-    ]
+    port_perf_dict = {}
+    for r in table_data:
+        port = r.get("portfolio") or "Unknown"
+        if port not in port_perf_dict:
+            port_perf_dict[port] = {"cluster": port, "revenue": 0.0}
+        port_perf_dict[port]["revenue"] += r["revenue"]
+
+    cluster_performance = []
+    for port, v in port_perf_dict.items():
+        curr_rev = v["revenue"]
+        prev_rev = prev_rev_by_port.get(port, 0)
+        growth = _safe_growth(curr_rev, prev_rev)
+        cluster_performance.append({
+            "cluster": port, 
+            "revenue": curr_rev, 
+            "growth": growth, 
+            "contribution": round(curr_rev / total_revenue * 100, 1) if total_revenue > 0 else 0
+        })
+    cluster_performance.sort(key=lambda x: x["revenue"], reverse=True)
 
     return {
-        "kpis": kpis,
-        "charts": charts,
-        "table_data": table_data,
-        "category_performance": cat_perf_list,
-        "platforms": platforms_dict,
-        "filters": filter_meta,
-        "returns": returns_ratings,
-        "returns_ratings": returns_ratings,
-        "oos_impact": oos_impact,
-        "business_health": business_health,
-        "category_health": category_health,
-        "inventory": inventory,
-        "inventory_position": inventory_position,
-        "forecast": forecast,
-        "profit_summary": profit_summary,
-        "priorities": priorities,
-        "marketing": marketing,
-        "waterfall": waterfall,
-        "cluster_performance": cluster_performance,
-        "cat_top_products": top_prods[:5],
-        "cat_under_products": under_prods[:5],
-        "cat_all_top_products": top_prods,
-        "cat_all_under_products": under_prods,
+        "kpis": kpis, "charts": charts, "category_performance": cat_perf_list,
+        "platforms": platforms_dict, "filters": filter_meta, "returns": returns_ratings, "returns_ratings": returns_ratings,
+        "oos_impact": oos_impact, "business_health": business_health, "category_health": category_health,
+        "inventory": inventory, "inventory_position": inventory_position, "forecast": forecast,
+        "profit_summary": profit_summary, "priorities": priorities, "marketing": marketing,
+        "waterfall": waterfall, "cluster_performance": cluster_performance, "cat_top_products": top_prods[:5],
+        "cat_under_products": under_prods[:5], "cat_all_top_products": top_prods[:100], "cat_all_under_products": under_prods[:100],
         "growth_opportunities": [],
     }

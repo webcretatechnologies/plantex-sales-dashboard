@@ -66,7 +66,7 @@ def process_category_file(file_obj, user):
 
     new_mappings = []
 
-    for _, row in df.iterrows():
+    for row in df.to_dict("records"):
         asin = str(row.get("ASIN", "")).strip()
         if not asin or asin.lower() == "nan":
             continue
@@ -116,7 +116,7 @@ def process_price_file(file_obj, user):
 
     new_prices = []
 
-    for _, row in df.iterrows():
+    for row in df.to_dict("records"):
         asin = str(row.get("ASIN", "")).strip()
         if not asin or asin.lower() == "nan":
             continue
@@ -237,7 +237,7 @@ def process_sales_file(file_obj, date_str, user):
 
     new_sales = []
 
-    for _, row in df.iterrows():
+    for row in df.to_dict("records"):
         asin = str(row.get("(Child) ASIN", "")).strip()
         if not asin or asin.lower() == "nan":
             continue
@@ -378,24 +378,18 @@ def generate_dashboard_data(user):
     for i in range(0, len(records), batch_size):
         ProcessedDashboardData.objects.bulk_create(
             records[i : i + batch_size],
-            **_get_upsert_kwargs(
-                unique_fields=["user", "date", "asin"],
-                update_fields=[
-                    "portfolio",
-                    "category",
-                    "subcategory",
-                    "price",
-                    "pageviews",
-                    "units",
-                    "orders",
-                    "revenue",
-                    "spend_sp",
-                    "spend_sb",
-                    "spend_sd",
-                    "total_spend",
-                ],
-            ),
+            ignore_conflicts=True
         )
+    
+    from django.core.cache import cache
+    
+    # Increment dashboard data version for caching
+    data_version = cache.get(f"dashboard_data_version_{user.id}", 0)
+    cache.set(f"dashboard_data_version_{user.id}", data_version + 1, timeout=None)
+    
+    for amz in (True, False):
+        for flp in (True, False):
+            cache.delete(f"dashboard_filters_{user.id}_{amz}_{flp}")
 
 
 # ===========================================================================
@@ -429,7 +423,7 @@ def process_fk_search_traffic(file_obj, user):
         raise ValueError(f"FK Search Traffic missing columns: {', '.join(missing)}")
 
     records = []
-    for _, row in df.iterrows():
+    for row in df.to_dict("records"):
         listing_id = str(row.get("Listing Id", "")).strip()
         if not listing_id or listing_id.lower() == "nan" or len(listing_id) < 19:
             continue
@@ -446,7 +440,9 @@ def process_fk_search_traffic(file_obj, user):
         product_clicks = clean_number(row.get("Product Clicks", 0))
         sales_val = clean_number(row.get("Sales", 0))
         revenue_val = float(clean_currency(row.get("Revenue", 0)))
-        sku = str(row.get("SKU Id", "") or "").strip()
+        sku = str(row.get("SKU Id", "") or "").strip().replace('"', "")
+        import re
+        sku = re.sub(r"(?i)^SKU:\s*", "", sku)
         vertical = str(row.get("Vertical", "") or "").strip()
 
         records.append(
@@ -502,7 +498,7 @@ def process_fk_category(file_obj, user):
         raise ValueError(f"FK Category missing columns: {', '.join(missing)}")
 
     records = []
-    for _, row in df.iterrows():
+    for row in df.to_dict("records"):
         fsn = str(row.get("FSN ID", "")).strip()
         if not fsn or fsn.lower() == "nan":
             continue
@@ -548,8 +544,8 @@ def process_fk_price(file_obj, user):
         raise ValueError(f"FK Price missing columns: {', '.join(missing)}")
 
     records = []
-    for _, row in df.iterrows():
-        fsn = str(row.get("Flipkart Serial Number", "")).strip()
+    for row in df.to_dict("records"):
+        fsn = str(row.get("Flipkart Serial Number", "")).strip().replace('"', "")
         if not fsn or fsn.lower() == "nan":
             continue
 
@@ -586,9 +582,9 @@ def process_fk_pca(file_obj, user):
         raise ValueError(f"FK PCA missing columns: {', '.join(missing)}")
 
     records = []
-    for _, row in df.iterrows():
+    for row in df.to_dict("records"):
         campaign_id = str(row.get("campaign_id", "")).strip()
-        fsn_id = str(row.get("fsn_id", "")).strip()
+        fsn_id = str(row.get("fsn_id", "")).strip().replace('"', "")
         if not campaign_id or campaign_id.lower() == "nan":
             continue
         if not fsn_id or fsn_id.lower() == "nan":
@@ -640,9 +636,9 @@ def process_fk_pla(file_obj, user):
         raise ValueError(f"FK PLA missing columns: {', '.join(missing)}")
 
     records = []
-    for _, row in df.iterrows():
+    for row in df.to_dict("records"):
         campaign_id = str(row.get("Campaign ID", "")).strip()
-        fsn_id = str(row.get("Advertised FSN ID", "")).strip()
+        fsn_id = str(row.get("Advertised FSN ID", "")).strip().replace('"', "")
         if not fsn_id or fsn_id.lower() == "nan":
             continue
 
@@ -685,7 +681,7 @@ def process_fk_sales_invoice(file_obj, user):
     fsn_map = {}
     if "Sales Report" in xl.sheet_names:
         df_sales = pd.read_excel(xl, sheet_name="Sales Report")
-        for _, row in df_sales.iterrows():
+        for row in df_sales.to_dict("records"):
             oid = str(row.get("Order Item ID", "")).strip().replace('"', "")
             fsn = str(row.get("FSN", "")).strip().replace('"', "")
             qty = clean_number(row.get("Item Quantity", 0))
@@ -697,7 +693,7 @@ def process_fk_sales_invoice(file_obj, user):
     if "Cash Back Report" in xl.sheet_names:
         df_cb = pd.read_excel(xl, sheet_name="Cash Back Report")
 
-        for _, row in df_cb.iterrows():
+        for row in df_cb.to_dict("records"):
             order_id = str(row.get("Order ID", "")).strip()
             order_item_id = str(row.get("Order Item ID", "")).strip()
             if not order_id or order_id.lower() == "nan":
@@ -758,8 +754,8 @@ def process_fk_coupon(file_obj, user):
         raise ValueError(f"FK Coupon missing columns: {', '.join(missing)}")
 
     records = []
-    for _, row in df.iterrows():
-        fsn = str(row.get("Flipkart Serial Number", "")).strip()
+    for row in df.to_dict("records"):
+        fsn = str(row.get("Flipkart Serial Number", "")).strip().replace('"', "")
         if not fsn or fsn.lower() == "nan":
             continue
 
@@ -973,28 +969,22 @@ def generate_flipkart_dashboard_data(user):
     for i in range(0, len(records), batch_size):
         FlipkartProcessedDashboardData.objects.bulk_create(
             records[i : i + batch_size],
-            **_get_upsert_kwargs(
-                unique_fields=["user", "date", "fsn"],
-                update_fields=[
-                    "platform",
-                    "portfolio",
-                    "category",
-                    "subcategory",
-                    "price",
-                    "pageviews",
-                    "units",
-                    "orders",
-                    "revenue",
-                    "total_spend",
-                    "spend_sp",
-                    "spend_sb",
-                    "spend_sd",
-                    "taxable_value",
-                    "invoice_amount",
-                    "coupon_total",
-                    "coupon_error",
-                ],
-            ),
+            ignore_conflicts=True
         )
 
+    from django.core.cache import cache
+    
+    # Increment dashboard data version for caching
+    data_version = cache.get(f"dashboard_data_version_{user.id}", 0)
+    cache.set(f"dashboard_data_version_{user.id}", data_version + 1, timeout=None)
+    
+    for amz in (True, False):
+        for flp in (True, False):
+            cache.delete(f"dashboard_filters_{user.id}_{amz}_{flp}")
+
     print(f"[FK Dashboard] Generated {len(records)} processed records.")
+    
+    from django.core.cache import cache
+    for amz in (True, False):
+        for flp in (True, False):
+            cache.delete(f"dashboard_filters_{user.id}_{amz}_{flp}")

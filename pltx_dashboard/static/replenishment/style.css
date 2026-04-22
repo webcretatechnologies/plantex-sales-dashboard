@@ -3,47 +3,47 @@
    ============================================== */
 
 :root {
-    /* Palette */
-    --bg: #f5f7f9;
-    --surface: #ffffff;
-    --surface-alt: #f0f8fb;
+    /* Premium Light Theme Tokens */
+    --bg: #f4f7f9;
+    --surface: rgba(255, 255, 255, 0.85);
+    --surface-alt: rgba(255, 255, 255, 0.4);
 
-    --border: #dde6ea;
-    --border-strong: #c6d8de;
+    --border: rgba(226, 232, 240, 0.8);
+    --border-strong: rgba(148, 163, 184, 0.3);
 
-    --cyan-100: #e0f7fb;
-    --cyan-200: #b2ebf2;
-    --cyan-500: #00bcd4;
-    --cyan-600: #0097a7;
-    --cyan-700: #00838f;
+    --cyan-100: rgba(79, 70, 229, 0.05);
+    --cyan-200: rgba(79, 70, 229, 0.1);
+    --cyan-500: #4f46e5;
+    --cyan-600: #4338ca;
+    --cyan-700: #3730a3;
 
     --warm-50: #fafaf8;
-    --warm-100: #f4f2ee;
+    --warm-100: #f8fafc;
 
-    --text-1: #1a2e35;
-    --text-2: #4a6572;
-    --text-3: #8ba7b0;
+    --text-1: #0f172a;
+    --text-2: #334155;
+    --text-3: #64748b;
 
-    --green: #16a34a;
-    --green-bg: #f0fdf4;
-    --green-border: #bbf7d0;
+    --green: #10b981;
+    --green-bg: #ecfdf5;
+    --green-border: rgba(16, 185, 129, 0.2);
 
-    --red: #dc2626;
+    --red: #ef4444;
     --red-bg: #fef2f2;
-    --red-border: #fecaca;
+    --red-border: rgba(239, 68, 68, 0.2);
 
-    --font-body: 'Plus Jakarta Sans', system-ui, sans-serif;
+    --font-body: 'Inter', system-ui, sans-serif;
     --font-mono: 'JetBrains Mono', 'Courier New', monospace;
 
-    --radius-sm: 6px;
-    --radius-md: 10px;
-    --radius-lg: 14px;
-    --radius-xl: 18px;
+    --radius-sm: 8px;
+    --radius-md: 12px;
+    --radius-lg: 16px;
+    --radius-xl: 24px;
 
-    --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.07), 0 4px 12px rgba(0, 0, 0, 0.05);
-    --shadow-btn: 0 2px 8px rgba(0, 188, 212, 0.28);
+    --shadow-card: 0 10px 30px -5px rgba(15, 23, 42, 0.04), 0 4px 6px -4px rgba(15, 23, 42, 0.02);
+    --shadow-btn: 0 8px 20px rgba(79, 70, 229, 0.25);
 
-    --sidebar-w: 230px;
+    --sidebar-w: 240px;
 }
 
 /* --- Reset --- 
@@ -191,13 +191,18 @@ body {
     animation: slideUp 0.4s 0.08s ease-out both;
 }
 
-/* Panel */
 .replenishment-app .panel {
     background: var(--surface);
+    backdrop-filter: blur(16px);
     border: 1px solid var(--border);
     border-radius: var(--radius-xl);
-    padding: 1.75rem;
+    padding: 2rem;
     box-shadow: var(--shadow-card);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.replenishment-app .panel:hover {
+    box-shadow: 0 20px 40px -5px rgba(15, 23, 42, 0.08), 0 10px 15px -5px rgba(15, 23, 42, 0.03);
 }
 
 .replenishment-app .panel-label {
@@ -352,24 +357,24 @@ body {
     justify-content: center;
     gap: 8px;
     width: 100%;
-    padding: 11px 20px;
-    margin-top: 6px;
-    background: var(--cyan-600);
+    padding: 14px 24px;
+    margin-top: 16px;
+    background: linear-gradient(135deg, #4f46e5, #0ea5e9);
     color: #fff;
     font-family: var(--font-body);
-    font-size: 0.9rem;
-    font-weight: 600;
+    font-size: 1rem;
+    font-weight: 700;
     border: none;
     border-radius: var(--radius-md);
     cursor: pointer;
     box-shadow: var(--shadow-btn);
-    transition: background 0.2s, transform 0.1s, box-shadow 0.2s;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     letter-spacing: 0.01em;
 }
 
 .btn-submit:hover {
-    background: var(--cyan-700);
-    box-shadow: 0 4px 14px rgba(0, 150, 167, 0.35);
+    transform: translateY(-2px);
+    box-shadow: 0 12px 28px rgba(79, 70, 229, 0.35);
 }
 
 .btn-submit:active {
@@ -710,11 +715,12 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 36px;
-    height: 36px;
-    background: var(--cyan-100);
-    color: var(--cyan-600);
-    border-radius: 8px;
+    width: 40px;
+    height: 40px;
+    background: linear-gradient(135deg, rgba(79, 70, 229, 0.15), rgba(79, 70, 229, 0.05));
+    border: 1px solid rgba(79, 70, 229, 0.2);
+    color: var(--cyan-500);
+    border-radius: 12px;
     transition: all 0.2s;
 }
 
@@ -776,26 +782,29 @@ body {
 }
 .action-row {
     display: flex;
-    gap: 10px;
+    gap: 12px;
     flex-wrap: wrap;
-    margin-top: 10px;
+    margin-top: 16px;
 }
 .btn-action {
     flex: 1;
-    padding: 8px 10px;
-    border: 1px solid var(--border-strong);
-    background: var(--surface);
+    padding: 10px 14px;
+    border: 1px solid var(--border);
+    background: var(--surface-alt);
     border-radius: var(--radius-md);
     cursor: pointer;
-    font-size: 0.8rem;
+    font-size: 0.85rem;
     font-weight: 600;
     color: var(--text-2);
-    transition: all 0.2s;
+    transition: all 0.25s;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.02);
 }
 .btn-action:hover {
-    background: var(--cyan-100);
+    background: var(--surface);
     border-color: var(--cyan-500);
-    color: var(--cyan-700);
+    color: var(--cyan-500);
+    box-shadow: 0 6px 16px rgba(79, 70, 229, 0.1);
+    transform: translateY(-2px);
 }
 .success-bg {
     background: var(--green-bg);
