@@ -92,11 +92,11 @@ def get_dashboard_context(request):
 
     # Extract all available options BEFORE applying entity filters
     from apps.dashboard.services.analytics_services_orm_pipeline import (
-        get_available_filters_orm,
+        get_available_filters_orm_cached,
     )
 
-    cached_filter_metadata = get_available_filters_orm(
-        qs if show_amazon else qs.none(), fk_qs if show_flipkart else fk_qs.none()
+    cached_filter_metadata = get_available_filters_orm_cached(
+        qs if show_amazon else qs.none(), fk_qs if show_flipkart else fk_qs.none(), data_owner.id, show_amazon, show_flipkart
     )
 
     # Apply category filter at DB level
@@ -172,20 +172,31 @@ def get_dashboard_context(request):
         else:
             spend_qs = spend_qs.filter(asin=asin_filter)
 
-    # Use our newly built native ORM pipeline to bypass Pandas completely
-    # for lightning-fast cache bypass responses.
-    from apps.dashboard.services.analytics_services_orm_pipeline import (
-        run_orm_computation,
-    )
+    # Use a versioned cache key to allow instantaneous clearing on upload
+    from django.core.cache import cache
+    from apps.dashboard.services.analytics_services_orm_pipeline import run_orm_computation
+    import hashlib
+    
+    # Generate unique hash for these filters
+    filter_key_str = json.dumps(filters, sort_keys=True)
+    cache_hash = hashlib.md5(filter_key_str.encode("utf-8")).hexdigest()
+    
+    # Get current data version for this user
+    data_version = cache.get(f"dashboard_data_version_{data_owner.id}", 0)
+    cache_key = f"dashboard_payload_{data_owner.id}_{data_version}_{cache_hash}"
+    
+    payload = cache.get(cache_key)
+    if not payload:
+        payload = run_orm_computation(
+            qs,
+            fk_qs,
+            spend_qs,
+            filters,
+            data_owner,
+            cached_filter_metadata=cached_filter_metadata,
+        )
+        cache.set(cache_key, payload, timeout=3600 * 24)  # Cache for 24 hours
 
-    payload = run_orm_computation(
-        qs,
-        fk_qs,
-        spend_qs,
-        filters,
-        data_owner,
-        cached_filter_metadata=cached_filter_metadata,
-    )
 
     return {
         "logged_user": user,
@@ -278,7 +289,12 @@ def upload_view(request):
     return render(
         request,
         "dashboard/upload.html",
-        {"logged_user": user, "user_features": user_features},
+        {
+            "logged_user": user,
+            "user_features": user_features,
+            "payload_json": "null",
+            "selected_filters_json": "{}",
+        },
     )
 
 

@@ -94,7 +94,7 @@ def generate_kpis_orm(qs, fk_qs, spend_qs=None):
     }
 
 
-def generate_charts_data_orm(qs, fk_qs):
+def generate_charts_data_orm(qs, fk_qs, table_data=None):
     # ── Trend Data ──
     amazon_trend = {}  # date → revenue (Amazon only)
     flipkart_trend = {}  # date → revenue (Flipkart only)
@@ -163,30 +163,39 @@ def generate_charts_data_orm(qs, fk_qs):
 
     # ── Portfolio Data ──
     merged_port = {}
-    if qs is not None:
-        qs_port = qs.values("portfolio").annotate(units=Sum("units"))
-        for r in qs_port:
-            p = r["portfolio"] or "Unmapped"
-            merged_port[p] = merged_port.get(p, 0) + int(r["units"] or 0)
+    sp_sum = sb_sum = sd_sum = 0.0
 
-    if fk_qs is not None:
-        fk_port = fk_qs.values("portfolio").annotate(units=Sum("units"))
-        for r in fk_port:
-            p = r["portfolio"] or "Unmapped"
-            merged_port[p] = merged_port.get(p, 0) + int(r["units"] or 0)
+    if table_data is not None:
+        for r in table_data:
+            p = r.get("portfolio") or "Unmapped"
+            merged_port[p] = merged_port.get(p, 0) + int(r.get("units", 0))
+            sp_sum += float(r.get("spend_sp", 0))
+            sb_sum += float(r.get("spend_sb", 0))
+            sd_sum += float(r.get("spend_sd", 0))
+    else:
+        if qs is not None:
+            qs_port = qs.values("portfolio").annotate(units=Sum("units"))
+            for r in qs_port:
+                p = r["portfolio"] or "Unmapped"
+                merged_port[p] = merged_port.get(p, 0) + int(r["units"] or 0)
+
+        if fk_qs is not None:
+            fk_port = fk_qs.values("portfolio").annotate(units=Sum("units"))
+            for r in fk_port:
+                p = r["portfolio"] or "Unmapped"
+                merged_port[p] = merged_port.get(p, 0) + int(r["units"] or 0)
+                
+        if qs is not None:
+            agg = qs.aggregate(sp=Sum("spend_sp"), sb=Sum("spend_sb"), sd=Sum("spend_sd"))
+            sp_sum += float(agg["sp"] or 0)
+            sb_sum += float(agg["sb"] or 0)
+            sd_sum += float(agg["sd"] or 0)
 
     sorted_ports = sorted(merged_port.items(), key=lambda x: x[1], reverse=True)[:10]
     port_labels = [k for k, v in sorted_ports]
     port_units = [v for k, v in sorted_ports]
 
     # ── AdType Data ──
-    sp_sum = sb_sum = sd_sum = 0.0
-    if qs is not None:
-        agg = qs.aggregate(sp=Sum("spend_sp"), sb=Sum("spend_sb"), sd=Sum("spend_sd"))
-        sp_sum += float(agg["sp"] or 0)
-        sb_sum += float(agg["sb"] or 0)
-        sd_sum += float(agg["sd"] or 0)
-
     ad_total = sp_sum + sb_sum + sd_sum
     adTypeLabels = ["SB", "SD", "SP"]
     adTypeVals = [sb_sum, sd_sum, sp_sum]
@@ -215,17 +224,3 @@ def generate_charts_data_orm(qs, fk_qs):
         },
     }
 
-
-def get_dashboard_payload_orm(
-    qs, fk_qs, spend_qs, filters, user, cached_filter_metadata=None
-):
-    """
-    Build the massive dashboard payload using ORM.
-    (Work in progress, incremental migration)
-    """
-    return {
-        "kpis": generate_kpis_orm(qs, fk_qs, spend_qs),
-        "charts": generate_charts_data_orm(qs, fk_qs),
-        "filters": cached_filter_metadata or {},
-        "platforms": {},
-    }

@@ -107,19 +107,20 @@
     /* Cards Setup */
     .upload-card {
         background: var(--surface);
-        border: 1px solid var(--border);
-        border-radius: 20px;
+        backdrop-filter: blur(16px);
+        border: 1px solid var(--border-light);
+        border-radius: 24px;
         padding: 36px 40px;
         position: relative;
         overflow: hidden;
         transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.02), 0 1px 3px rgba(0, 0, 0, 0.03);
+        box-shadow: 0 10px 30px -5px rgba(15, 23, 42, 0.04), 0 4px 6px -4px rgba(15, 23, 42, 0.02);
     }
 
     .upload-card:hover {
-        border-color: #cbd5e1;
-        box-shadow: 0 12px 32px rgba(0, 0, 0, 0.06), 0 4px 8px rgba(0, 0, 0, 0.03);
-        transform: translateY(-2px);
+        border-color: rgba(79, 70, 229, 0.2);
+        box-shadow: 0 20px 40px -5px rgba(15, 23, 42, 0.08), 0 10px 15px -5px rgba(15, 23, 42, 0.03);
+        transform: translateY(-4px);
     }
 
     .upload-card::before {
@@ -129,7 +130,7 @@
         left: 0;
         right: 0;
         height: 4px;
-        background: linear-gradient(90deg, #3b82f6, #06b6d4, #10b981);
+        background: linear-gradient(90deg, var(--accent), var(--accent2));
         opacity: 0;
         transition: opacity 0.3s ease;
     }
@@ -167,20 +168,20 @@
 
     /* Dropzone Styling */
     .modern-dropzone {
-        border: 2px dashed #cbd5e1;
+        border: 2px dashed var(--border);
         border-radius: 16px;
         padding: 48px 24px;
         text-align: center;
         cursor: pointer;
-        transition: all 0.2s ease;
-        background: #f8fafc;
+        transition: all 0.25s ease;
+        background: rgba(255, 255, 255, 0.4);
         display: block;
     }
 
     .modern-dropzone:hover,
     .modern-dropzone.dragover {
-        border-color: #3b82f6;
-        background: #eff6ff;
+        border-color: var(--accent);
+        background: rgba(79, 70, 229, 0.03);
     }
 
     .modern-dropzone .drop-icon {
@@ -245,7 +246,7 @@
     }
 
     .btn-process {
-        background: linear-gradient(135deg, #2563eb, #3b82f6);
+        background: linear-gradient(135deg, var(--accent), var(--accent2));
         color: #ffffff;
         border: none;
         border-radius: 14px;
@@ -258,12 +259,12 @@
         display: inline-flex;
         align-items: center;
         gap: 14px;
-        box-shadow: 0 6px 20px rgba(37, 99, 235, 0.25);
+        box-shadow: 0 8px 20px rgba(79, 70, 229, 0.25);
     }
 
     .btn-process:hover:not(:disabled) {
-        transform: translateY(-3px);
-        box-shadow: 0 10px 25px rgba(37, 99, 235, 0.35);
+        transform: translateY(-4px);
+        box-shadow: 0 12px 28px rgba(79, 70, 229, 0.35);
     }
 
     .btn-process:disabled {
