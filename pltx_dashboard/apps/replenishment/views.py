@@ -154,6 +154,11 @@ def generate_master_api(request):
                 status=400,
             )
 
+        # Flex Qty is optional
+        logger.info(
+            f"[generate_master_api] Flex Qty file provided: {'Flex_Qty' in files and files['Flex_Qty'] and os.path.exists(files['Flex_Qty'])}"
+        )
+
         temp_dir = tempfile.mkdtemp()
         task = generate_master_celery.delay(files, temp_dir)
         logger.info(f"[generate_master_api] Celery task dispatched: {task.id}")

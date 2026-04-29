@@ -26,13 +26,13 @@ def generate_shipment_report(shipment_file, mapping_file, output_file):
         print(f"Error reading mapping file: {e}")
         return
 
-    # Strip column names
-    df.columns = df.columns.astype(str).str.strip()
-    mapping_df.columns = mapping_df.columns.astype(str).str.strip()
+    # Strip and uppercase column names to handle case sensitivity
+    df.columns = df.columns.astype(str).str.strip().str.upper()
+    mapping_df.columns = mapping_df.columns.astype(str).str.strip().str.upper()
 
     # Data cleaning: Remove all rows where Status is “Closed”, "(Blanks)", or "STATUS"
     if "STATUS" in df.columns:
-        invalid_statuses = ["Closed", r"\(Blanks\)", "STATUS", "Inbound"]
+        invalid_statuses = ["Closed", r"\(Blanks\)", "STATUS"]
         df = df[
             ~df["STATUS"]
             .astype(str)
@@ -95,7 +95,7 @@ def generate_shipment_report(shipment_file, mapping_file, output_file):
         lambda x: x["FINAL QTY"] if x["STATUS_CLEAN"] == "Upcoming" else 0, axis=1
     )
 
-    inbound_statuses = ["Receiving", "Intransit", "In Transit"]
+    inbound_statuses = ["Receiving", "Intransit", "In Transit", "Inbound"]
     df["Receiving + Intransit Qty"] = df.apply(
         lambda x: x["FINAL QTY"] if x["STATUS_CLEAN"] in inbound_statuses else 0, axis=1
     )
@@ -104,7 +104,7 @@ def generate_shipment_report(shipment_file, mapping_file, output_file):
         lambda x: x["FINAL QTY"] if x["STATUS_CLEAN"] == "Receiving" else 0, axis=1
     )
 
-    intransit_statuses = ["Intransit", "In Transit"]
+    intransit_statuses = ["Intransit", "In Transit", "Inbound"]
     df["Intransit Qty"] = df.apply(
         lambda x: x["FINAL QTY"] if x["STATUS_CLEAN"] in intransit_statuses else 0,
         axis=1,

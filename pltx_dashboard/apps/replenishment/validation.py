@@ -168,14 +168,14 @@ def validate_shipment(filepath, master_data):
             )
 
         # 2. FC validation
-        fc = row.get("FC CODE", None)
+        fc = row.get("FC CODE", row.get("FC", None))
         if pd.notna(fc) and fc not in fc_master:
             errors.append(
                 {
                     "Row": row_num,
-                    "Column": "FC CODE",
+                    "Column": "FC CODE/FC",
                     "Value": str(fc),
-                    "Message": "FC CODE not found in master",
+                    "Message": "FC CODE/FC not found in master",
                     "Shipment_id": row.get("ID", ""),
                     "ASIN": row.get("ASIN", ""),
                 }

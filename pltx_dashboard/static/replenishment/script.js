@@ -69,7 +69,8 @@ document.addEventListener('DOMContentLoaded', () => {
             FC_Cluster: document.getElementById('fileFCCluster').files[0],
             Pincode_Cluster: document.getElementById('filePincode').files[0],
             Input_Sheet: document.getElementById('fileInputSheet').files[0],
-            Business_Report: document.getElementById('fileBusiness').files[0]
+            Business_Report: document.getElementById('fileBusiness').files[0],
+            Flex_Qty: document.getElementById('fileFlexQty').files[0] || null
         };
 
         for (const [key, file] of Object.entries(files)) {
@@ -80,7 +81,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const inputIds = [
         'fileSales', 'fileStock', 'fileLIS', 'fileShipment', 
-        'fileAssortment', 'fileFCCluster', 'filePincode', 'fileInputSheet', 'fileBusiness'
+        'fileAssortment', 'fileFCCluster', 'filePincode', 'fileInputSheet', 'fileBusiness', 'fileFlexQty'
     ];
 
     // --- Custom File Upload UI Handling ---

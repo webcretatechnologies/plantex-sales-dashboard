@@ -41,6 +41,7 @@ pyOpenSSL==26.0.0
 python-dateutil==2.9.0.post0
 redis==6.4.0
 requests==2.33.1
+ruff==0.15.10
 service-identity==24.2.0
 six==1.17.0
 sqlparse==0.5.5
@@ -52,6 +53,7 @@ tzlocal==5.3.1
 ujson==5.12.0
 urllib3==2.6.3
 vine==5.1.0
+vulture==2.16
 wcwidth==0.6.0
-zope.interface==8.2
 xlsxwriter==3.2.9
+zope.interface==8.2
