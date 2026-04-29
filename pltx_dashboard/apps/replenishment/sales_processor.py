@@ -16,38 +16,52 @@ def process_sales_report(sales_file, pin_file, output_file):
     df_sales = pd.read_csv(sales_file, dtype={"Shipment To Postal Code": str})
     df_pin = pd.read_csv(pin_file, dtype={"PIN CODE": str})
 
+    # Strip and uppercase column names for robustness
+    df_sales.columns = df_sales.columns.astype(str).str.strip().str.upper()
+    df_pin.columns = df_pin.columns.astype(str).str.strip().str.upper()
+
     print("Processing Dates and Numerical Columns...")
     # Date parsing: Separate into proper date and time, ignoring time
     # The format is like 2026-03-14T23:59:48+05:30
+    date_col = "CUSTOMER SHIPMENT DATE"
+    if date_col not in df_sales.columns:
+        # Fallback for different possible names
+        for col in df_sales.columns:
+            if "SHIPMENT DATE" in col or "DATE" in col:
+                date_col = col
+                break
+
     date_time_split = (
-        df_sales["Customer Shipment Date"].astype(str).str.split("T", n=1, expand=True)
+        df_sales[date_col].astype(str).str.split("T", n=1, expand=True)
     )
 
     # Overwrite with only the proper Date part (ignoring time string)
-    df_sales["Customer Shipment Date"] = pd.to_datetime(
+    df_sales["CUSTOMER SHIPMENT DATE"] = pd.to_datetime(
         date_time_split[0], errors="coerce"
     )
 
     # Calculate Total from amounts
-    for col in ["Product Amount", "Shipping Amount", "Gift Amount"]:
+    for col in ["PRODUCT AMOUNT", "SHIPPING AMOUNT", "GIFT AMOUNT"]:
         if col in df_sales.columns:
             df_sales[col] = pd.to_numeric(df_sales[col], errors="coerce").fillna(0)
 
-    df_sales["Total"] = (
-        df_sales.get("Product Amount", 0)
-        + df_sales.get("Shipping Amount", 0)
-        + df_sales.get("Gift Amount", 0)
+    df_sales["TOTAL"] = (
+        df_sales.get("PRODUCT AMOUNT", 0)
+        + df_sales.get("SHIPPING AMOUNT", 0)
+        + df_sales.get("GIFT AMOUNT", 0)
     )
 
     print("Preparing Pincodes for Merge...")
     # Clean '.0' trailing decimals from zip codes if they were inferred as floats originally
-    df_sales["Shipment To Postal Code"] = (
-        df_sales["Shipment To Postal Code"]
+    postal_col = "SHIPMENT TO POSTAL CODE" if "SHIPMENT TO POSTAL CODE" in df_sales.columns else "POSTAL CODE"
+    df_sales[postal_col] = (
+        df_sales[postal_col]
+        .astype(str)
         .str.replace(r"\.0$", "", regex=True)
         .str.strip()
     )
     df_pin["PIN CODE"] = (
-        df_pin["PIN CODE"].str.replace(r"\.0$", "", regex=True).str.strip()
+        df_pin["PIN CODE"].astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
     )
 
     # De-duplicate PIN file to ensure a clean 1:1 map
@@ -57,20 +71,20 @@ def process_sales_report(sales_file, pin_file, output_file):
     # Perform Left Join mapping Shipment To Postal Code to PIN CODE
     df_merged = pd.merge(
         df_sales,
-        df_pin_unique[["PIN CODE", "Fulfilment Cluster", "Zone"]],
-        left_on="Shipment To Postal Code",
+        df_pin_unique[["PIN CODE", "FULFILMENT CLUSTER", "ZONE"]],
+        left_on=postal_col,
         right_on="PIN CODE",
         how="left",
     )
 
     # Handle Missing mappings
-    df_merged["Fulfilment Cluster"] = df_merged["Fulfilment Cluster"].fillna("N/A")
-    df_merged["Zone"] = df_merged["Zone"].fillna("N/A")
+    df_merged["FULFILMENT CLUSTER"] = df_merged["FULFILMENT CLUSTER"].fillna("N/A")
+    df_merged["ZONE"] = df_merged["ZONE"].fillna("N/A")
 
     print("Calculating file-level Sales Day Count...")
     # File-level: find max and min of Customer Shipment Date across the entire file
-    file_max_date = df_merged["Customer Shipment Date"].max()
-    file_min_date = df_merged["Customer Shipment Date"].min()
+    file_max_date = df_merged["CUSTOMER SHIPMENT DATE"].max()
+    file_min_date = df_merged["CUSTOMER SHIPMENT DATE"].min()
     file_sales_day_count = max(
         (file_max_date - file_min_date).days, 1
     )  # At least 1 day
@@ -80,20 +94,24 @@ def process_sales_report(sales_file, pin_file, output_file):
 
     print("Grouping Data by ASIN and Cluster Name...")
     # Group by ASIN and Cluster
-    grouped = df_merged.groupby(["ASIN", "Fulfilment Cluster"])
+    asin_col = "ASIN" if "ASIN" in df_merged.columns else "CHILD ASIN"
+    grouped = df_merged.groupby([asin_col, "FULFILMENT CLUSTER"])
 
     # Using Named Aggregation for clarity
+    qty_col = "QUANTITY" if "QUANTITY" in df_merged.columns else "QTY"
+    order_col = "AMAZON ORDER ID" if "AMAZON ORDER ID" in df_merged.columns else "ORDER ID"
+    
     df_result = grouped.agg(
-        Sales_Qty=("Quantity", "sum"),
-        Unique_Order_Count=("Amazon Order Id", "nunique"),
-        Unique_Pincode_Count=("Shipment To Postal Code", "nunique"),
-        Total_Sum=("Total", "sum"),
-        Demand_Zone=("Zone", "first"),
+        Sales_Qty=(qty_col, "sum"),
+        Unique_Order_Count=(order_col, "nunique"),
+        Unique_Pincode_Count=(postal_col, "nunique"),
+        Total_Sum=("TOTAL", "sum"),
+        Demand_Zone=("ZONE", "first"),
     ).reset_index()
 
     print("Calculating metrics...")
     # Rename cluster
-    df_result.rename(columns={"Fulfilment Cluster": "Cluster Name"}, inplace=True)
+    df_result.rename(columns={asin_col: "ASIN", "FULFILMENT CLUSTER": "Cluster Name"}, inplace=True)
 
     # Sales Day Count = (max date - min date) across the entire file, applied to every row
     df_result["Sales Day Count"] = file_sales_day_count

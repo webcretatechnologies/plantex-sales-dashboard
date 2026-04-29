@@ -30,6 +30,7 @@ def generate_master_report(
     fc_mapping_file,
     input_sheet_file,
     output_file,
+    flex_qty_file=None,
 ):
     print("Loading processed reports...")
 
@@ -65,6 +66,18 @@ def generate_master_report(
         print(f" Error reading product details file: {e}")
         product_details_df = pd.DataFrame()
 
+    # --- Load Flex Qty Data (Optional) ---
+    try:
+        if flex_qty_file and os.path.exists(flex_qty_file):
+            flex_qty_df = load_data(flex_qty_file)
+            print(f" Loaded Flex Qty Data: {len(flex_qty_df)} rows")
+        else:
+            flex_qty_df = pd.DataFrame()
+            print(" Flex Qty file not provided (optional)")
+    except Exception as e:
+        print(f" Error reading flex qty file: {e}")
+        flex_qty_df = pd.DataFrame()
+
     # --- Load Business Report Data ---
     try:
         business_df = pd.read_csv(business_report_file)
@@ -88,41 +101,51 @@ def generate_master_report(
         )
         pin_code_df = pd.read_csv(pin_code_file, dtype={"PIN CODE": str})
         fc_mapping_df = load_data(fc_mapping_file)
+        
+        # Strip and uppercase column names for robustness
+        raw_sales_df.columns = raw_sales_df.columns.astype(str).str.strip().str.upper()
+        pin_code_df.columns = pin_code_df.columns.astype(str).str.strip().str.upper()
+        fc_mapping_df.columns = fc_mapping_df.columns.astype(str).str.strip().str.upper()
+
         print(
             f" Loaded Raw Sales ({len(raw_sales_df)} rows), Pin Codes ({len(pin_code_df)} rows), and FC Mapping ({len(fc_mapping_df)} rows)"
         )
 
         # Clean postal codes
-        raw_sales_df["Shipment To Postal Code"] = (
-            raw_sales_df["Shipment To Postal Code"]
+        postal_col = "SHIPMENT TO POSTAL CODE" if "SHIPMENT TO POSTAL CODE" in raw_sales_df.columns else "POSTAL CODE"
+        raw_sales_df[postal_col] = (
+            raw_sales_df[postal_col]
+            .astype(str)
             .str.replace(r"\.0$", "", regex=True)
             .str.strip()
         )
         pin_code_df["PIN CODE"] = (
-            pin_code_df["PIN CODE"].str.replace(r"\.0$", "", regex=True).str.strip()
+            pin_code_df["PIN CODE"].astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
         )
 
         # Merge to get Ideal Cluster
         raw_sales_merged = pd.merge(
             raw_sales_df,
-            pin_code_df[["PIN CODE", "Fulfilment Cluster", "Ideal Cluster"]],
-            left_on="Shipment To Postal Code",
+            pin_code_df[["PIN CODE", "FULFILMENT CLUSTER", "IDEAL CLUSTER"]],
+            left_on=postal_col,
             right_on="PIN CODE",
             how="left",
         )
 
         # Group by ASIN and Fulfilment Cluster -> get Ideal Cluster
-        raw_sales_merged = raw_sales_merged.dropna(subset=["ASIN"])
-        raw_sales_merged["ASIN"] = raw_sales_merged["ASIN"].astype(str)
+        asin_col = "ASIN" if "ASIN" in raw_sales_merged.columns else "CHILD ASIN"
+        raw_sales_merged = raw_sales_merged.dropna(subset=[asin_col])
+        raw_sales_merged[asin_col] = raw_sales_merged[asin_col].astype(str)
         ideal_mapping = (
-            raw_sales_merged.groupby(["ASIN", "Fulfilment Cluster"])["Ideal Cluster"]
+            raw_sales_merged.groupby([asin_col, "FULFILMENT CLUSTER"])["IDEAL CLUSTER"]
             .first()
             .reset_index()
         )
         ideal_mapping.rename(
             columns={
-                "Fulfilment Cluster": "Ideal Cluster",
-                "Ideal Cluster": "Ideal Cluster name",
+                asin_col: "ASIN",
+                "FULFILMENT CLUSTER": "Ideal Cluster",
+                "IDEAL CLUSTER": "Ideal Cluster name",
             },
             inplace=True,
         )
@@ -191,17 +214,17 @@ def generate_master_report(
         asin_set.update(product_details_df["ASIN"].dropna().astype(str).unique())
 
     # Add clusters from mapping files to ensure all possible clusters are covered
-    if "Fulfilment Cluster" in pin_code_df.columns:
+    if "FULFILMENT CLUSTER" in pin_code_df.columns:
         cluster_set.update(
-            pin_code_df["Fulfilment Cluster"].dropna().astype(str).unique()
+            pin_code_df["FULFILMENT CLUSTER"].dropna().astype(str).unique()
         )
-    if "Ideal Cluster" in pin_code_df.columns:
-        cluster_set.update(pin_code_df["Ideal Cluster"].dropna().astype(str).unique())
-    if "Cluster Name" in fc_mapping_df.columns:
-        cluster_set.update(fc_mapping_df["Cluster Name"].dropna().astype(str).unique())
+    if "IDEAL CLUSTER" in pin_code_df.columns:
+        cluster_set.update(pin_code_df["IDEAL CLUSTER"].dropna().astype(str).unique())
+    if "CLUSTER NAME" in fc_mapping_df.columns:
+        cluster_set.update(fc_mapping_df["CLUSTER NAME"].dropna().astype(str).unique())
 
     asin_list = sorted(list(asin_set))
-    cluster_list = sorted(list(cluster_set))
+    cluster_list = sorted([c for c in cluster_set if str(c).strip().lower() not in ('nan', 'none', '')])
 
     print(
         f" Found {len(asin_list)} unique ASINs and {len(cluster_list)} unique Clusters."
@@ -224,15 +247,12 @@ def generate_master_report(
     if not sales_df.empty:
         # Ensure correct data types before merge
         sales_cols_to_keep = ["ASIN", "Cluster Name", "DRR", "Sales Qty"]
-        if "Demand Zone" in sales_df.columns:
-            sales_cols_to_keep.append("Demand Zone")
+        # Don't include Demand Zone - we'll use Ideal Cluster based mapping instead
 
         sales_subset = sales_df[sales_cols_to_keep].copy()
         sales_subset["ASIN"] = sales_subset["ASIN"].astype(str)
         sales_subset.rename(columns={"Cluster Name": "Ideal Cluster"}, inplace=True)
         sales_subset["Ideal Cluster"] = sales_subset["Ideal Cluster"].astype(str)
-        if "Demand Zone" in sales_cols_to_keep:
-            sales_subset.rename(columns={"Demand Zone": "Zone"}, inplace=True)
 
         master_df = pd.merge(
             master_df, sales_subset, on=["ASIN", "Ideal Cluster"], how="left"
@@ -240,10 +260,41 @@ def generate_master_report(
     else:
         master_df["DRR"] = 0
         master_df["Sales Qty"] = 0
-        master_df["Zone"] = ""
 
-    if "Zone" not in master_df.columns:
-        master_df["Zone"] = ""
+    # --- Map Zone based on Ideal Cluster ---
+    print("Mapping Zone based on Ideal Cluster...")
+    
+    zone_mapping_dict = {}
+    try:
+        if 'fc_mapping_df' in locals() and not fc_mapping_df.empty:
+            if "CLUSTER NAME" in fc_mapping_df.columns and "ZONE" in fc_mapping_df.columns:
+                temp_df = fc_mapping_df.dropna(subset=["CLUSTER NAME", "ZONE"]).drop_duplicates(subset=["CLUSTER NAME"])
+                zone_mapping_dict = dict(zip(temp_df["CLUSTER NAME"].astype(str).str.strip(), temp_df["ZONE"].astype(str).str.strip()))
+    except Exception as e:
+        print(f" Error extracting Zone mapping: {e}")
+
+    if not zone_mapping_dict:
+        zone_mapping_dict = {
+            "CHN_CLUSTER": "CHENNAI",
+            "NAG_CLUSTER": "NAGPUR",
+            "GAA_CLUSTER": "GUWAHATI",
+            "PAT_CLUSTER": "PATNA",
+            "SAT_CLUSTER": "LUDHIANA",
+            "PUN_CLUSTER": "PUNE",
+            "AMD_CLUSTER": "AHMEDABAD",
+            "HRA_CLUSTER": "DELHI",
+            "BLR_CLUSTER": "BANGALORE",
+            "IND_CLUSTER": "INDORE",
+            "BOM_CLUSTER": "MUMBAI",
+            "BHU_CLUSTER": "BHUBANESWAR",
+            "JAI_CLUSTER": "JAIPUR",
+            "COI_CLUSTER": "COIMBATORE",
+            "HYD_CLUSTER": "HYDERABAD",
+            "LKO_CLUSTER": "LUCKNOW",
+            "KOL_CLUSTER": "KOLKATA",
+            "HUB_CLUSTER": "HUBLI",
+        }
+    master_df["Zone"] = master_df["Ideal Cluster"].astype(str).str.strip().map(zone_mapping_dict).fillna("")
 
     # --- Merge Stock Data ---
     print("Merging Stock Data...")
@@ -379,6 +430,11 @@ def generate_master_report(
             "Portfolio",
             "Category",
         ]
+        
+        # Extract Brand if available
+        if "Brand" in product_details_df.columns:
+            prod_cols.append("Brand")
+        
         prod_subset = product_details_df[
             [c for c in prod_cols if c in product_details_df.columns]
         ].drop_duplicates(subset=["ASIN"])
@@ -397,11 +453,62 @@ def generate_master_report(
             "Category",
         ]:
             master_df[col] = ""
+        master_df["Brand"] = ""
+
+    # Ensure Brand column exists
+    if "Brand" not in master_df.columns:
+        master_df["Brand"] = ""
+
+    # --- Merge Flex Qty Data ---
+    print("Merging Flex Qty Data...")
+    if not flex_qty_df.empty:
+        try:
+            # Ensure required columns exist in Flex Qty file
+            required_flex_cols = ["ASIN", "Cluster", "Qty"]
+            flex_cols_available = [c for c in required_flex_cols if c in flex_qty_df.columns]
+            
+            if len(flex_cols_available) >= 2:  # At least need ASIN and Cluster or Qty
+                # Rename columns to match master_df naming
+                flex_qty_df_renamed = flex_qty_df.copy()
+                if "ASIN" in flex_qty_df_renamed.columns:
+                    flex_qty_df_renamed["ASIN"] = flex_qty_df_renamed["ASIN"].astype(str)
+                if "Cluster" in flex_qty_df_renamed.columns:
+                    flex_qty_df_renamed["Ideal Cluster"] = flex_qty_df_renamed["Cluster"].astype(str)
+                
+                # Rename Qty to Flex Qty
+                if "Qty" in flex_qty_df_renamed.columns:
+                    flex_qty_df_renamed.rename(columns={"Qty": "Flex Qty"}, inplace=True)
+                
+                # Keep only necessary columns
+                flex_merge_cols = [c for c in ["ASIN", "Ideal Cluster", "Flex Qty"] if c in flex_qty_df_renamed.columns]
+                flex_qty_subset = flex_qty_df_renamed[flex_merge_cols].drop_duplicates(
+                    subset=["ASIN", "Ideal Cluster"] if "Ideal Cluster" in flex_merge_cols else ["ASIN"]
+                )
+                
+                master_df = pd.merge(
+                    master_df,
+                    flex_qty_subset,
+                    on=[c for c in ["ASIN", "Ideal Cluster"] if c in flex_merge_cols],
+                    how="left"
+                )
+            else:
+                print(f" Warning: Flex Qty file missing required columns. Found: {flex_cols_available}")
+                master_df["Flex Qty"] = ""
+        except Exception as e:
+            print(f" Error merging Flex Qty data: {e}")
+            master_df["Flex Qty"] = ""
+    else:
+        master_df["Flex Qty"] = ""
 
     # --- Merge Business Report Data ---
     print("Merging Business Report Data...")
     if not business_df.empty:
         business_df["(Child) ASIN"] = business_df["(Child) ASIN"].astype(str)
+        # Clean currency format in Ordered Product Sales before merging
+        if "Ordered Product Sales" in business_df.columns:
+            business_df["Ordered Product Sales"] = business_df["Ordered Product Sales"].apply(
+                lambda x: str(x).replace("₹", "").replace(",", "").strip() if isinstance(x, str) else x
+            )
         business_cols = [
             "(Child) ASIN",
             "Page Views - Total",
@@ -419,6 +526,8 @@ def generate_master_report(
         # master_df['ASIN'] == business_df['(Child) ASIN']
         # We keep '(Child) ASIN' in b_subset, but create 'ASIN' for joining
         b_subset["ASIN"] = b_subset["(Child) ASIN"]
+        # Ensure Ordered Product Sales is numeric before merging
+        b_subset["Ordered Product Sales"] = pd.to_numeric(b_subset["Ordered Product Sales"], errors="coerce").fillna(0)
         master_df = pd.merge(master_df, b_subset, on="ASIN", how="left")
     else:
         for col in [
@@ -501,12 +610,20 @@ def generate_master_report(
 
     # --- Fill NaNs ---
     print("\nData Cleanup & Calculations...")
+    
+    # Clean 'Ordered Product Sales' column to handle currency format (₹10,11,873.00 -> 1011873.00)
+    if "Ordered Product Sales" in master_df.columns:
+        master_df["Ordered Product Sales"] = master_df["Ordered Product Sales"].apply(
+            lambda x: str(x).replace("₹", "").replace(",", "").strip() if isinstance(x, str) else x
+        )
+    
     numeric_columns = [
         "DRR",
         "Sales Qty",
         "Stock Qty",
         "Stock Transfer Qty",
         "Receiving Qty",
+        "Flex Qty",
         "DFC Appointment Pending Qty",
         "DFC Upcoming Shipment Qty",
         "DFC Receiving + Intransit Qty",
@@ -523,6 +640,7 @@ def generate_master_report(
         "Units Ordered",
         "Ordered Product Sales",
         "Total Order Items",
+        "National Doc",
     ]
 
     for col in numeric_columns:
@@ -547,10 +665,8 @@ def generate_master_report(
     # --- Add Conversion Pct ---
     print("Calculating Conversion Pct...")
 
-    # Calculate Receiving Qty and Stock Transfer Qty (handle missing)
-    master_df["Receiving Qty"] = master_df.get("DFC Receiving Qty", 0) + master_df.get(
-        "IXD Receiving Qty", 0
-    )
+    # Calculate Receiving Qty (DFC only, not IXD as per requirements)
+    master_df["Receiving Qty"] = master_df.get("DFC Receiving Qty", 0)
 
     # Stock Transfer Qty comes strictly from Stock Report ('In Transit Between Warehouses')
     master_df["Stock Transfer Qty"] = master_df.get(
@@ -613,6 +729,27 @@ def generate_master_report(
         .replace([np.inf, -np.inf], 999)
         .fillna(0)
     )
+
+    # --- National Doc (National Days of Cover) ---
+    # Aggregate Stock Qty at ASIN level (across all clusters), use first DRR value per ASIN (not sum)
+    print("Calculating National Doc...")
+    national_agg = master_df.groupby("ASIN", as_index=False).agg(
+        National_Stock_Qty=("Stock Qty", "sum"),
+        National_DRR=("DRR", "first"),  # Use first DRR value per ASIN, not sum
+    )
+    national_agg["National Doc"] = (
+        (national_agg["National_Stock_Qty"] / national_agg["National_DRR"])
+        .replace([np.inf, -np.inf], 0)
+        .fillna(0)
+        .round(2)
+    )
+    master_df = pd.merge(
+        master_df,
+        national_agg[["ASIN", "National Doc"]],
+        on="ASIN",
+        how="left",
+    )
+    master_df["National Doc"] = master_df["National Doc"].fillna(0)
 
     # Stock Out Date Calculation
     days_stock_recv = (
@@ -681,8 +818,11 @@ def generate_master_report(
         "PRODUCT SIZE",
         "Portfolio",
         "Category",
+        "Brand",
         "Zone",
         "LIS_CLUSTER",
+        "Flex Qty",
+        "National Doc",
         "DRR",
         "Sales Qty",
         "Stock Qty",

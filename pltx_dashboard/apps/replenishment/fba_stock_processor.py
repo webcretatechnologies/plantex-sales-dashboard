@@ -26,21 +26,21 @@ def process_fba_stock(fba_file, mapping_file, output_file):
         print(f"Error reading mapping file: {e}")
         return
 
-    # 1. Strip column names to avoid whitespace issues
-    fba_df.columns = fba_df.columns.str.strip()
-    mapping_df.columns = mapping_df.columns.str.strip()
+    # 1. Strip and uppercase column names to avoid whitespace and case issues
+    fba_df.columns = fba_df.columns.astype(str).str.strip().str.upper()
+    mapping_df.columns = mapping_df.columns.astype(str).str.strip().str.upper()
 
     # 2. Filter Disposition to only take "sellable" (case-insensitive)
-    if "Disposition" in fba_df.columns:
+    if "DISPOSITION" in fba_df.columns:
         fba_df = fba_df[
-            fba_df["Disposition"].astype(str).str.strip().str.lower() == "sellable"
+            fba_df["DISPOSITION"].astype(str).str.strip().str.lower() == "sellable"
         ]
     else:
-        print("Warning: 'Disposition' column not found in FBA stock data.")
+        print("Warning: 'DISPOSITION' column not found in FBA stock data.")
         return
 
     # 3. Check for required FBA columns
-    required_fba_cols = ["ASIN", "Location", "Disposition", "Ending Warehouse Balance"]
+    required_fba_cols = ["ASIN", "LOCATION", "DISPOSITION", "ENDING WAREHOUSE BALANCE"]
     for col in required_fba_cols:
         if col not in fba_df.columns:
             print(f"Error: Missing required column '{col}' in FBA stock file.")
@@ -48,7 +48,7 @@ def process_fba_stock(fba_file, mapping_file, output_file):
             return
 
     # 4. Check for required Mapping columns
-    required_mapping_cols = ["FC CODE", "Cluster Name"]
+    required_mapping_cols = ["FC CODE", "CLUSTER NAME"]
     for col in required_mapping_cols:
         if col not in mapping_df.columns:
             print(f"Error: Missing required column '{col}' in Mapping file.")
@@ -58,8 +58,8 @@ def process_fba_stock(fba_file, mapping_file, output_file):
     # Optional columns to keep
     keep_fba_cols = required_fba_cols.copy()
     # Amazon stock reports might use varying capitalization or spaces, check robustly if desired or just explicitly
-    if "In Transit Between Warehouses" in fba_df.columns:
-        keep_fba_cols.append("In Transit Between Warehouses")
+    if "IN TRANSIT BETWEEN WAREHOUSES" in fba_df.columns:
+        keep_fba_cols.append("IN TRANSIT BETWEEN WAREHOUSES")
 
     # Keep only required columns from both to optimize merge and memory
     fba_subset = fba_df[keep_fba_cols].copy()
@@ -69,13 +69,22 @@ def process_fba_stock(fba_file, mapping_file, output_file):
     # Match Location (from FBA file) with FC Code (from mapping file)
     print("Mapping Data...")
     merged_df = pd.merge(
-        fba_subset, mapping_subset, left_on="Location", right_on="FC CODE", how="left"
+        fba_subset, mapping_subset, left_on="LOCATION", right_on="FC CODE", how="left"
     )
 
     # 6. Final Output Format
     # Columns needed: ASIN, Cluster Name, Disposition, Ending warehouse balance
+    # We will rename them back to the expected output format for compatibility
+    rename_map = {
+        "CLUSTER NAME": "Cluster Name",
+        "DISPOSITION": "Disposition",
+        "ENDING WAREHOUSE BALANCE": "Ending Warehouse Balance",
+        "IN TRANSIT BETWEEN WAREHOUSES": "In Transit Between Warehouses"
+    }
+    merged_df.rename(columns=rename_map, inplace=True)
+    
     final_cols = ["ASIN", "Cluster Name", "Disposition", "Ending Warehouse Balance"]
-    if "In Transit Between Warehouses" in fba_df.columns:
+    if "In Transit Between Warehouses" in merged_df.columns:
         final_cols.append("In Transit Between Warehouses")
     final_df = merged_df[final_cols]
 
