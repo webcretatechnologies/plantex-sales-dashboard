@@ -224,7 +224,7 @@ def generate_master_report(
         cluster_set.update(fc_mapping_df["CLUSTER NAME"].dropna().astype(str).unique())
 
     asin_list = sorted(list(asin_set))
-    cluster_list = sorted([c for c in cluster_set if str(c).strip().lower() not in ('nan', 'none', '')])
+    cluster_list = sorted([c for c in cluster_set if str(c).strip().lower() not in ('nan', 'none', '') and "_SF" not in str(c).upper()])
 
     print(
         f" Found {len(asin_list)} unique ASINs and {len(cluster_list)} unique Clusters."
@@ -731,11 +731,11 @@ def generate_master_report(
     )
 
     # --- National Doc (National Days of Cover) ---
-    # Aggregate Stock Qty at ASIN level (across all clusters), use first DRR value per ASIN (not sum)
+    # Aggregate Stock Qty and DRR at ASIN level (across all clusters)
     print("Calculating National Doc...")
     national_agg = master_df.groupby("ASIN", as_index=False).agg(
         National_Stock_Qty=("Stock Qty", "sum"),
-        National_DRR=("DRR", "first"),  # Use first DRR value per ASIN, not sum
+        National_DRR=("DRR", "sum"),
     )
     national_agg["National Doc"] = (
         (national_agg["National_Stock_Qty"] / national_agg["National_DRR"])

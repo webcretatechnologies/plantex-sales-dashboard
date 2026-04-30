@@ -8,7 +8,7 @@ def load_data(filepath):
     ext = ext.lower()
 
     if ext == ".csv":
-        return pd.read_csv(filepath)
+        return pd.read_csv(filepath, low_memory=False)
     elif ext in [".xls", ".xlsx"]:
         return pd.read_excel(filepath)
     else:
