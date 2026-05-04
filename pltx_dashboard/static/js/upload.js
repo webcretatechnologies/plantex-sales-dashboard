@@ -99,31 +99,47 @@ function updateProcessButton() {
 });
 
 // ---------------------------------------------------------------------------
-// Poll a Celery task until it resolves
+// Poll a Celery task until it resolves (max 6 minutes, with backoff)
 // ---------------------------------------------------------------------------
 function pollTaskStatus(taskId) {
     return new Promise((resolve, reject) => {
-        const interval = setInterval(async () => {
+        let attempts = 0;
+        const MAX_ATTEMPTS = 240; // 240 × 1.5s = 6 minutes hard limit
+        let delay = 1500;
+
+        const doCheck = async () => {
+            if (attempts >= MAX_ATTEMPTS) {
+                reject(new Error('Processing timed out after 6 minutes. The task may still be running in the background — please check back later.'));
+                return;
+            }
+            attempts++;
             try {
                 const resp = await fetch(`/api/upload/status/${taskId}/`, {
                     credentials: 'same-origin',
                 });
+
+                if (!resp.ok) {
+                    reject(new Error(`Server error: HTTP ${resp.status}`));
+                    return;
+                }
+
                 const data = await resp.json();
 
-                if (data.status === 'success' || data.status === 'error') {
-                    clearInterval(interval);
-                    if (data.status === 'error') {
-                        reject(new Error(data.message || 'Processing failed'));
-                    } else {
-                        resolve(data);
-                    }
+                if (data.status === 'success') {
+                    resolve(data);
+                } else if (data.status === 'error') {
+                    reject(new Error(data.message || 'Processing failed'));
+                } else {
+                    // Still processing — schedule next check with slight back-off (max 4s)
+                    delay = Math.min(delay * 1.05, 4000);
+                    setTimeout(doCheck, delay);
                 }
-                // else still processing — keep polling
             } catch (err) {
-                clearInterval(interval);
                 reject(err);
             }
-        }, 1500); // poll every 1.5 seconds
+        };
+
+        setTimeout(doCheck, delay);
     });
 }
 

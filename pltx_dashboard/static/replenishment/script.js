@@ -110,16 +110,27 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Removed saveInputs/loadInputs as browser security prevents restoring file inputs.
     
-    // Polling helper
+    // Polling helper (max 10 minutes, with gradual back-off)
     async function pollStatus(taskId) {
         return new Promise((resolve, reject) => {
+            let attempts = 0;
+            const MAX_ATTEMPTS = 240; // 240 × 2.5s ≈ 10 minutes hard limit
+            let delay = 2500;
+
             const check = async () => {
+                if (attempts >= MAX_ATTEMPTS) {
+                    return reject(new Error('Task timed out after 10 minutes. It may still be processing — please check back later.'));
+                }
+                attempts++;
                 try {
                     const res = await fetch(`/api/replenishment/status/${taskId}/`);
                     if (res.status === 404) {
                         return reject(new Error('Task expired or failed to start.'));
                     }
-                    
+                    if (!res.ok) {
+                        return reject(new Error(`Server error: HTTP ${res.status}`));
+                    }
+
                     const contentType = res.headers.get("content-type");
                     if (contentType && contentType.indexOf("application/json") !== -1) {
                         const data = await res.json();
@@ -128,7 +139,9 @@ document.addEventListener('DOMContentLoaded', () => {
                         } else if (data.status === 'error') {
                             reject(new Error(data.message || 'Error occurred during processing.'));
                         } else {
-                            setTimeout(check, 2500);
+                            // Still processing — back off gradually (cap at 5s)
+                            delay = Math.min(delay * 1.05, 5000);
+                            setTimeout(check, delay);
                         }
                     } else {
                         const text = await res.text();
@@ -139,7 +152,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     reject(err);
                 }
             };
-            setTimeout(check, 2500);
+            setTimeout(check, delay);
         });
     }
 

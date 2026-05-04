@@ -174,7 +174,12 @@ def check_task_status(request, task_id):
     task = AsyncResult(task_id)
 
     if task.state == "PENDING":
-        return JsonResponse({"status": "processing"})
+        return JsonResponse({"status": "processing", "state": "queued"})
+
+    elif task.state == "STARTED":
+        # Task is actively running in a Celery worker
+        return JsonResponse({"status": "processing", "state": "running"})
+
     elif task.state == "SUCCESS":
         task_data = task.result
         if not task_data:
