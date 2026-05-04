@@ -41,82 +41,79 @@ def validate_sales(filepath, master_data):
     today = datetime.now().date()
     cutoff_date = today - timedelta(days=120)
 
-    for idx, row in df.iterrows():
-        row_num = idx + 2  # 1-indexed, +1 for header
-
-        # 1. FC validation
-        fc = row.get("FC CODE", None)
-        if pd.notna(fc) and fc not in fc_master:
+    # 1. FC validation
+    if "FC CODE" in df.columns:
+        invalid_fcs = df[df["FC CODE"].notna() & ~df["FC CODE"].isin(fc_master)]
+        for idx, row in invalid_fcs.iterrows():
             errors.append(
                 {
-                    "Row": row_num,
+                    "Row": idx + 2,
                     "Column": "FC CODE",
-                    "Value": str(fc),
+                    "Value": str(row["FC CODE"]),
                     "Message": "FC CODE not found in master",
-                    "ASIN": row.get("ASIN", ""),
+                    "ASIN": str(row.get("ASIN", "")),
                 }
             )
 
-        # 2. Pincode validation
-        pincode = row.get("Shipment To Postal Code", None)
-        if pd.notna(pincode):
-            # Attempt to convert to float/int to match the numeric format
+    # 2. Pincode validation
+    if "Shipment To Postal Code" in df.columns:
+        pincodes = df["Shipment To Postal Code"]
+        mask_notna = pincodes.notna()
+        
+        def check_pincode(p):
             try:
-                pincode_val = float(pincode)
-                if pincode_val not in pincode_master:
-                    errors.append(
-                        {
-                            "Row": row_num,
-                            "Column": "Shipment To Postal Code",
-                            "Value": str(pincode),
-                            "Message": "Pincode not found in master",
-                            "ASIN": row.get("ASIN", ""),
-                        }
-                    )
+                return float(p) not in pincode_master
             except ValueError:
-                errors.append(
-                    {
-                        "Row": row_num,
-                        "Column": "Shipment To Postal Code",
-                        "Value": str(pincode),
-                        "Message": "Invalid Pincode format",
-                        "ASIN": row.get("ASIN", ""),
-                    }
-                )
-
-        # 3. ASIN validation
-        asin = row.get("ASIN", None)
-        if pd.notna(asin) and asin not in asin_master:
+                return True
+                
+        invalid_mask = mask_notna & pincodes.apply(check_pincode)
+        for idx, row in df[invalid_mask].iterrows():
+            p = row["Shipment To Postal Code"]
+            try:
+                float(p)
+                msg = "Pincode not found in master"
+            except ValueError:
+                msg = "Invalid Pincode format"
             errors.append(
                 {
-                    "Row": row_num,
-                    "Column": "ASIN",
-                    "Value": str(asin),
-                    "Message": "ASIN not found in master",
-                    "ASIN": str(asin),
+                    "Row": idx + 2,
+                    "Column": "Shipment To Postal Code",
+                    "Value": str(p),
+                    "Message": msg,
+                    "ASIN": str(row.get("ASIN", "")),
                 }
             )
 
-        # 4. Sales Report days: dates > Today+120 days
-        date_str = row.get("Customer Shipment Date", None)
-        if pd.notna(date_str):
-            try:
-                # Expected format: "2026-03-14T23:59:48+05:30" or "dd-mm-yyyy"
-                parsed_date = pd.to_datetime(
-                    date_str, dayfirst=True, format="mixed"
-                ).date()
-                if parsed_date < cutoff_date:
-                    errors.append(
-                        {
-                            "Row": row_num,
-                            "Column": "Customer Shipment Date",
-                            "Value": str(date_str),
-                            "Message": f"Date is before Today - 120 days ({cutoff_date})",
-                            "ASIN": row.get("ASIN", ""),
-                        }
-                    )
-            except Exception:
-                pass  # Ignore invalid date format for this specific rule if it doesn't parse
+    # 3. ASIN validation
+    if "ASIN" in df.columns:
+        invalid_asins = df[df["ASIN"].notna() & ~df["ASIN"].isin(asin_master)]
+        for idx, row in invalid_asins.iterrows():
+            errors.append(
+                {
+                    "Row": idx + 2,
+                    "Column": "ASIN",
+                    "Value": str(row["ASIN"]),
+                    "Message": "ASIN not found in master",
+                    "ASIN": str(row["ASIN"]),
+                }
+            )
+
+    # 4. Sales Report days: dates > Today+120 days
+    if "Customer Shipment Date" in df.columns:
+        # Vectorized datetime parsing
+        dates = pd.to_datetime(df["Customer Shipment Date"], dayfirst=True, format="mixed", errors="coerce")
+        # Find valid parsed dates that are before the cutoff
+        invalid_mask = dates.notna() & (dates.dt.date < cutoff_date)
+        for idx, row in df[invalid_mask].iterrows():
+            errors.append(
+                {
+                    "Row": idx + 2,
+                    "Column": "Customer Shipment Date",
+                    "Value": str(row["Customer Shipment Date"]),
+                    "Message": f"Date is before Today - 120 days ({cutoff_date})",
+                    "ASIN": str(row.get("ASIN", "")),
+                }
+            )
 
     return errors
 
@@ -150,71 +147,67 @@ def validate_shipment(filepath, master_data):
     today = datetime.now().date()
     cutoff_date = today - timedelta(days=15)
 
-    for idx, row in df.iterrows():
-        row_num = idx + 2
-
-        # 1. ASIN validation
-        asin = row.get("ASIN", None)
-        if pd.notna(asin) and asin not in asin_master:
+    # 1. ASIN validation
+    if "ASIN" in df.columns:
+        invalid_asins = df[df["ASIN"].notna() & ~df["ASIN"].isin(asin_master)]
+        for idx, row in invalid_asins.iterrows():
             errors.append(
                 {
-                    "Row": row_num,
+                    "Row": idx + 2,
                     "Column": "ASIN",
-                    "Value": str(asin),
+                    "Value": str(row["ASIN"]),
                     "Message": "ASIN not found in master",
-                    "Shipment_id": row.get("ID", ""),
-                    "ASIN": str(asin),
+                    "Shipment_id": str(row.get("ID", "")),
+                    "ASIN": str(row["ASIN"]),
                 }
             )
 
-        # 2. FC validation
-        fc = row.get("FC CODE", row.get("FC", None))
-        if pd.notna(fc) and fc not in fc_master:
+    # 2. FC validation
+    fc_col = "FC CODE" if "FC CODE" in df.columns else ("FC" if "FC" in df.columns else None)
+    if fc_col:
+        invalid_fcs = df[df[fc_col].notna() & ~df[fc_col].isin(fc_master)]
+        for idx, row in invalid_fcs.iterrows():
             errors.append(
                 {
-                    "Row": row_num,
+                    "Row": idx + 2,
                     "Column": "FC CODE/FC",
-                    "Value": str(fc),
+                    "Value": str(row[fc_col]),
                     "Message": "FC CODE/FC not found in master",
-                    "Shipment_id": row.get("ID", ""),
-                    "ASIN": row.get("ASIN", ""),
+                    "Shipment_id": str(row.get("ID", "")),
+                    "ASIN": str(row.get("ASIN", "")),
                 }
             )
 
-        # 3. Cluster validation
-        cluster = row.get("CLUSTER", None)
-        if pd.notna(cluster) and cluster not in cluster_master:
+    # 3. Cluster validation
+    if "CLUSTER" in df.columns:
+        invalid_clusters = df[df["CLUSTER"].notna() & ~df["CLUSTER"].isin(cluster_master)]
+        for idx, row in invalid_clusters.iterrows():
             errors.append(
                 {
-                    "Row": row_num,
+                    "Row": idx + 2,
                     "Column": "CLUSTER",
-                    "Value": str(cluster),
+                    "Value": str(row["CLUSTER"]),
                     "Message": "Cluster not found in master",
-                    "Shipment_id": row.get("ID", ""),
-                    "ASIN": row.get("ASIN", ""),
+                    "Shipment_id": str(row.get("ID", "")),
+                    "ASIN": str(row.get("ASIN", "")),
                 }
             )
 
-        # 4. Loading Date Flag
-        date_str = row.get("LOADING DATE", None)
-        if pd.notna(date_str):
-            try:
-                parsed_date = pd.to_datetime(
-                    date_str, dayfirst=True, format="mixed"
-                ).date()
-                if parsed_date < cutoff_date:
-                    errors.append(
-                        {
-                            "Row": row_num,
-                            "Column": "LOADING DATE",
-                            "Value": str(parsed_date),
-                            "Message": f"Loading Date is before Today-15 days ({cutoff_date}), flagged as too old",
-                            "Shipment_id": row.get("ID", ""),
-                            "ASIN": row.get("ASIN", ""),
-                        }
-                    )
-            except Exception:
-                pass
+    # 4. Loading Date Flag
+    if "LOADING DATE" in df.columns:
+        dates = pd.to_datetime(df["LOADING DATE"], dayfirst=True, format="mixed", errors="coerce")
+        invalid_mask = dates.notna() & (dates.dt.date < cutoff_date)
+        for idx, row in df[invalid_mask].iterrows():
+            errors.append(
+                {
+                    "Row": idx + 2,
+                    "Column": "LOADING DATE",
+                    "Value": str(dates[idx].date()),
+                    "Message": f"Loading Date is before Today-15 days ({cutoff_date}), flagged as too old",
+                    "Shipment_id": str(row.get("ID", "")),
+                    "ASIN": str(row.get("ASIN", "")),
+                }
+            )
 
     return errors
 
@@ -241,55 +234,47 @@ def validate_stock(filepath, master_data):
     min_date = today - timedelta(days=5)
     max_date = today
 
-    for idx, row in df.iterrows():
-        row_num = idx + 2
-
-        # 1. ASIN validation
-        asin = row.get("ASIN", None)
-        if pd.notna(asin) and asin not in asin_master:
+    # 1. ASIN validation
+    if "ASIN" in df.columns:
+        invalid_asins = df[df["ASIN"].notna() & ~df["ASIN"].isin(asin_master)]
+        for idx, row in invalid_asins.iterrows():
             errors.append(
                 {
-                    "Row": row_num,
+                    "Row": idx + 2,
                     "Column": "ASIN",
-                    "Value": str(asin),
+                    "Value": str(row["ASIN"]),
                     "Message": "ASIN not found in master",
                 }
             )
 
-        # 2. FC (Location) validation - Support both 'FC CODE' and 'Location'
-        fc = row.get("FC CODE", None)
-        if pd.isna(fc):
-            fc = row.get("Location", None)
-
-        if pd.notna(fc) and fc not in fc_master:
+    # 2. FC (Location) validation - Support both 'FC CODE' and 'Location'
+    fc_col = "FC CODE" if "FC CODE" in df.columns else ("Location" if "Location" in df.columns else None)
+    if fc_col:
+        invalid_fcs = df[df[fc_col].notna() & ~df[fc_col].isin(fc_master)]
+        for idx, row in invalid_fcs.iterrows():
             errors.append(
                 {
-                    "Row": row_num,
+                    "Row": idx + 2,
                     "Column": "FC CODE/Location",
-                    "Value": str(fc),
+                    "Value": str(row[fc_col]),
                     "Message": "FC CODE/Location not found in master",
                 }
             )
 
-        # 3. Date Range validation - User specified MM-DD-YYYY format
-        date_str = row.get("Date", None)
-        if pd.notna(date_str):
-            try:
-                # Use dayfirst=False to prefer MM-DD-YYYY format
-                parsed_date = pd.to_datetime(
-                    date_str, dayfirst=False, format="mixed"
-                ).date()
-                if not (min_date <= parsed_date <= max_date):
-                    errors.append(
-                        {
-                            "Row": row_num,
-                            "Column": "Date",
-                            "Value": str(parsed_date),
-                            "Message": f"Date not in range Today-5 to Today ({min_date} to {max_date})",
-                        }
-                    )
-            except Exception:
-                pass
+    # 3. Date Range validation - User specified MM-DD-YYYY format
+    if "Date" in df.columns:
+        dates = pd.to_datetime(df["Date"], dayfirst=False, format="mixed", errors="coerce")
+        # Condition: Date is parsed correctly but NOT in [min_date, max_date]
+        invalid_mask = dates.notna() & ~((dates.dt.date >= min_date) & (dates.dt.date <= max_date))
+        for idx, row in df[invalid_mask].iterrows():
+            errors.append(
+                {
+                    "Row": idx + 2,
+                    "Column": "Date",
+                    "Value": str(dates[idx].date()),
+                    "Message": f"Date not in range Today-5 to Today ({min_date} to {max_date})",
+                }
+            )
 
     return errors
 
@@ -311,17 +296,14 @@ def validate_lis(filepath, master_data):
 
     asin_master = set(master_data["asin_list"])
 
-    for idx, row in df.iterrows():
-        row_num = idx + 2
-
-        # 1. ASIN validation
-        asin = row.get("ASIN", None)
-        if pd.notna(asin) and str(asin).strip() not in asin_master:
+    if "ASIN" in df.columns:
+        invalid_asins = df[df["ASIN"].notna() & ~df["ASIN"].astype(str).str.strip().isin(asin_master)]
+        for idx, row in invalid_asins.iterrows():
             errors.append(
                 {
-                    "Row": row_num,
+                    "Row": idx + 2,
                     "Column": "ASIN",
-                    "Value": str(asin),
+                    "Value": str(row["ASIN"]),
                     "Message": "ASIN from LIS Report not found in Assortment Master file",
                 }
             )

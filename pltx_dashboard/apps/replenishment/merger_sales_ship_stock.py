@@ -1,6 +1,5 @@
 import pandas as pd
 import os
-import itertools
 
 
 def load_data(file_path):
@@ -153,7 +152,7 @@ def generate_master_report(
     except Exception as e:
         print(f" Error generating Ideal Cluster mapping: {e}")
         ideal_mapping = pd.DataFrame(
-            columns=["ASIN", "Cluster Name", "Ideal Cluster name"]
+            columns=["ASIN", "Ideal Cluster", "Ideal Cluster name"]
         )
 
     # --- Load Input Sheet Parameters ---
@@ -189,10 +188,10 @@ def generate_master_report(
         stock_report_date = pd.Timestamp.now()
 
     print("\nExtracting ASINs and Clusters...")
-    # Get all unique ASINs and Clusters across all three reports
     asin_set = set()
     cluster_set = set()
 
+    # Collect ASINs and clusters from actual report data
     for df, cluster_col in [
         (sales_df, "Cluster Name"),
         (stock_df, "Cluster Name"),
@@ -213,27 +212,37 @@ def generate_master_report(
     if not product_details_df.empty and "ASIN" in product_details_df.columns:
         asin_set.update(product_details_df["ASIN"].dropna().astype(str).unique())
 
-    # Add clusters from mapping files to ensure all possible clusters are covered
-    if "FULFILMENT CLUSTER" in pin_code_df.columns:
-        cluster_set.update(
-            pin_code_df["FULFILMENT CLUSTER"].dropna().astype(str).unique()
-        )
-    if "IDEAL CLUSTER" in pin_code_df.columns:
-        cluster_set.update(pin_code_df["IDEAL CLUSTER"].dropna().astype(str).unique())
-    if "CLUSTER NAME" in fc_mapping_df.columns:
-        cluster_set.update(fc_mapping_df["CLUSTER NAME"].dropna().astype(str).unique())
+    # Also include clusters from mapping files so every ASIN shows all clusters
+    # (even if no sales/stock/shipment data exists for that ASIN+cluster combination)
+    try:
+        if 'pin_code_df' in locals() and not pin_code_df.empty:
+            if "FULFILMENT CLUSTER" in pin_code_df.columns:
+                cluster_set.update(pin_code_df["FULFILMENT CLUSTER"].dropna().astype(str).unique())
+            if "IDEAL CLUSTER" in pin_code_df.columns:
+                cluster_set.update(pin_code_df["IDEAL CLUSTER"].dropna().astype(str).unique())
+        if 'fc_mapping_df' in locals() and not fc_mapping_df.empty:
+            if "CLUSTER NAME" in fc_mapping_df.columns:
+                cluster_set.update(fc_mapping_df["CLUSTER NAME"].dropna().astype(str).unique())
+    except Exception as e:
+        print(f" Warning: could not expand cluster list from mapping files: {e}")
 
     asin_list = sorted(list(asin_set))
-    cluster_list = sorted([c for c in cluster_set if str(c).strip().lower() not in ('nan', 'none', '') and "_SF" not in str(c).upper()])
+    cluster_list = sorted([
+        c for c in cluster_set
+        if str(c).strip().lower() not in ('nan', 'none', '')
+        and "_SF" not in str(c).upper()
+    ])
 
     print(
         f" Found {len(asin_list)} unique ASINs and {len(cluster_list)} unique Clusters."
     )
     print(" Generating Master Cartesian Product...")
 
-    # --- Create Cartesian Product ---
-    combinations = list(itertools.product(asin_list, cluster_list))
-    master_df = pd.DataFrame(combinations, columns=["ASIN", "Ideal Cluster"])
+    # --- Create Cartesian Product (fast Pandas-native approach) ---
+    # pd.MultiIndex.from_product is significantly faster than itertools.product
+    # + list() because it builds the index natively without materialising a Python list.
+    idx = pd.MultiIndex.from_product([asin_list, cluster_list], names=["ASIN", "Ideal Cluster"])
+    master_df = idx.to_frame(index=False)
 
     # --- Merge Ideal Cluster name ---
     print("\nMerging Ideal Cluster Mapping...")
@@ -245,14 +254,16 @@ def generate_master_report(
     # --- Merge Sales Data ---
     print("\nMerging Sales Data...")
     if not sales_df.empty:
-        # Ensure correct data types before merge
+        # Safely select columns that actually exist to avoid KeyError
         sales_cols_to_keep = ["ASIN", "Cluster Name", "DRR", "Sales Qty"]
-        # Don't include Demand Zone - we'll use Ideal Cluster based mapping instead
-
-        sales_subset = sales_df[sales_cols_to_keep].copy()
-        sales_subset["ASIN"] = sales_subset["ASIN"].astype(str)
-        sales_subset.rename(columns={"Cluster Name": "Ideal Cluster"}, inplace=True)
-        sales_subset["Ideal Cluster"] = sales_subset["Ideal Cluster"].astype(str)
+        sales_existing_cols = [c for c in sales_cols_to_keep if c in sales_df.columns]
+        
+        sales_subset = sales_df[sales_existing_cols].copy()
+        if "ASIN" in sales_subset.columns:
+            sales_subset["ASIN"] = sales_subset["ASIN"].astype(str)
+        if "Cluster Name" in sales_subset.columns:
+            sales_subset.rename(columns={"Cluster Name": "Ideal Cluster"}, inplace=True)
+            sales_subset["Ideal Cluster"] = sales_subset["Ideal Cluster"].astype(str)
 
         master_df = pd.merge(
             master_df, sales_subset, on=["ASIN", "Ideal Cluster"], how="left"
@@ -303,15 +314,20 @@ def generate_master_report(
         stock_df.rename(columns={"Cluster Name": "Ideal Cluster"}, inplace=True)
         stock_df["Ideal Cluster"] = stock_df["Ideal Cluster"].astype(str)
         # Group by in case multiple FCs belong to the same cluster mapping
-        stock_cols = ["Ending Warehouse Balance"]
+        stock_cols = []
+        if "Ending Warehouse Balance" in stock_df.columns:
+            stock_cols.append("Ending Warehouse Balance")
         if "In Transit Between Warehouses" in stock_df.columns:
             stock_cols.append("In Transit Between Warehouses")
-        stock_agg = stock_df.groupby(["ASIN", "Ideal Cluster"], as_index=False)[
-            stock_cols
-        ].sum()
-        stock_agg.rename(
-            columns={"Ending Warehouse Balance": "Stock Qty"}, inplace=True
-        )
+            
+        if stock_cols:
+            stock_agg = stock_df.groupby(["ASIN", "Ideal Cluster"], as_index=False)[
+                stock_cols
+            ].sum()
+            if "Ending Warehouse Balance" in stock_agg.columns:
+                stock_agg.rename(
+                    columns={"Ending Warehouse Balance": "Stock Qty"}, inplace=True
+                )
         if "In Transit Between Warehouses" in stock_agg.columns:
             stock_agg.rename(
                 columns={"In Transit Between Warehouses": "Stock Transfer Qty"},
@@ -331,8 +347,12 @@ def generate_master_report(
         ship_df["Ideal Cluster"] = ship_df["Ideal Cluster"].astype(str)
 
         # Split into DFC and IXD
-        dfc_df = ship_df[ship_df["FC Replenishment Type"] == "DFC"].copy()
-        ixd_df = ship_df[ship_df["FC Replenishment Type"] == "IXD"].copy()
+        if "FC Replenishment Type" in ship_df.columns:
+            dfc_df = ship_df[ship_df["FC Replenishment Type"] == "DFC"].copy()
+            ixd_df = ship_df[ship_df["FC Replenishment Type"] == "IXD"].copy()
+        else:
+            dfc_df = ship_df.copy()
+            ixd_df = pd.DataFrame(columns=ship_df.columns)
 
         # Rename DFC columns
         dfc_df.rename(
@@ -527,7 +547,8 @@ def generate_master_report(
         # We keep '(Child) ASIN' in b_subset, but create 'ASIN' for joining
         b_subset["ASIN"] = b_subset["(Child) ASIN"]
         # Ensure Ordered Product Sales is numeric before merging
-        b_subset["Ordered Product Sales"] = pd.to_numeric(b_subset["Ordered Product Sales"], errors="coerce").fillna(0)
+        if "Ordered Product Sales" in b_subset.columns:
+            b_subset["Ordered Product Sales"] = pd.to_numeric(b_subset["Ordered Product Sales"], errors="coerce").fillna(0)
         master_df = pd.merge(master_df, b_subset, on="ASIN", how="left")
     else:
         for col in [
@@ -590,15 +611,26 @@ def generate_master_report(
             inplace=True,
         )
 
-        db_agg = db_subset.groupby(["ASIN", "LIS_CLUSTER"], as_index=False)[
-            ["LIS_LOCAL_QTY", "LIS_TOTAL_QTY"]
-        ].sum()
+        db_group_cols = ["ASIN"]
+        if "LIS_CLUSTER" in db_subset.columns:
+            db_group_cols.append("LIS_CLUSTER")
+            
+        db_agg_cols = [c for c in ["LIS_LOCAL_QTY", "LIS_TOTAL_QTY"] if c in db_subset.columns]
+        
+        if len(db_group_cols) > 0 and len(db_agg_cols) > 0:
+            db_agg = db_subset.groupby(db_group_cols, as_index=False)[db_agg_cols].sum()
+        else:
+            db_agg = db_subset.copy()
 
         # Merge database data onto master_df using ASIN and LIS_CLUSTER
         # Ensure data types are consistent for merge
-        db_agg["LIS_CLUSTER"] = db_agg["LIS_CLUSTER"].astype(str)
-        master_df["LIS_CLUSTER"] = master_df["LIS_CLUSTER"].astype(str)
-        master_df = pd.merge(master_df, db_agg, on=["ASIN", "LIS_CLUSTER"], how="left")
+        merge_on_cols = ["ASIN"]
+        if "LIS_CLUSTER" in db_agg.columns and "LIS_CLUSTER" in master_df.columns:
+            db_agg["LIS_CLUSTER"] = db_agg["LIS_CLUSTER"].astype(str)
+            master_df["LIS_CLUSTER"] = master_df["LIS_CLUSTER"].astype(str)
+            merge_on_cols.append("LIS_CLUSTER")
+            
+        master_df = pd.merge(master_df, db_agg, on=merge_on_cols, how="left")
 
     else:
         master_df["LIS_LOCAL_QTY"] = 0
@@ -673,8 +705,17 @@ def generate_master_report(
         "Stock Transfer Qty", 0
     )  # if it already existed from stock_df merge
 
+    total_orders = master_df.get("Total Order Items", pd.Series([0]*len(master_df)))
+    page_views = master_df.get("Page Views - Total", pd.Series([0]*len(master_df)))
+    
+    # Handle scalar fallback from .get()
+    if isinstance(total_orders, (int, float)):
+        total_orders = pd.Series([total_orders]*len(master_df))
+    if isinstance(page_views, (int, float)):
+        page_views = pd.Series([page_views]*len(master_df))
+        
     master_df["Conversion Pct"] = (
-        (master_df["Total Order Items"] / master_df["Page Views - Total"]) * 100
+        (total_orders / page_views.replace(0, pd.NA)) * 100
     ).replace([float("inf"), -float("inf")], 0).fillna(0).round(2).astype(str) + "%"
 
     # --- Calculate P0, P1, P2 ---
@@ -771,37 +812,32 @@ def generate_master_report(
     )
 
     expected_out_date_dt = today + pd.to_timedelta(days_stock_recv, unit="D")
-    shipment_date_dt = pd.to_datetime(
-        master_df.get("DFC Next Arrival Date", ""), errors="coerce"
-    )
+    
+    # Handle DFC Next Arrival Date cleanly whether it's a column, missing, or scalar
+    arrival_col = master_df.get("DFC Next Arrival Date", pd.Series([pd.NaT]*len(master_df)))
+    if isinstance(arrival_col, str):
+        arrival_col = pd.Series([arrival_col]*len(master_df))
+    shipment_date_dt = pd.to_datetime(arrival_col, errors="coerce")
 
-    condition = shipment_date_dt.notna() & (expected_out_date_dt > shipment_date_dt)
+    # Use pd.notna instead of .notna() to handle both Series and scalar NaT
+    condition = pd.notna(shipment_date_dt) & (expected_out_date_dt > shipment_date_dt)
     final_days = np.where(condition, days_all, days_stock_recv)
 
-    def get_stock_out_date(days):
-        if pd.isna(days) or days >= 999:
-            return "Never"
-        return (today + pd.Timedelta(days=int(days))).strftime("%Y-%m-%d")
+    # --- Vectorized Stock Out Date ---
+    # Rows with DRR==0 or days>=999 → "Never", rest → date string
+    never_mask = pd.isna(pd.Series(final_days)) | (pd.Series(final_days) >= 999)
+    final_days_series = pd.Series(final_days).clip(upper=998)  # avoid huge timedelta
+    out_dates = (today + pd.to_timedelta(final_days_series.round().astype(int), unit="D")).dt.strftime("%Y-%m-%d")
+    master_df["Stock Out Date"] = out_dates.where(~never_mask, "Never")
 
-    master_df["Stock Out Date"] = pd.Series(final_days).apply(get_stock_out_date)
-
-    # Stock Cover Alert
-    def get_stock_alert(days):
-        if days < 30:
-            return "<30 Days"
-        if days < 45:
-            return "<45 Days"
-        if 45 <= days <= 60:
-            return "Healthy"
-        if days > 120:
-            return ">120 Days"
-        if days > 90:
-            return ">90 Days"
-        if days > 60:
-            return ">60 Days"
-        return ""
-
-    master_df["Stock cover alert"] = master_df["Days of Cover"].apply(get_stock_alert)
+    # --- Vectorized Stock Cover Alert ---
+    doc = master_df["Days of Cover"]
+    master_df["Stock cover alert"] = pd.cut(
+        doc,
+        bins=[-float("inf"), 30, 45, 60, 90, 120, float("inf")],
+        labels=["<30 Days", "<45 Days", "Healthy", ">60 Days", ">90 Days", ">120 Days"],
+        right=False,
+    ).astype(str).replace("nan", "")
 
     # --- Finalize Dataframe Layout ---
     final_columns = [

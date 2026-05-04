@@ -348,38 +348,40 @@ def generate_dashboard_data(user):
             df_merged[col] = df_merged[col].fillna(fill_val)
 
     records = []
-    for row in df_merged.to_dict("records"):
-        spend_sp = float(row.get("spend_sp", 0))
-        spend_sb = float(row.get("spend_sb", 0))
-        spend_sd = float(row.get("spend_sd", 0))
+    batch_size = 10_000
+    
+    for row in df_merged.itertuples(index=False):
+        spend_sp = float(getattr(row, "spend_sp", 0))
+        spend_sb = float(getattr(row, "spend_sb", 0))
+        spend_sd = float(getattr(row, "spend_sd", 0))
         total_spend = spend_sp + spend_sb + spend_sd
 
         records.append(
             ProcessedDashboardData(
                 user=user,
-                date=row["date"],
-                asin=row["asin"],
-                portfolio=str(row.get("portfolio", "")) or "",
-                category=str(row.get("category", "")) or "",
-                subcategory=str(row.get("subcategory", "")) or "",
-                price=float(row.get("price", 0)),
-                pageviews=clean_number(row.get("pageviews", 0)),
-                units=clean_number(row.get("units", 0)),
-                orders=clean_number(row.get("orders", 0)),
-                revenue=float(row.get("revenue", 0)),
+                date=getattr(row, "date"),
+                asin=getattr(row, "asin"),
+                portfolio=str(getattr(row, "portfolio", "")) or "",
+                category=str(getattr(row, "category", "")) or "",
+                subcategory=str(getattr(row, "subcategory", "")) or "",
+                price=float(getattr(row, "price", 0)),
+                pageviews=clean_number(str(getattr(row, "pageviews", 0))),
+                units=clean_number(str(getattr(row, "units", 0))),
+                orders=clean_number(str(getattr(row, "orders", 0))),
+                revenue=float(getattr(row, "revenue", 0)),
                 spend_sp=spend_sp,
                 spend_sb=spend_sb,
                 spend_sd=spend_sd,
                 total_spend=total_spend,
             )
         )
-
-    batch_size = 10_000
-    for i in range(0, len(records), batch_size):
-        ProcessedDashboardData.objects.bulk_create(
-            records[i : i + batch_size],
-            ignore_conflicts=True
-        )
+        
+        if len(records) >= batch_size:
+            ProcessedDashboardData.objects.bulk_create(records, ignore_conflicts=True)
+            records = []
+            
+    if records:
+        ProcessedDashboardData.objects.bulk_create(records, ignore_conflicts=True)
     
     from django.core.cache import cache
     
@@ -937,40 +939,41 @@ def generate_flipkart_dashboard_data(user):
         < 1.0  # tolerance of ₹1
     )
 
-    # Build records
     records = []
-    for row in df.to_dict("records"):
+    batch_size = 10_000
+    
+    for row in df.itertuples(index=False):
         records.append(
             FlipkartProcessedDashboardData(
                 user=user,
-                date=row["date"],
-                fsn=row["fsn"],
+                date=getattr(row, "date"),
+                fsn=getattr(row, "fsn"),
                 platform="Flipkart",
-                portfolio=str(row.get("portfolio", "")) or "",
-                category=str(row.get("category", "")) or "",
-                subcategory=str(row.get("subcategory", "")) or "",
-                price=float(row.get("price", 0)),
-                pageviews=clean_number(row.get("page_views", 0)),
-                units=clean_number(row.get("sales", 0)),
+                portfolio=str(getattr(row, "portfolio", "")) or "",
+                category=str(getattr(row, "category", "")) or "",
+                subcategory=str(getattr(row, "subcategory", "")) or "",
+                price=float(getattr(row, "price", 0)),
+                pageviews=clean_number(str(getattr(row, "page_views", 0))),
+                units=clean_number(str(getattr(row, "sales", 0))),
                 orders=0,  # No order data for Flipkart
-                revenue=float(row.get("revenue", 0)),
-                total_spend=float(row.get("total_spend", 0)),
+                revenue=float(getattr(row, "revenue", 0)),
+                total_spend=float(getattr(row, "total_spend", 0)),
                 spend_sp=0.0,
                 spend_sb=0.0,
                 spend_sd=0.0,
-                taxable_value=float(row.get("taxable_value", 0)),
-                invoice_amount=float(row.get("invoice_amount", 0)),
-                coupon_total=float(row.get("coupon_total", 0)),
-                coupon_error=bool(row.get("coupon_error", False)),
+                taxable_value=float(getattr(row, "taxable_value", 0)),
+                invoice_amount=float(getattr(row, "invoice_amount", 0)),
+                coupon_total=float(getattr(row, "coupon_total", 0)),
+                coupon_error=bool(getattr(row, "coupon_error", False)),
             )
         )
-
-    batch_size = 10_000
-    for i in range(0, len(records), batch_size):
-        FlipkartProcessedDashboardData.objects.bulk_create(
-            records[i : i + batch_size],
-            ignore_conflicts=True
-        )
+        
+        if len(records) >= batch_size:
+            FlipkartProcessedDashboardData.objects.bulk_create(records, ignore_conflicts=True)
+            records = []
+            
+    if records:
+        FlipkartProcessedDashboardData.objects.bulk_create(records, ignore_conflicts=True)
 
     from django.core.cache import cache
     
