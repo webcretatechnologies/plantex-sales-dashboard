@@ -130,6 +130,7 @@ def generate_shipment_report(shipment_file, mapping_file, output_file):
     report_df = df.groupby(groupby_cols, dropna=False).agg(agg_funcs).reset_index()
 
     # Format the DFC Next Arrival Date back to string
+    report_df["DFC Next Arrival Date"] = pd.to_datetime(report_df["DFC Next Arrival Date"], errors="coerce")
     report_df["DFC Next Arrival Date"] = (
         report_df["DFC Next Arrival Date"].dt.strftime("%Y-%m-%d").fillna("")
     )
