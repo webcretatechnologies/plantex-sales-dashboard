@@ -13,6 +13,15 @@ def generate_kpis_orm(qs, fk_qs, spend_qs=None):
     spend = 0.0
     active_asins = 0
     cogs = 0.0
+    
+    az_revenue = 0.0
+    fk_revenue = 0.0
+    az_orders = 0
+    fk_orders = 0
+    az_units = 0
+    fk_units = 0
+    az_spend = 0.0
+    fk_spend = 0.0
 
     if qs is not None:
         agg = qs.aggregate(
@@ -22,11 +31,17 @@ def generate_kpis_orm(qs, fk_qs, spend_qs=None):
             t_pv=Sum("pageviews"),
             t_spend=Sum("total_spend"),
         )
-        revenue += float(agg["t_rev"] or 0)
-        orders += int(agg["t_ord"] or 0)
-        units += int(agg["t_uni"] or 0)
-        pageviews += int(agg["t_pv"] or 0)
-        spend += float(agg["t_spend"] or 0)
+        az_revenue = float(agg["t_rev"] or 0)
+        az_orders = int(agg["t_ord"] or 0)
+        az_units = int(agg["t_uni"] or 0)
+        az_pv = int(agg["t_pv"] or 0)
+        az_spend = float(agg["t_spend"] or 0)
+        
+        revenue += az_revenue
+        orders += az_orders
+        units += az_units
+        pageviews += az_pv
+        spend += az_spend
         active_asins += qs.values("asin").distinct().count()
 
     if fk_qs is not None:
@@ -37,18 +52,24 @@ def generate_kpis_orm(qs, fk_qs, spend_qs=None):
             t_pv=Sum("pageviews"),
             t_spend=Sum("total_spend"),
         )
-        revenue += float(agg_fk["t_rev"] or 0)
-        orders += int(agg_fk["t_ord"] or 0)
-        units += int(agg_fk["t_uni"] or 0)
-        pageviews += int(agg_fk["t_pv"] or 0)
-        spend += float(agg_fk["t_spend"] or 0)
+        fk_revenue = float(agg_fk["t_rev"] or 0)
+        fk_orders = int(agg_fk["t_ord"] or 0)
+        fk_units = int(agg_fk["t_uni"] or 0)
+        fk_pv = int(agg_fk["t_pv"] or 0)
+        fk_spend = float(agg_fk["t_spend"] or 0)
+        
+        revenue += fk_revenue
+        orders += fk_orders
+        units += fk_units
+        pageviews += fk_pv
+        spend += fk_spend
         active_asins += fk_qs.values("fsn").distinct().count()
 
     # Derived metrics
-    roas = (revenue / spend) if spend > 0 else 0
+    revenue_for_ads = revenue * 0.7  # Revenue * 0.7 for TACOS/ROAS
+    roas = (revenue_for_ads / spend) if spend > 0 else 0
     conversion = (orders / pageviews * 100) if pageviews > 0 else 0
-    aov = (revenue / orders) if orders > 0 else 0
-    tacos = (spend / revenue * 100) if revenue > 0 else 0
+    tacos = (spend / revenue_for_ads * 100) if revenue_for_ads > 0 else 0
     gross_margin = revenue - cogs
     gross_margin_pct = (gross_margin / revenue * 100) if revenue > 0 else 0
     net_profit = gross_margin - spend
@@ -57,15 +78,22 @@ def generate_kpis_orm(qs, fk_qs, spend_qs=None):
     return {
         # Core
         "revenue": revenue,
+        "az_revenue": az_revenue,
+        "fk_revenue": fk_revenue,
         "orders": orders,
+        "az_orders": az_orders,
+        "fk_orders": fk_orders,
         "units": units,
+        "az_units": az_units,
+        "fk_units": fk_units,
         "pageviews": pageviews,
         "spend": spend,
+        "az_spend": az_spend,
+        "fk_spend": fk_spend,
         "active_asins": active_asins,
         # Rates
         "roas": round(roas, 2),
         "conversion": round(conversion, 2),
-        "aov": round(aov, 2),
         "tacos": round(tacos, 2),
         # Margins
         "cogs": cogs,
@@ -82,7 +110,6 @@ def generate_kpis_orm(qs, fk_qs, spend_qs=None):
         "orders_change": 0,
         "units_change": 0,
         "spend_change": 0,
-        "aov_change": 0,
         "tacos_change": 0,
         "profit_change": 0,
         "gross_margin_change": 0,

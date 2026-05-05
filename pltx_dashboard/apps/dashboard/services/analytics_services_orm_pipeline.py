@@ -7,7 +7,33 @@ from apps.dashboard.services.analytics_services_orm import (
 from apps.dashboard.services.analytics_services_orm_tables import (
     generate_bi_data_orm,
 )
+from django.db.models import Sum
 
+def safe_replace_year(d, year_offset=-1):
+    try:
+        return d.replace(year=d.year + year_offset)
+    except ValueError:
+        return d.replace(year=d.year + year_offset, day=28)
+
+def get_revenue_for_period(q, fk_q, start, end):
+    rev = 0
+    if q is not None:
+        agg = q.filter(date__gte=start, date__lte=end).aggregate(t=Sum("revenue"))
+        rev += float(agg["t"] or 0)
+    if fk_q is not None:
+        agg = fk_q.filter(date__gte=start, date__lte=end).aggregate(t=Sum("taxable_value"))
+        rev += float(agg["t"] or 0)
+    return rev
+
+def get_spend_for_period(q, fk_q, start, end):
+    spend = 0
+    if q is not None:
+        agg = q.filter(date__gte=start, date__lte=end).aggregate(t=Sum("total_spend"))
+        spend += float(agg["t"] or 0)
+    if fk_q is not None:
+        agg = fk_q.filter(date__gte=start, date__lte=end).aggregate(t=Sum("total_spend"))
+        spend += float(agg["t"] or 0)
+    return spend
 
 def apply_global_filters_orm(qs, filters):
     """Filters the QuerySet by date according to the UI filters."""
@@ -195,22 +221,30 @@ def run_orm_computation(
     
     total_revenue = sum(r["revenue"] for r in table_data)
     total_spend = sum(r["total_spend"] for r in table_data)
+    revenue_for_ads = total_revenue * 0.7  # Revenue * 0.7 for TACOS/ROAS
     
     # 3. KPIs
     kpis = {
         "revenue": total_revenue,
+        "az_revenue": sum(r.get("az_revenue", 0) for r in table_data),
+        "fk_revenue": sum(r.get("fk_revenue", 0) for r in table_data),
         "orders": sum(r["orders"] for r in table_data),
+        "az_orders": sum(r.get("az_orders", 0) for r in table_data),
+        "fk_orders": sum(r.get("fk_orders", 0) for r in table_data),
         "units": sum(r["units"] for r in table_data),
+        "az_units": sum(r.get("az_units", 0) for r in table_data),
+        "fk_units": sum(r.get("fk_units", 0) for r in table_data),
         "pageviews": sum(r["pageviews"] for r in table_data),
         "spend": total_spend,
+        "az_spend": sum(r.get("az_spend", 0) for r in table_data),
+        "fk_spend": sum(r.get("fk_spend", 0) for r in table_data),
         "active_asins": len(table_data),
         "cogs": 0.0,
     }
     
-    roas = (kpis["revenue"] / kpis["spend"]) if kpis["spend"] > 0 else 0
+    roas = (revenue_for_ads / kpis["spend"]) if kpis["spend"] > 0 else 0
     conversion = (kpis["orders"] / kpis["pageviews"] * 100) if kpis["pageviews"] > 0 else 0
-    aov = (kpis["revenue"] / kpis["orders"]) if kpis["orders"] > 0 else 0
-    tacos = (kpis["spend"] / kpis["revenue"] * 100) if kpis["revenue"] > 0 else 0
+    tacos = (kpis["spend"] / revenue_for_ads * 100) if revenue_for_ads > 0 else 0
     gross_margin = kpis["revenue"] - kpis["cogs"]
     gross_margin_pct = (gross_margin / kpis["revenue"] * 100) if kpis["revenue"] > 0 else 0
     net_profit = gross_margin - kpis["spend"]
@@ -219,27 +253,62 @@ def run_orm_computation(
     kpis.update({
         "roas": round(roas, 2),
         "conversion": round(conversion, 2),
-        "aov": round(aov, 2),
         "tacos": round(tacos, 2),
         "gross_margin": gross_margin,
         "gross_margin_pct": round(gross_margin_pct, 2),
         "net_profit": net_profit,
         "contribution_margin": contribution_margin,
+        "ad_spend_sku_count": sum(1 for r in table_data if r.get("total_spend", 0) > 0),
+        "selling_sku_count": sum(1 for r in table_data if r.get("orders", 0) > 0),
+        "zero_sales_pageviews": sum(r.get("pageviews", 0) for r in table_data if r.get("orders", 0) == 0),
     })
 
     kpis_prev = generate_kpis_orm(qs_prev_f, fk_prev_f, spend_qs)
 
-    # 4. Populate growth fields in-place
-    for key in ["revenue", "orders", "units", "spend", "roas", "aov", "tacos"]:
+    for key in ["revenue", "orders", "units", "spend", "roas", "tacos"]:
         curr = kpis.get(key, 0)
         prev = kpis_prev.get(key, 0)
         kpis[f"{key}_change"] = _safe_growth(curr, prev)
 
-    kpis["mom_growth"] = kpis.get("revenue_change", 0)
-    kpis["yoy_growth"] = kpis.get("revenue_change", 0)
-    kpis["prev_mom"] = round(kpis_prev.get("mom_growth", 0), 1)
-    kpis["prev_yoy"] = 0
+    today = datetime.date.today()
+    cm_start = today.replace(day=1)
+    cm_end = today
+    pm_end = cm_start - datetime.timedelta(days=1)
+    pm_start = pm_end.replace(day=1)
+    ppm_end = pm_start - datetime.timedelta(days=1)
+    ppm_start = ppm_end.replace(day=1)
+
+    yoy_cm_start = safe_replace_year(cm_start)
+    yoy_cm_end = safe_replace_year(cm_end)
+    yoy_pm_start = safe_replace_year(pm_start)
+    yoy_pm_end = safe_replace_year(pm_end)
+
+    cm_rev = get_revenue_for_period(qs, fk_qs, cm_start, cm_end)
+    pm_rev = get_revenue_for_period(qs, fk_qs, pm_start, pm_end)
+    ppm_rev = get_revenue_for_period(qs, fk_qs, ppm_start, ppm_end)
+    yoy_cm_rev = get_revenue_for_period(qs, fk_qs, yoy_cm_start, yoy_cm_end)
+    yoy_pm_rev = get_revenue_for_period(qs, fk_qs, yoy_pm_start, yoy_pm_end)
+
+    cm_spend = get_spend_for_period(qs, fk_qs, cm_start, cm_end)
+    pm_spend = get_spend_for_period(qs, fk_qs, pm_start, pm_end)
+
+    kpis["mom_growth"] = _safe_growth(cm_rev, pm_rev)
+    kpis["yoy_growth"] = _safe_growth(cm_rev, yoy_cm_rev)
+    kpis["prev_mom"] = _safe_growth(pm_rev, ppm_rev)
+    kpis["prev_yoy"] = _safe_growth(pm_rev, yoy_pm_rev)
     kpis["profit_change"] = _safe_growth(kpis["net_profit"], kpis_prev.get("net_profit", 0))
+
+    kpis["mom_spend_growth"] = _safe_growth(cm_spend, pm_spend)
+    
+    cm_rev_ads = cm_rev * 0.7
+    pm_rev_ads = pm_rev * 0.7
+    cm_roas = (cm_rev_ads / cm_spend) if cm_spend > 0 else 0
+    pm_roas = (pm_rev_ads / pm_spend) if pm_spend > 0 else 0
+    kpis["mom_roas_change"] = round(cm_roas - pm_roas, 2)
+    
+    cm_tacos = (cm_spend / cm_rev_ads * 100) if cm_rev_ads > 0 else 0
+    pm_tacos = (pm_spend / pm_rev_ads * 100) if pm_rev_ads > 0 else 0
+    kpis["mom_tacos_change"] = round(cm_tacos - pm_tacos, 1)
 
     # 5. Charts
     charts = generate_charts_data_orm(qs_f, fk_qs_f, table_data=table_data)
@@ -285,42 +354,75 @@ def run_orm_computation(
     # 8. Filter metadata for dropdowns
     filter_meta = cached_filter_metadata or get_available_filters_orm(qs, fk_qs)
 
-    returns_ratings = {
-        "rate": 0, "change": 0, "reasons": [], "avg_rating": 0, "avg_rating_change": 0, "low_rating_count": 0,
-    }
 
-    net_profit_pct = round(kpis["net_profit"] / kpis["revenue"] * 100, 1) if kpis["revenue"] > 0 else 0
-    profit_summary = {
-        "revenue": kpis["revenue"], "ad_spend": kpis["spend"], "gross_margin": kpis["gross_margin"],
-        "gross_margin_pct": kpis["gross_margin_pct"], "net_profit": kpis["net_profit"], "net_profit_pct": net_profit_pct,
-    }
 
     marketing = {
-        "ad_spend": kpis["spend"], "roas": kpis["roas"], "roas_change_pct": 0, "tacos": kpis["tacos"], "tacos_change": 0,
+        "ad_spend": kpis["spend"], 
+        "ad_spend_change": kpis.get("mom_spend_growth", 0),
+        "roas": kpis["roas"], 
+        "roas_change_pct": kpis.get("mom_roas_change", 0), 
+        "tacos": kpis["tacos"], 
+        "tacos_change": kpis.get("mom_tacos_change", 0),
+        "ad_spend_sku_count": kpis.get("ad_spend_sku_count", 0),
+        "selling_sku_count": kpis.get("selling_sku_count", 0),
+        "zero_sales_pageviews": kpis.get("zero_sales_pageviews", 0),
     }
 
     in_stock_count = low_stock_count = oos_count = overstock_count = oos_skus = 0
     total_lost_sales = 0.0
+    inventory_details = []
 
     all_units = [r["units"] for r in table_data if r["units"] > 0]
     avg_units = sum(all_units) / len(all_units) if all_units else 1
 
+    # Create inventory details with rounded floats to ensure JSON serialization
+    inventory_details = []
     for r in table_data:
-        u = r["units"]
-        rev = r["revenue"]
+        u = int(r["units"])
+        rev = float(r["revenue"])
+        sku = str(r["asin"])
+        cat = str(r.get("category") or "Unknown")
+        status = "In Stock"
+        status_class = "good"
+        reason = f"Units ({u}) are within normal range"
+        
         if u == 0:
             oos_count += 1
             oos_skus += 1
             total_lost_sales += rev
+            status = "OOS"
+            status_class = "danger"
+            reason = "Units are 0"
         elif u >= avg_units * 2:
             overstock_count += 1
+            status = "Overstock"
+            status_class = "neutral"
+            reason = f"{u} &ge; 200% of avg ({avg_units*2:.1f})"
         elif u <= avg_units * 0.25:
             low_stock_count += 1
+            status = "Low Stock"
+            status_class = "warn"
+            reason = f"{u} &le; 25% of avg ({avg_units*0.25:.1f})"
         else:
             in_stock_count += 1
 
+        inventory_details.append({
+            "sku": sku,
+            "category": cat,
+            "units": u,
+            "revenue": round(rev, 2),
+            "status": status,
+            "status_class": status_class,
+            "reason": reason
+        })
+
     inventory = {
-        "in_stock": in_stock_count, "low_stock": low_stock_count, "oos": oos_count, "overstock": overstock_count,
+        "in_stock": int(in_stock_count), 
+        "low_stock": int(low_stock_count), 
+        "oos": int(oos_count), 
+        "overstock": int(overstock_count),
+        "details": inventory_details,
+        "avg_units": round(float(avg_units), 1)
     }
 
     oos_impact = {"lost_sales": round(total_lost_sales, 2), "skus_affected": oos_skus, "orders_lost": 0}
@@ -372,23 +474,51 @@ def run_orm_computation(
     today = _dt.date.today()
     days_in_month = (today.replace(month=today.month % 12 + 1, day=1) - _dt.timedelta(days=1)).day if today.month < 12 else 31
     days_elapsed = max(today.day, 1)
-    run_rate = kpis["revenue"] / days_elapsed * days_in_month if days_elapsed > 0 else 0
+
+    if today.day <= 5:
+        # At start of a new month, use last week's data from previous month for forecasting
+        prev_month_end = today.replace(day=1) - _dt.timedelta(days=1)
+        prev_month_last_week_start = prev_month_end - _dt.timedelta(days=6)
+        last_week_rev = get_revenue_for_period(qs, fk_qs, prev_month_last_week_start, prev_month_end)
+        daily_rate = last_week_rev / 7 if last_week_rev > 0 else (kpis["revenue"] / days_elapsed if days_elapsed > 0 else 0)
+    else:
+        daily_rate = kpis["revenue"] / days_elapsed if days_elapsed > 0 else 0
+
+    run_rate = daily_rate * days_in_month
 
     forecast_labels, forecast_actual, forecast_fc, forecast_target = [], [], [], []
-    daily_rate = kpis["revenue"] / days_elapsed if days_elapsed > 0 else 0
+    forecast_details = []
+    
+    # Cumulative calculation details
     for day_num in range(1, days_in_month + 1):
         forecast_labels.append(str(day_num))
+        actual_val = None
+        fc_val = None
+        
         if day_num <= days_elapsed:
-            forecast_actual.append(round(daily_rate * day_num, 2))
+            actual_val = round(daily_rate * day_num, 2)
+            forecast_actual.append(actual_val)
             forecast_fc.append(None)
         else:
+            fc_val = round(kpis["revenue"] + daily_rate * (day_num - days_elapsed), 2)
             forecast_actual.append(None)
-            forecast_fc.append(round(kpis["revenue"] + daily_rate * (day_num - days_elapsed), 2))
+            forecast_fc.append(fc_val)
+            
         forecast_target.append(round(run_rate, 2))
+        
+        forecast_details.append({
+            "day": day_num,
+            "actual": actual_val,
+            "forecast": fc_val,
+            "target": round(run_rate, 2),
+            "daily_avg": round(daily_rate, 2)
+        })
 
     forecast = {
-        "predicted": round(run_rate, 2), "target": 0, "gap": 0, "gap_pct": 0, "labels": forecast_labels,
+        "predicted": round(run_rate, 2), "target": round(run_rate, 2), "gap": 0, "gap_pct": 0, "labels": forecast_labels,
         "actual": forecast_actual, "forecast": forecast_fc, "target_line": forecast_target,
+        "details": forecast_details, "daily_rate": round(daily_rate, 2),
+        "days_in_month": days_in_month, "days_elapsed": days_elapsed
     }
 
     waterfall = [
@@ -398,19 +528,78 @@ def run_orm_computation(
 
     priorities = []
     if kpis.get("tacos", 0) > 15:
-        priorities.append({"rank": len(priorities)+1, "title": "Reduce Ad Spend", "subtitle": f"TACoS is high at {kpis['tacos']:.1f}%. Review campaigns.", "priority": "High"})
+        priorities.append({
+            "rank": len(priorities)+1, 
+            "title": "Reduce Ad Spend", 
+            "subtitle": f"TACoS is high at {kpis['tacos']:.1f}%. Review campaigns.", 
+            "priority": "High",
+            "calculation": f"TACoS ({kpis['tacos']:.1f}%) > Threshold (15%)"
+        })
     if oos_count > 0:
-        priorities.append({"rank": len(priorities)+1, "title": f"Restock {oos_count} Out-of-Stock SKUs", "subtitle": "Act now to prevent lost sales.", "priority": "High"})
+        priorities.append({
+            "rank": len(priorities)+1, 
+            "title": f"Restock {oos_count} Out-of-Stock SKUs", 
+            "subtitle": "Act now to prevent lost sales.", 
+            "priority": "High",
+            "calculation": f"OOS Count ({oos_count}) > 0"
+        })
     if low_stock_count > 0:
-        priorities.append({"rank": len(priorities)+1, "title": f"Replenish {low_stock_count} Low-Stock SKUs", "subtitle": "Trigger replenishment orders.", "priority": "Medium"})
+        priorities.append({
+            "rank": len(priorities)+1, 
+            "title": f"Replenish {low_stock_count} Low-Stock SKUs", 
+            "subtitle": "Trigger replenishment orders.", 
+            "priority": "Medium",
+            "calculation": f"Low Stock Count ({low_stock_count}) > 0"
+        })
     if kpis.get("revenue_change", 0) < -5:
-        priorities.append({"rank": len(priorities)+1, "title": "Investigate Revenue Drop", "subtitle": f"Revenue declined {abs(kpis['revenue_change']):.1f}%.", "priority": "High"})
+        priorities.append({
+            "rank": len(priorities)+1, 
+            "title": "Investigate Revenue Drop", 
+            "subtitle": f"Revenue declined {abs(kpis['revenue_change']):.1f}%.", 
+            "priority": "High",
+            "calculation": f"Revenue Change ({kpis['revenue_change']:.1f}%) < -5%"
+        })
     elif kpis.get("revenue_change", 0) > 15:
-        priorities.append({"rank": len(priorities)+1, "title": "Capitalize on Revenue Growth", "subtitle": f"Revenue up {kpis['revenue_change']:.1f}%.", "priority": "Medium"})
+        priorities.append({
+            "rank": len(priorities)+1, 
+            "title": "Capitalize on Revenue Growth", 
+            "subtitle": f"Revenue up {kpis['revenue_change']:.1f}%.", 
+            "priority": "Medium",
+            "calculation": f"Revenue Change ({kpis['revenue_change']:.1f}%) > 15%"
+        })
     if kpis.get("gross_margin_pct", 0) < 20:
-        priorities.append({"rank": len(priorities)+1, "title": "Improve Gross Margins", "subtitle": f"Gross margin is at {kpis['gross_margin_pct']:.1f}%.", "priority": "Medium"})
+        priorities.append({
+            "rank": len(priorities)+1, 
+            "title": "Improve Gross Margins", 
+            "subtitle": f"Gross margin is at {kpis['gross_margin_pct']:.1f}%.", 
+            "priority": "Medium",
+            "calculation": f"Gross Margin ({kpis['gross_margin_pct']:.1f}%) < 20%"
+        })
     if not priorities:
-        priorities.append({"rank": 1, "title": "Review Dashboard Metrics", "subtitle": "All indicators normal.", "priority": "Low"})
+        priorities.append({
+            "rank": 1, 
+            "title": "Review Dashboard Metrics", 
+            "subtitle": "All indicators normal.", 
+            "priority": "Low",
+            "calculation": "No critical thresholds breached"
+        })
+
+    # Fetch MOM SKU-level revenue for Declining Products
+    cm_sku_rev = {}
+    if qs is not None:
+        for x in qs.filter(date__gte=cm_start, date__lte=cm_end).values('asin').annotate(r=Sum('revenue')):
+            cm_sku_rev[x['asin']] = float(x['r'] or 0)
+    if fk_qs is not None:
+        for x in fk_qs.filter(date__gte=cm_start, date__lte=cm_end).values('fsn').annotate(r=Sum('taxable_value')):
+            cm_sku_rev[x['fsn']] = cm_sku_rev.get(x['fsn'], 0) + float(x['r'] or 0)
+            
+    pm_sku_rev = {}
+    if qs is not None:
+        for x in qs.filter(date__gte=pm_start, date__lte=pm_end).values('asin').annotate(r=Sum('revenue')):
+            pm_sku_rev[x['asin']] = float(x['r'] or 0)
+    if fk_qs is not None:
+        for x in fk_qs.filter(date__gte=pm_start, date__lte=pm_end).values('fsn').annotate(r=Sum('taxable_value')):
+            pm_sku_rev[x['fsn']] = pm_sku_rev.get(x['fsn'], 0) + float(x['r'] or 0)
 
     top_prods, under_prods = [], []
     for row in table_data:
@@ -420,8 +609,15 @@ def run_orm_computation(
         growth = _safe_growth(curr_rev, prev_rev)
         
         top_prods.append({"sku": sku, "product_name": f"Product {sku}", "cluster": row.get("portfolio") or "Standard", "revenue": curr_rev, "growth": growth, "units_sold": row["units"], "rating": 4.5})
-        under_prods.append({"sku": sku, "product_name": f"Product {sku}", "revenue": curr_rev, "drop_pct": growth, "impact": curr_rev - prev_rev})
-    under_prods.sort(key=lambda x: x["revenue"])
+        
+        # Declining based on MOM drop
+        sku_cm = cm_sku_rev.get(sku, 0)
+        sku_pm = pm_sku_rev.get(sku, 0)
+        mom_growth = _safe_growth(sku_cm, sku_pm)
+        if mom_growth < 0:
+            under_prods.append({"sku": sku, "product_name": f"Product {sku}", "revenue": sku_cm, "drop_pct": mom_growth, "impact": sku_cm - sku_pm})
+            
+    under_prods.sort(key=lambda x: x["drop_pct"])  # Sort by most negative growth
 
     port_perf_dict = {}
     for r in table_data:
@@ -445,10 +641,10 @@ def run_orm_computation(
 
     return {
         "kpis": kpis, "charts": charts, "category_performance": cat_perf_list,
-        "platforms": platforms_dict, "filters": filter_meta, "returns": returns_ratings, "returns_ratings": returns_ratings,
+        "platforms": platforms_dict, "filters": filter_meta,
         "oos_impact": oos_impact, "business_health": business_health, "category_health": category_health,
         "inventory": inventory, "inventory_position": inventory_position, "forecast": forecast,
-        "profit_summary": profit_summary, "priorities": priorities, "marketing": marketing,
+        "profit_summary": {}, "priorities": priorities, "marketing": marketing,
         "waterfall": waterfall, "cluster_performance": cluster_performance, "cat_top_products": top_prods[:5],
         "cat_under_products": under_prods[:5], "cat_all_top_products": top_prods[:100], "cat_all_under_products": under_prods[:100],
         "growth_opportunities": [],

@@ -8,8 +8,19 @@
 
 {% block dashboard_content %}
 
-<!-- ════════════ ROW 1: KPI Cards (8) ════════════ -->
-<div class="biz-kpi-row">
+<!-- ════════════ ROW 1 & 2: KPI Cards (6 per row) ════════════ -->
+<style>
+    .kpi-grid-v2 {
+        display: grid !important;
+        grid-template-columns: repeat(6, 1fr) !important;
+        gap: 16px !important;
+        margin-bottom: 24px !important;
+        width: 100% !important;
+    }
+    @media(max-width:1400px) { .kpi-grid-v2 { grid-template-columns: repeat(3, 1fr) !important; } }
+    @media(max-width:768px) { .kpi-grid-v2 { grid-template-columns: repeat(2, 1fr) !important; } }
+</style>
+<div class="kpi-grid-v2">
     <!-- Total Revenue -->
     <div class="ceo-kpi-card" id="biz-kpi-revenue">
         <div class="ceo-kpi-header">
@@ -21,6 +32,10 @@
         <div class="ceo-kpi-change {% if payload.kpis.mom_growth >= 0 %}up{% else %}down{% endif %}">
             {% if payload.kpis.mom_growth >= 0 %}▲{% else %}▼{% endif %} {{ payload.kpis.mom_growth|abs_val|floatformat:1 }}% <span class="sub">vs prev. period</span>
         </div>
+        <div style="display:flex; justify-content:space-between; margin-top:10px; font-size:10px; color:var(--muted); font-family:'JetBrains Mono', monospace; padding-top:8px; border-top:1px dashed var(--border-light);">
+            <span><span style="color:#3b82f6;font-size:8px;">●</span> {{ payload.kpis.az_revenue|fmt_rupee }}</span>
+            <span><span style="color:#f59e0b;font-size:8px;">●</span> {{ payload.kpis.fk_revenue|fmt_rupee }}</span>
+        </div>
     </div>
 
     <!-- MOM Growth -->
@@ -30,10 +45,9 @@
             <div class="ceo-kpi-icon green"><span class="material-icons-round" style="font-size:16px">show_chart</span>
             </div>
         </div>
-        <div class="ceo-kpi-value {% if payload.kpis.mom_growth >= 0 %}accent-green{% else %}accent-red{% endif %}">{{ payload.kpis.mom_growth|floatformat:1 }}%</div>
+        <div class="ceo-kpi-value {% if payload.kpis.mom_growth >= 0 %}accent-green{% else %}accent-red{% endif %}">{% if payload.kpis.mom_growth >= 0 %}▲{% else %}▼{% endif %} {{ payload.kpis.mom_growth|abs_val|floatformat:1 }}%</div>
         <div class="ceo-kpi-change {% if payload.kpis.mom_growth >= 0 %}up{% else %}down{% endif %}">
-            {% if payload.kpis.mom_growth >= 0 %}▲{% else %}▼{% endif %} {{ payload.kpis.prev_mom|abs_val }}pp <span
-                class="sub">vs prev. period</span>
+            Prev month: {{ payload.kpis.prev_mom|floatformat:1 }}% <span class="sub">MOM</span>
         </div>
     </div>
 
@@ -44,10 +58,9 @@
             <div class="ceo-kpi-icon green"><span class="material-icons-round"
                     style="font-size:16px">stacked_line_chart</span></div>
         </div>
-        <div class="ceo-kpi-value {% if payload.kpis.yoy_growth >= 0 %}accent-green{% else %}accent-red{% endif %}">{{ payload.kpis.yoy_growth|floatformat:1 }}%</div>
+        <div class="ceo-kpi-value {% if payload.kpis.yoy_growth >= 0 %}accent-green{% else %}accent-red{% endif %}">{% if payload.kpis.yoy_growth >= 0 %}▲{% else %}▼{% endif %} {{ payload.kpis.yoy_growth|abs_val|floatformat:1 }}%</div>
         <div class="ceo-kpi-change {% if payload.kpis.yoy_growth >= 0 %}up{% else %}down{% endif %}">
-            {% if payload.kpis.yoy_growth >= 0 %}▲{% else %}▼{% endif %} {{ payload.kpis.prev_yoy|abs_val }}pp <span
-                class="sub">vs last year</span>
+            Same month last year: {{ payload.kpis.prev_yoy|floatformat:1 }}% <span class="sub">YOY</span>
         </div>
     </div>
 
@@ -88,18 +101,9 @@
         <div class="ceo-kpi-change {% if payload.kpis.orders_change >= 0 %}up{% else %}down{% endif %}">
             {% if payload.kpis.orders_change >= 0 %}▲{% else %}▼{% endif %} {{ payload.kpis.orders_change|abs_val|floatformat:1 }}% <span class="sub">vs prev. period</span>
         </div>
-    </div>
-
-    <!-- AOV -->
-    <div class="ceo-kpi-card" id="biz-kpi-aov">
-        <div class="ceo-kpi-header">
-            <span class="ceo-kpi-label">AOV</span>
-            <div class="ceo-kpi-icon blue"><span class="material-icons-round" style="font-size:16px">price_check</span>
-            </div>
-        </div>
-        <div class="ceo-kpi-value">{{ payload.kpis.aov|fmt_rupee }}</div>
-        <div class="ceo-kpi-change {% if payload.kpis.aov_change >= 0 %}up{% else %}down{% endif %}">
-            {% if payload.kpis.aov_change >= 0 %}▲{% else %}▼{% endif %} {{ payload.kpis.aov_change|abs_val|floatformat:1 }}pp <span class="sub">vs prev. period</span>
+        <div style="display:flex; justify-content:space-between; margin-top:10px; font-size:10px; color:var(--muted); font-family:'JetBrains Mono', monospace; padding-top:8px; border-top:1px dashed var(--border-light);">
+            <span><span style="color:#3b82f6;font-size:8px;">●</span> {{ payload.kpis.az_orders|fmt_num }}</span>
+            <span><span style="color:#f59e0b;font-size:8px;">●</span> {{ payload.kpis.fk_orders|fmt_num }}</span>
         </div>
     </div>
 
@@ -111,15 +115,79 @@
             </div>
         </div>
         <div class="ceo-kpi-value">{{ payload.kpis.tacos|floatformat:1 }}%</div>
-        <div class="ceo-kpi-change {% if payload.kpis.tacos_change < 0 %}down{% else %}up{% endif %}">
-            {% if payload.kpis.tacos_change < 0 %}▼{% else %}▲{% endif %} {{ payload.kpis.tacos_change|abs_val }}pp
-                <span class="sub">vs prev. period</span>
+        <div class="ceo-kpi-change {% if payload.kpis.mom_tacos_change < 0 %}down{% else %}up{% endif %}">
+            {% if payload.kpis.mom_tacos_change < 0 %}▼{% else %}▲{% endif %} {{ payload.kpis.mom_tacos_change|abs_val }}pp
+                <span class="sub">vs last month</span>
+        </div>
+    </div>
+
+    <!-- Ad Spend -->
+    <div class="ceo-kpi-card" id="biz-kpi-adspend">
+        <div class="ceo-kpi-header">
+            <span class="ceo-kpi-label">Ad Spend</span>
+            <div class="ceo-kpi-icon amber"><span class="material-icons-round" style="font-size:16px">payments</span></div>
+        </div>
+        <div class="ceo-kpi-value">{{ payload.marketing.ad_spend|fmt_rupee }}</div>
+        <div class="ceo-kpi-change {% if payload.marketing.ad_spend_change < 0 %}down{% else %}up{% endif %}">
+            {% if payload.marketing.ad_spend_change < 0 %}▼{% else %}▲{% endif %} {{ payload.marketing.ad_spend_change|abs_val }}% <span class="sub">vs last month</span>
+        </div>
+        <div style="display:flex; justify-content:space-between; margin-top:10px; font-size:10px; color:var(--muted); font-family:'JetBrains Mono', monospace; padding-top:8px; border-top:1px dashed var(--border-light);">
+            <span><span style="color:#3b82f6;font-size:8px;">●</span> {{ payload.kpis.az_spend|fmt_rupee }}</span>
+            <span><span style="color:#f59e0b;font-size:8px;">●</span> {{ payload.kpis.fk_spend|fmt_rupee }}</span>
+        </div>
+    </div>
+
+    <!-- ROAS -->
+    <div class="ceo-kpi-card" id="biz-kpi-roas">
+        <div class="ceo-kpi-header">
+            <span class="ceo-kpi-label">ROAS</span>
+            <div class="ceo-kpi-icon blue"><span class="material-icons-round" style="font-size:16px">speed</span></div>
+        </div>
+        <div class="ceo-kpi-value">{{ payload.marketing.roas }}x</div>
+        <div class="ceo-kpi-change {% if payload.marketing.roas_change_pct < 0 %}down{% else %}up{% endif %}">
+            {% if payload.marketing.roas_change_pct < 0 %}▼{% else %}▲{% endif %} {{ payload.marketing.roas_change_pct|abs_val|floatformat:2 }} <span class="sub">vs last month</span>
+        </div>
+    </div>
+
+    <!-- Ad Spend SKU Count -->
+    <div class="ceo-kpi-card" id="biz-kpi-adspend-sku">
+        <div class="ceo-kpi-header">
+            <span class="ceo-kpi-label">Ad Spend SKUs</span>
+            <div class="ceo-kpi-icon purple"><span class="material-icons-round" style="font-size:16px">campaign</span></div>
+        </div>
+        <div class="ceo-kpi-value">{{ payload.marketing.ad_spend_sku_count|fmt_num }}</div>
+        <div class="ceo-kpi-change flat">
+            <span class="sub">SKUs with active ad spend</span>
+        </div>
+    </div>
+
+    <!-- Selling SKU Count -->
+    <div class="ceo-kpi-card" id="biz-kpi-selling-sku">
+        <div class="ceo-kpi-header">
+            <span class="ceo-kpi-label">Selling SKUs</span>
+            <div class="ceo-kpi-icon green"><span class="material-icons-round" style="font-size:16px">sell</span></div>
+        </div>
+        <div class="ceo-kpi-value">{{ payload.marketing.selling_sku_count|fmt_num }}</div>
+        <div class="ceo-kpi-change flat">
+            <span class="sub">SKUs with at least 1 order</span>
+        </div>
+    </div>
+
+    <!-- 0-Sales Pageviews -->
+    <div class="ceo-kpi-card" id="biz-kpi-zero-sales-pv">
+        <div class="ceo-kpi-header">
+            <span class="ceo-kpi-label">0-Sales Pageviews</span>
+            <div class="ceo-kpi-icon red"><span class="material-icons-round" style="font-size:16px">visibility_off</span></div>
+        </div>
+        <div class="ceo-kpi-value">{{ payload.marketing.zero_sales_pageviews|fmt_num }}</div>
+        <div class="ceo-kpi-change down">
+            <span class="sub">Pageviews with no conversion</span>
         </div>
     </div>
 </div>
 
-<!-- ════════════ ROW 2: Revenue Trend | Platform Split | Category Performance ════════════ -->
-<div class="biz-row-chart">
+<!-- ════════════ ROW 3: Revenue Trend | Platform Split ════════════ -->
+<div class="ceo-row-2-cols">
     <!-- Revenue Trend -->
     <div class="ceo-card" id="biz-card-trend">
         <div class="ceo-card-header">
@@ -179,45 +247,6 @@
         </div>
     </div>
 
-    <!-- Category Performance -->
-    <div class="ceo-card" id="biz-card-category">
-        <div class="ceo-card-header">
-            <div>
-                <span class="ceo-card-title">Category Performance</span>
-                <div style="font-size:11px;color:var(--muted);margin-top:2px;">Revenue and growth by category</div>
-            </div>
-            <button class="ceo-view-all-btn" onclick="openModal('categoryModal')" id="biz-btn-cat-viewall">View
-                All</button>
-        </div>
-        <div class="ceo-card-body no-pad">
-            <table class="ceo-table">
-                <thead>
-                    <tr>
-                        <th>Category</th>
-                        <th class="num">Revenue</th>
-                        <th class="num">Growth</th>
-                        <th class="num">Contribution</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for cat in payload.category_performance|slice:":5" %}
-                    <tr>
-                        <td style="font-weight:600;">{{ cat.category }}</td>
-                        <td class="num">{{ cat.revenue|fmt_rupee }}</td>
-                        <td class="num {% if cat.growth >= 0 %}growth-up{% else %}growth-down{% endif %}">
-                            {% if cat.growth >= 0 %}▲{% else %}▼{% endif %} {{ cat.growth|abs_val }}%
-                        </td>
-                        <td class="num">{{ cat.contribution }}%</td>
-                    </tr>
-                    {% empty %}
-                    <tr>
-                        <td colspan="4" class="empty">No data available</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-    </div>
 </div>
 
 <!-- ════════════ ROW 3: Top Categories Growth | Top 10 Products | Bottom 5 Products ════════════ -->
@@ -251,11 +280,11 @@
         </div>
     </div>
 
-    <!-- Top 10 Products by Revenue -->
+    <!-- Top Revenue Contributors -->
     <div class="ceo-card" id="biz-card-top-products">
         <div class="ceo-card-header">
             <div>
-                <span class="ceo-card-title">Top 5 Products by Revenue</span>
+                <span class="ceo-card-title">Top Revenue Contributors</span>
                 <div style="font-size:11px;color:var(--muted);margin-top:2px;">Best performing products by revenue vs
                     previous period</div>
             </div>
@@ -268,7 +297,6 @@
                     <thead>
                         <tr>
                             <th>SKU</th>
-                            <th>Product Name</th>
                             <th class="num">Revenue</th>
                             <th class="num">Growth</th>
                         </tr>
@@ -282,13 +310,12 @@
                                     <span>{{ prod.sku }}</span>
                                 </div>
                             </td>
-                            <td>{{ prod.product_name }}</td>
                             <td class="num">{{ prod.revenue|fmt_rupee }}</td>
                             <td class="num growth-up">▲ {{ prod.growth }}%</td>
                         </tr>
                         {% empty %}
                         <tr>
-                            <td colspan="4" class="empty">No data available</td>
+                            <td colspan="3" class="empty">No data available</td>
                         </tr>
                         {% endfor %}
                     </tbody>
@@ -315,7 +342,6 @@
                 <thead>
                     <tr>
                         <th>SKU</th>
-                        <th>Product Name</th>
                         <th class="num">Drop %</th>
                         <th class="num">Impact (₹)</th>
                     </tr>
@@ -329,13 +355,12 @@
                                 <span>{{ prod.sku }}</span>
                             </div>
                         </td>
-                        <td>{{ prod.product_name }}</td>
                         <td class="num growth-down">▼ {{ prod.drop_pct|abs_val }}%</td>
                         <td class="num" style="color:var(--danger);">-{{ prod.impact|fmt_rupee }}</td>
                     </tr>
                     {% empty %}
                     <tr>
-                        <td colspan="4" class="empty">No data available</td>
+                        <td colspan="3" class="empty">No data available</td>
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -429,14 +454,20 @@
                 <div class="biz-metric-item">
                     <div class="biz-metric-label">Ad Spend</div>
                     <div class="biz-metric-value">{{ payload.marketing.ad_spend|fmt_rupee }}</div>
-                    <div class="biz-metric-sub {% if payload.kpis.spend_change < 0 %}down{% else %}up{% endif %}">
-                        {% if payload.kpis.spend_change < 0 %}&#9660;{% else %}&#9650;{% endif %} {{ payload.kpis.spend_change|abs_val }}%
+                    <div class="biz-metric-sub {% if payload.marketing.ad_spend_change < 0 %}down{% else %}up{% endif %}">
+                        {% if payload.marketing.ad_spend_change < 0 %}&#9660;{% else %}&#9650;{% endif %} {{ payload.marketing.ad_spend_change|abs_val }}%
+                    </div>
+                    <div style="display:flex; flex-direction:column; gap:2px; margin-top:8px; font-size:9px; color:var(--muted); font-family:'JetBrains Mono', monospace; border-top:1px dashed var(--border-light); padding-top:5px;">
+                        <span><span style="color:#3b82f6;font-size:7px;">●</span> {{ payload.kpis.az_spend|fmt_rupee }}</span>
+                        <span><span style="color:#f59e0b;font-size:7px;">●</span> {{ payload.kpis.fk_spend|fmt_rupee }}</span>
                     </div>
                 </div>
                 <div class="biz-metric-item">
                     <div class="biz-metric-label">ROAS</div>
                     <div class="biz-metric-value">{{ payload.marketing.roas }}x</div>
-                    <div class="biz-metric-sub up">&#9650; {{ payload.marketing.roas_change_pct|floatformat:1 }}%</div>
+                    <div class="biz-metric-sub {% if payload.marketing.roas_change_pct < 0 %}down{% else %}up{% endif %}">
+                        {% if payload.marketing.roas_change_pct < 0 %}&#9660;{% else %}&#9650;{% endif %} {{ payload.marketing.roas_change_pct|abs_val|floatformat:1 }}
+                    </div>
                 </div>
                 <div class="biz-metric-item">
                     <div class="biz-metric-label">TACOS</div>
@@ -446,35 +477,23 @@
                     </div>
                 </div>
             </div>
-            <div class="biz-mkt-note">vs prev. period</div>
-        </div>
-    </div>
-
-    <!-- Returns & VOC -->
-    <div class="ceo-card" id="biz-card-returns">
-        <div class="ceo-card-header">
-            <div>
-                <span class="ceo-card-title">Returns &amp; VOC</span>
-                <div style="font-size:11px;color:var(--muted);margin-top:2px;">Returns and customer feedback</div>
-            </div>
-            <button class="ceo-view-all-btn" onclick="openModal('returnsModal')" id="biz-btn-returns-viewall">View All</button>
-        </div>
-        <div class="ceo-card-body">
-            <div class="biz-returns-grid">
-                <div class="biz-returns-stat">
-                    <div class="biz-metric-label">Return Rate</div>
-                    <div class="biz-metric-value" style="font-size:22px;">{{ payload.returns_ratings.rate }}%</div>
-                    <div class="biz-metric-sub {% if payload.returns_ratings.change < 0 %}down{% else %}up{% endif %}">
-                        {% if payload.returns_ratings.change < 0 %}&#9660;{% else %}&#9650;{% endif %} {{ payload.returns_ratings.change|abs_val }}pp vs prev. period
-                    </div>
+            
+            <div class="biz-metric-row" style="margin-top: 15px; border-top: 1px dashed var(--border-light); padding-top: 15px;">
+                <div class="biz-metric-item">
+                    <div class="biz-metric-label">Ad Spend SKUs</div>
+                    <div class="biz-metric-value" style="font-size:16px;">{{ payload.marketing.ad_spend_sku_count }}</div>
                 </div>
-                <div class="biz-returns-issue">
-                    <div class="biz-metric-label">Top Issue</div>
-                    <div class="biz-returns-issue-name">{{ payload.returns_ratings.reasons.0.label|default:"No data" }}</div>
-                    <div class="biz-returns-issue-pct">{{ payload.returns_ratings.reasons.0.pct|default:"0" }}% of returns</div>
+                <div class="biz-metric-item">
+                    <div class="biz-metric-label">Selling SKUs</div>
+                    <div class="biz-metric-value" style="font-size:16px;">{{ payload.marketing.selling_sku_count }}</div>
+                </div>
+                <div class="biz-metric-item">
+                    <div class="biz-metric-label">0-Sales Pageviews</div>
+                    <div class="biz-metric-value" style="font-size:16px;">{{ payload.marketing.zero_sales_pageviews|fmt_num }}</div>
                 </div>
             </div>
-            <button class="biz-view-insights-btn" onclick="openModal('returnsModal')">View All Insights</button>
+            
+            <div class="biz-mkt-note">Trends vs Last Month</div>
         </div>
     </div>
 </div>
@@ -581,41 +600,112 @@
     </div>
 </div>
 
-<!-- ════════════ VIEW ALL MODALS ════════════ -->
-
-<!-- Category Modal -->
-<div class="tbl-overlay" id="categoryModal">
-    <div class="tbl-overlay-inner">
-        <div class="tbl-overlay-header">
-            <span class="tbl-overlay-title">Category Performance &mdash; Full View</span>
-            <button class="tbl-overlay-close" onclick="closeModal('categoryModal')">&#10005; Close</button>
-        </div>
-        <div class="tbl-overlay-scroll">
-            <table class="ceo-table" style="min-width:500px;">
-                <thead>
-                    <tr>
-                        <th>Category</th>
-                        <th class="num">Revenue</th>
-                        <th class="num">Growth</th>
-                        <th class="num">Contribution</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for cat in payload.category_performance %}
-                    <tr>
-                        <td style="font-weight:600;">{{ cat.category }}</td>
-                        <td class="num">{{ cat.revenue|fmt_rupee }}</td>
-                        <td class="num {% if cat.growth >= 0 %}growth-up{% else %}growth-down{% endif %}">
-                            {% if cat.growth >= 0 %}&#9650;{% else %}&#9660;{% endif %} {{ cat.growth|abs_val }}%
-                        </td>
-                        <td class="num">{{ cat.contribution }}%</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+<!-- ════════════ FULL CATEGORY PERFORMANCE TABLE ════════════ -->
+<div class="ceo-card" id="biz-full-category-perf" style="margin-top: 24px;">
+    <div class="ceo-card-header" style="display: flex; justify-content: space-between; align-items: center;">
+        <span class="ceo-card-title">Category Performance</span>
+        <div style="position: relative; width: 250px;">
+            <span class="material-icons-round" style="position: absolute; left: 10px; top: 50%; transform: translateY(-50%); font-size: 18px; color: var(--muted);">search</span>
+            <input type="text" id="bizCatSearchInput" placeholder="Search categories..." style="width: 100%; padding: 8px 12px 8px 36px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; outline: none; transition: border-color 0.2s;" onfocus="this.style.borderColor='var(--accent)'" onblur="this.style.borderColor='var(--border)'">
         </div>
     </div>
+    <div class="ceo-card-body no-pad">
+        <table class="ceo-table" id="bizCategoryPerformanceTable">
+            <thead>
+                <tr>
+                    <th>Category</th>
+                    <th class="num">Revenue</th>
+                    <th class="num">Growth</th>
+                    <th class="num">Contribution</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for cat in payload.category_performance %}
+                <tr>
+                    <td style="font-weight:600;">{{ cat.category }}</td>
+                    <td class="num">{{ cat.revenue|fmt_rupee }}</td>
+                    <td class="num {% if cat.growth >= 0 %}growth-up{% else %}growth-down{% endif %}">
+                        {% if cat.growth >= 0 %}▲{% else %}▼{% endif %} {{ cat.growth|abs_val }}%
+                    </td>
+                    <td class="num">{{ cat.contribution }}%</td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="4" class="empty" style="text-align: center; padding: 20px; color: var(--muted);">No data available</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        <div class="pagination-container" style="display: flex; justify-content: flex-end; padding: 12px 18px; gap: 6px;" id="bizCatPagination"></div>
+    </div>
 </div>
+
+<script>
+(function() {
+    function initBizPaginatedTable(tableId, searchId, paginationId, rowsPerPage = 10) {
+        const table = document.getElementById(tableId);
+        if (!table) return;
+        const tbody = table.querySelector('tbody');
+        if (!tbody) return;
+        let rows = Array.from(tbody.querySelectorAll('tr'));
+        if (rows.length === 0 || (rows.length === 1 && rows[0].querySelector('.empty'))) return;
+
+        const searchInput = document.getElementById(searchId);
+        const paginationControls = document.getElementById(paginationId);
+        let currentPage = 1;
+        let filteredRows = [...rows];
+
+        function renderTable() {
+            const start = (currentPage - 1) * rowsPerPage;
+            const end = start + rowsPerPage;
+            
+            rows.forEach(r => r.style.display = 'none');
+            filteredRows.slice(start, end).forEach(r => r.style.display = '');
+
+            renderPagination();
+        }
+
+        function renderPagination() {
+            if (!paginationControls) return;
+            const totalPages = Math.ceil(filteredRows.length / rowsPerPage);
+            paginationControls.innerHTML = '';
+            if (totalPages <= 1) return;
+
+            for (let i = 1; i <= totalPages; i++) {
+                const btn = document.createElement('button');
+                btn.className = `btn-page ${i === currentPage ? 'active' : ''}`;
+                btn.innerText = i;
+                btn.onclick = () => { currentPage = i; renderTable(); };
+                paginationControls.appendChild(btn);
+            }
+        }
+
+        if (searchInput) {
+            searchInput.oninput = (e) => {
+                const query = e.target.value.toLowerCase();
+                filteredRows = rows.filter(r => r.innerText.toLowerCase().includes(query));
+                currentPage = 1;
+                renderTable();
+            };
+        }
+
+        renderTable();
+    }
+    
+    window.bizPaginationInit = function() {
+        initBizPaginatedTable('bizCategoryPerformanceTable', 'bizCatSearchInput', 'bizCatPagination', 10);
+    };
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', window.bizPaginationInit);
+    } else {
+        window.bizPaginationInit();
+    }
+    
+    document.body.removeEventListener('htmx:afterSettle', window.bizPaginationInit);
+    document.body.addEventListener('htmx:afterSettle', window.bizPaginationInit);
+})();
+</script>
+
+<!-- ════════════ VIEW ALL MODALS ════════════ -->
 
 <!-- Category Growth Modal -->
 <div class="tbl-overlay" id="catGrowthModal">
@@ -651,11 +741,11 @@
     </div>
 </div>
 
-<!-- Winning Products Modal -->
+<!-- Top Revenue Contributors Modal -->
 <div class="tbl-overlay" id="winningModal">
     <div class="tbl-overlay-inner">
         <div class="tbl-overlay-header">
-            <span class="tbl-overlay-title">All Products by Revenue</span>
+            <span class="tbl-overlay-title">Top Revenue Contributors</span>
             <button class="tbl-overlay-close" onclick="closeModal('winningModal')">&#10005; Close</button>
         </div>
         <div class="tbl-overlay-scroll">
@@ -663,7 +753,6 @@
                 <thead>
                     <tr>
                         <th>SKU</th>
-                        <th>Product Name</th>
                         <th class="num">Revenue</th>
                         <th class="num">Growth</th>
                     </tr>
@@ -672,7 +761,6 @@
                     {% for prod in payload.cat_all_top_products %}
                     <tr>
                         <td><div class="ceo-sku-cell"><div class="ceo-sku-thumb">&#128230;</div><span>{{ prod.sku }}</span></div></td>
-                        <td>{{ prod.product_name }}</td>
                         <td class="num">{{ prod.revenue|fmt_rupee }}</td>
                         <td class="num growth-up">&#9650; {{ prod.growth }}%</td>
                     </tr>
@@ -695,7 +783,6 @@
                 <thead>
                     <tr>
                         <th>SKU</th>
-                        <th>Product Name</th>
                         <th class="num">Drop %</th>
                         <th class="num">Impact (&#8377;)</th>
                     </tr>
@@ -704,7 +791,6 @@
                     {% for prod in payload.cat_all_under_products %}
                     <tr>
                         <td><div class="ceo-sku-cell"><div class="ceo-sku-thumb">&#128230;</div><span>{{ prod.sku }}</span></div></td>
-                        <td>{{ prod.product_name }}</td>
                         <td class="num growth-down">&#9660; {{ prod.drop_pct|abs_val }}%</td>
                         <td class="num" style="color:var(--danger);">-{{ prod.impact|fmt_rupee }}</td>
                     </tr>
@@ -715,46 +801,6 @@
     </div>
 </div>
 
-<!-- Returns & VOC Modal -->
-<div class="tbl-overlay" id="returnsModal">
-    <div class="tbl-overlay-inner">
-        <div class="tbl-overlay-header">
-            <span class="tbl-overlay-title">Returns &amp; Customer Feedback &mdash; Full View</span>
-            <button class="tbl-overlay-close" onclick="closeModal('returnsModal')">&#10005; Close</button>
-        </div>
-        <div class="tbl-overlay-scroll" style="padding:20px;">
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px;">
-                <div>
-                    <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:8px;">Return Rate</div>
-                    <div style="font-size:28px;font-weight:800;color:var(--text);">{{ payload.returns_ratings.rate }}%</div>
-                    <div style="font-size:11px;color:var(--muted);margin-top:4px;">
-                        {% if payload.returns_ratings.change < 0 %}&#9660;{% else %}&#9650;{% endif %} {{ payload.returns_ratings.change|abs_val }}pp vs prev. period
-                    </div>
-                </div>
-            </div>
-            <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:12px;">Return Reasons Breakdown</div>
-            <table class="ceo-table" style="min-width:400px;">
-                <thead>
-                    <tr>
-                        <th>Reason</th>
-                        <th class="num">Percentage</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for reason in payload.returns_ratings.reasons %}
-                    <tr>
-                        <td style="font-weight:500;">{{ reason.label }}</td>
-                        <td class="num">{{ reason.pct }}%</td>
-                    </tr>
-                    {% empty %}
-                    <tr>
-                        <td colspan="2" class="empty">No return data available</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-    </div>
-</div>
+
 
 {% endblock %}

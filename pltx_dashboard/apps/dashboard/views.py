@@ -185,7 +185,8 @@ def get_dashboard_context(request):
     data_version = cache.get(f"dashboard_data_version_{data_owner.id}", 0)
     cache_key = f"dashboard_payload_{data_owner.id}_{data_version}_{cache_hash}"
     
-    payload = cache.get(cache_key)
+    # Bypass cache temporarily to ensure new data structures (like inventory.details) are populated
+    payload = None # cache.get(cache_key)
     if not payload:
         payload = run_orm_computation(
             qs,

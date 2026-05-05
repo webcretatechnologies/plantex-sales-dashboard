@@ -807,24 +807,40 @@ body {
     gap: 24px;
 }
 
-/* ── KPI Grid ── */
-.ceo-kpi-row {
-    display: grid;
-    grid-template-columns: repeat(6, 1fr);
-    gap: 20px;
+/* ── KPI Grid Version 2 ── */
+.kpi-grid-v2 {
+    display: grid !important;
+    grid-template-columns: repeat(6, 1fr) !important;
+    gap: 16px !important;
+    margin-bottom: 24px !important;
+    width: 100% !important;
 }
 
-@media(max-width:1400px) {
-    .ceo-kpi-row {
-        grid-template-columns: repeat(3, 1fr);
+@media(max-width:1600px) {
+    .kpi-grid-v2 {
+        grid-template-columns: repeat(4, 1fr) !important;
+    }
+}
+
+@media(max-width:1200px) {
+    .kpi-grid-v2 {
+        grid-template-columns: repeat(3, 1fr) !important;
     }
 }
 
 @media(max-width:768px) {
-    .ceo-kpi-row {
-        grid-template-columns: repeat(2, 1fr);
+    .kpi-grid-v2 {
+        grid-template-columns: repeat(2, 1fr) !important;
     }
 }
+
+@media(max-width:480px) {
+    .kpi-grid-v2 {
+        grid-template-columns: 1fr !important;
+    }
+}
+
+/* ── KPI Grid ── */
 
 .ceo-kpi-card {
     background: var(--surface);
@@ -2215,32 +2231,7 @@ body {
    Business Dashboard — Specific Styles
    ══════════════════════════════════════════════════════════════ */
 
-/* ── KPI Row: 8 Cards ── */
-.biz-kpi-row {
-    display: grid;
-    grid-template-columns: repeat(8, 1fr);
-    gap: 12px;
-    margin-bottom: 20px;
-}
-
-@media(max-width:1600px) {
-    .biz-kpi-row {
-        grid-template-columns: repeat(4, 1fr);
-    }
-}
-
-@media(max-width:900px) {
-    .biz-kpi-row {
-        grid-template-columns: repeat(2, 1fr);
-    }
-}
-
-@media(max-width:480px) {
-    .biz-kpi-row {
-        grid-template-columns: 1fr;
-    }
-}
-
+/* ── KPI Row: 6 Cards per row (wraps 12 into 2 rows) ── */
 .biz-kpi-row .ceo-kpi-card .ceo-kpi-value {
     font-size: 20px;
 }
@@ -3111,17 +3102,46 @@ body {
     background: var(--accent);
     color: white;
 }
-
-font-size: 11px;
-font-weight: 600;
-cursor: pointer;
-font-family: 'Inter',
-sans-serif;
-transition: all 0.2s;
-white-space: nowrap;
+/* ── Pagination ── */
+.btn-page {
+    min-width: 32px;
+    height: 32px;
+    padding: 0 8px;
+    border: 1px solid var(--border);
+    background: transparent;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text);
+    cursor: pointer;
+    transition: all 0.2s;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
 }
-
-.cat-investigate-btn:hover {
+.btn-page:hover {
+    background: var(--surface2);
+}
+.btn-page.active {
     background: var(--accent);
     color: white;
+    border-color: var(--accent);
+}
+
+/* ── 2 Column Row ── */
+.ceo-row-2-cols {
+    display: grid;
+    grid-template-columns: 1.5fr 1fr;
+    gap: 16px;
+    margin-bottom: 20px;
+}
+@media(max-width:1200px) {
+    .ceo-row-2-cols {
+        grid-template-columns: 1fr 1fr;
+    }
+}
+@media(max-width:768px) {
+    .ceo-row-2-cols {
+        grid-template-columns: 1fr;
+    }
 }
