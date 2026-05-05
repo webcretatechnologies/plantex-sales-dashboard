@@ -160,22 +160,18 @@ def _build_export_dataframe(user, filters):
     # ------------------------------------------------------------------
     # Compute core metrics (mirrors cleaning_mapping_merging.py §6)
     # ------------------------------------------------------------------
-    # ROAS
+    # ROAS (uses Revenue * 0.7)
     merged["ROAS"] = merged.apply(
-        lambda r: (r["Revenue"] / r["Spend"]) if r["Spend"] > 0 else 0, axis=1
+        lambda r: (r["Revenue"] * 0.7 / r["Spend"]) if r["Spend"] > 0 else 0, axis=1
     )
-    # TACoS
+    # TACoS (uses Revenue * 0.7)
     merged["TACoS (%)"] = merged.apply(
-        lambda r: (r["Spend"] / r["Revenue"] * 100) if r["Revenue"] > 0 else 0, axis=1
+        lambda r: (r["Spend"] / (r["Revenue"] * 0.7) * 100) if r["Revenue"] > 0 else 0, axis=1
     )
     # CVR
     merged["CVR (%)"] = merged.apply(
         lambda r: (r["Orders"] / r["Page Views"] * 100) if r["Page Views"] > 0 else 0,
         axis=1,
-    )
-    # AOV
-    merged["AOV"] = merged.apply(
-        lambda r: (r["Revenue"] / r["Orders"]) if r["Orders"] > 0 else 0, axis=1
     )
     # COGS
     merged["COGS (Total)"] = merged["Units"] * merged["Price"]
@@ -196,7 +192,6 @@ def _build_export_dataframe(user, filters):
         "ROAS",
         "TACoS (%)",
         "CVR (%)",
-        "AOV",
         "Gross Margin",
         "Gross Margin (%)",
         "Net Profit",
@@ -223,7 +218,6 @@ def _build_export_dataframe(user, filters):
         "ROAS",
         "TACoS (%)",
         "CVR (%)",
-        "AOV",
         "COGS (Total)",
         "Gross Margin",
         "Gross Margin (%)",
@@ -241,23 +235,18 @@ def _build_export_dataframe(user, filters):
 ANNEXURE_DATA = [
     {
         "Metric": "ROAS",
-        "Formula": "Revenue / Spend",
-        "Description": "Return on Ad Spend: For every ₹1 spent on ads, how much revenue was generated.",
+        "Formula": "(Revenue × 0.7) / Spend",
+        "Description": "Return on Ad Spend: For every ₹1 spent on ads, how much adjusted revenue was generated. Revenue is GST-exclusive and multiplied by 0.7.",
     },
     {
         "Metric": "TACoS (%)",
-        "Formula": "(Spend / Revenue) * 100",
+        "Formula": "(Spend / (Revenue × 0.7)) * 100",
         "Description": "Total Advertising Cost of Sale: Percentage of total revenue spent on advertising.",
     },
     {
         "Metric": "CVR (%)",
         "Formula": "(Orders / Page Views) * 100",
         "Description": "Conversion Rate: Percentage of people who viewed and purchased the product.",
-    },
-    {
-        "Metric": "AOV",
-        "Formula": "Revenue / Orders",
-        "Description": "Average Order Value: Average amount a customer spends per order.",
     },
     {
         "Metric": "COGS (Total)",

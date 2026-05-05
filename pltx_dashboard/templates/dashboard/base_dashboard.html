@@ -270,8 +270,7 @@
             {% if 'ceo_dashboard' in user_features %}
             <a href="{% url 'ceo-dashboard' %}"
                 class="nav-item {% if request.resolver_match.url_name == 'ceo-dashboard' %}active{% endif %}"
-                id="nav-ceo" hx-get="{% url 'ceo-dashboard' %}" hx-target=".dash-body" hx-push-url="true"
-                hx-swap="innerHTML" hx-include="#dashboardFilterForm, #secondaryFilters">
+                id="nav-ceo">
                 <span class="material-icons-round nav-icon">dashboard</span>
                 CEO Dashboard
             </a>
@@ -279,8 +278,7 @@
             {% if 'business_dashboard' in user_features %}
             <a href="{% url 'business-dashboard' %}"
                 class="nav-item {% if request.resolver_match.url_name == 'business-dashboard' %}active{% endif %}"
-                id="nav-business" hx-get="{% url 'business-dashboard' %}" hx-target=".dash-body" hx-push-url="true"
-                hx-swap="innerHTML" hx-include="#dashboardFilterForm, #secondaryFilters">
+                id="nav-business">
                 <span class="material-icons-round nav-icon">business</span>
                 Business
             </a>
@@ -288,8 +286,7 @@
             {% if 'category_dashboard' in user_features %}
             <a href="{% url 'category-dashboard' %}"
                 class="nav-item {% if request.resolver_match.url_name == 'category-dashboard' %}active{% endif %}"
-                id="nav-category" hx-get="{% url 'category-dashboard' %}" hx-target=".dash-body" hx-push-url="true"
-                hx-swap="innerHTML" hx-include="#dashboardFilterForm, #secondaryFilters">
+                id="nav-category">
                 <span class="material-icons-round nav-icon">category</span>
                 Category
             </a>

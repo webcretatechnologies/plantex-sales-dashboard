@@ -121,18 +121,16 @@ def process_reports(base_dir):
     # Based on the logic in 'dashboards_logic.md'
     
     # -- A. SALES EFFICIENCY --
-    # ROAS (Return on Ad Spend)
-    merged_df['ROAS'] = merged_df.apply(lambda row: (row['Revenue'] / row['Spend']) if row['Spend'] > 0 else 0, axis=1)
+    # ROAS (Return on Ad Spend) — uses Revenue * 0.7
+    merged_df['ROAS'] = merged_df.apply(lambda row: (row['Revenue'] * 0.7 / row['Spend']) if row['Spend'] > 0 else 0, axis=1)
     
-    # TACoS (Total Advertising Cost of Sale)
-    merged_df['TACoS (%)'] = merged_df.apply(lambda row: (row['Spend'] / row['Revenue'] * 100) if row['Revenue'] > 0 else 0, axis=1)
+    # TACoS (Total Advertising Cost of Sale) — uses Revenue * 0.7
+    merged_df['TACoS (%)'] = merged_df.apply(lambda row: (row['Spend'] / (row['Revenue'] * 0.7) * 100) if row['Revenue'] > 0 else 0, axis=1)
     
     # CVR (Conversion Rate)
     merged_df['CVR (%)'] = merged_df.apply(lambda row: (row['Orders'] / row['Page Views'] * 100) if row['Page Views'] > 0 else 0, axis=1)
     
     # -- B. PROFITABILITY --
-    # AOV (Average Order Value)
-    merged_df['AOV'] = merged_df.apply(lambda row: (row['Revenue'] / row['Orders']) if row['Orders'] > 0 else 0, axis=1)
     
     # We will assume 'Price' from pricing report represents our Cost factor (COGS) for this example
     merged_df['COGS (Total)'] = merged_df['Units'] * merged_df['Price']
@@ -150,7 +148,7 @@ def process_reports(base_dir):
     merged_df['Contribution Margin (%)'] = merged_df['Gross Margin (%)'] - merged_df['TACoS (%)']
     
     # Round all metrics for a readable CSV output
-    cols_to_round = ['ROAS', 'TACoS (%)', 'CVR (%)', 'AOV', 'Gross Margin', 'Gross Margin (%)', 'Net Profit', 'Contribution Margin (%)']
+    cols_to_round = ['ROAS', 'TACoS (%)', 'CVR (%)', 'Gross Margin', 'Gross Margin (%)', 'Net Profit', 'Contribution Margin (%)']
     merged_df[cols_to_round] = merged_df[cols_to_round].round(2)
     print("All core metrics computed based on dashboard logic.")
 
@@ -158,10 +156,9 @@ def process_reports(base_dir):
     # 7. GENERATE ANNEXURE
     # ==========================
     annexure_data = [
-        {"Metric": "ROAS", "Formula": "Revenue / Spend", "Description": "Return on Ad Spend: For every ₹1 spent on ads, how much revenue were generated. If spend is 0, ROAS is 0."},
-        {"Metric": "TACoS (%)", "Formula": "(Spend / Revenue) * 100", "Description": "Total Advertising Cost of Sale: Percentage of the total revenue that is spent on advertising."},
+        {"Metric": "ROAS", "Formula": "(Revenue × 0.7) / Spend", "Description": "Return on Ad Spend: For every ₹1 spent on ads, how much adjusted revenue was generated. Revenue is GST-exclusive and multiplied by 0.7."},
+        {"Metric": "TACoS (%)", "Formula": "(Spend / (Revenue × 0.7)) * 100", "Description": "Total Advertising Cost of Sale: Percentage of adjusted revenue spent on advertising. Revenue is GST-exclusive and multiplied by 0.7."},
         {"Metric": "CVR (%)", "Formula": "(Orders / Page Views) * 100", "Description": "Conversion Rate: Percentage of people who viewed the product and actually bought it."},
-        {"Metric": "AOV", "Formula": "Revenue / Orders", "Description": "Average Order Value: The average amount a customer spends in a single order."},
         {"Metric": "COGS (Total)", "Formula": "Units * Price", "Description": "Cost of Goods Sold: Estimated total cost of products sold based on the pricing data report."},
         {"Metric": "Gross Margin", "Formula": "Revenue - COGS (Total)", "Description": "Gross Margin: Profit after accounting for product costs but before advertising costs."},
         {"Metric": "Gross Margin (%)", "Formula": "(Gross Margin / Revenue) * 100", "Description": "Gross Margin Percentage: Profitability percentage before advertising."},
