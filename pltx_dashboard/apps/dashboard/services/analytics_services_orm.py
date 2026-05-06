@@ -101,23 +101,6 @@ def generate_kpis_orm(qs, fk_qs, spend_qs=None):
         "gross_margin_pct": round(gross_margin_pct, 2),
         "net_profit": net_profit,
         "contribution_margin": contribution_margin,
-        # Growth placeholders (populated by pipeline after prev-period comparison)
-        "mom_growth": 0,
-        "yoy_growth": 0,
-        "prev_mom": 0,
-        "prev_yoy": 0,
-        "revenue_change": 0,
-        "orders_change": 0,
-        "units_change": 0,
-        "spend_change": 0,
-        "tacos_change": 0,
-        "profit_change": 0,
-        "gross_margin_change": 0,
-        "contribution_margin_change": 0,
-        "orders_pct_change": 0,
-        "units_pct_change": 0,
-        "run_rate_pct": 0,
-        "run_rate_status": "on_track",
     }
 
 
