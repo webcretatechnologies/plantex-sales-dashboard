@@ -2276,17 +2276,17 @@ body {
     }
 }
 
-/* ── 4 Column Row: Inventory | OOS | Marketing | Returns ── */
+/* ── 3 Column Row: Inventory | OOS | Marketing ── */
 .biz-row-4 {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(3, 1fr);
     gap: 16px;
     margin-bottom: 20px;
 }
 
-@media(max-width:1400px) {
+@media(max-width:1200px) {
     .biz-row-4 {
-        grid-template-columns: repeat(2, 1fr);
+        grid-template-columns: 1fr 1fr;
     }
 }
 
@@ -2296,21 +2296,15 @@ body {
     }
 }
 
-/* ── Bottom Row: Profitability | Health | Insights ── */
+/* ── Bottom Row: Profitability | Priorities ── */
 .biz-row-3-bottom {
     display: grid;
-    grid-template-columns: 1.2fr 0.8fr 1fr;
+    grid-template-columns: 1fr 1fr;
     gap: 16px;
     margin-bottom: 20px;
 }
 
 @media(max-width:1200px) {
-    .biz-row-3-bottom {
-        grid-template-columns: 1fr 1fr;
-    }
-}
-
-@media(max-width:768px) {
     .biz-row-3-bottom {
         grid-template-columns: 1fr;
     }
@@ -2378,108 +2372,7 @@ body {
     color: var(--down-color);
 }
 
-/* ── Inventory Pill Cards ── */
-.biz-inv-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
-}
 
-.biz-inv-pill {
-    border-radius: var(--radius-sm);
-    padding: 12px 14px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 4px;
-    text-align: center;
-    transition: transform 0.2s;
-}
-
-.biz-inv-pill:hover {
-    transform: translateY(-2px);
-}
-
-.biz-inv-pill.good {
-    background: rgba(16, 185, 129, 0.08);
-    border: 1px solid rgba(16, 185, 129, 0.2);
-}
-
-.biz-inv-pill.warn {
-    background: rgba(245, 158, 11, 0.08);
-    border: 1px solid rgba(245, 158, 11, 0.2);
-}
-
-.biz-inv-pill.danger {
-    background: rgba(220, 38, 38, 0.08);
-    border: 1px solid rgba(220, 38, 38, 0.2);
-}
-
-.biz-inv-pill.neutral {
-    background: rgba(99, 102, 241, 0.08);
-    border: 1px solid rgba(99, 102, 241, 0.2);
-}
-
-.biz-inv-pill-icon {
-    width: 24px;
-    height: 24px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 11px;
-    font-weight: 800;
-}
-
-.biz-inv-pill.good .biz-inv-pill-icon {
-    background: rgba(16, 185, 129, 0.15);
-    color: var(--success);
-}
-
-.biz-inv-pill.warn .biz-inv-pill-icon {
-    background: rgba(245, 158, 11, 0.15);
-    color: var(--warning);
-}
-
-.biz-inv-pill.danger .biz-inv-pill-icon {
-    background: rgba(220, 38, 38, 0.15);
-    color: var(--danger);
-}
-
-.biz-inv-pill.neutral .biz-inv-pill-icon {
-    background: rgba(99, 102, 241, 0.15);
-    color: #6366f1;
-}
-
-.biz-inv-pill-label {
-    font-size: 10px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--muted);
-}
-
-.biz-inv-pill strong {
-    font-size: 14px;
-    font-family: 'JetBrains Mono', monospace;
-    font-weight: 800;
-}
-
-.biz-inv-pill.good strong {
-    color: var(--success);
-}
-
-.biz-inv-pill.warn strong {
-    color: var(--warning);
-}
-
-.biz-inv-pill.danger strong {
-    color: var(--danger);
-}
-
-.biz-inv-pill.neutral strong {
-    color: #6366f1;
-}
 
 /* ── Metric Cards (OOS / Marketing) ── */
 .biz-metric-row {
@@ -2603,101 +2496,7 @@ body {
     transform: translateY(-1px);
 }
 
-/* ── Business Health Gauge ── */
-.biz-health-container {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 16px;
-}
 
-.biz-health-gauge-wrap {
-    position: relative;
-    width: 180px;
-    height: 180px;
-}
-
-.biz-health-center {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    text-align: center;
-}
-
-.biz-health-score {
-    font-size: 36px;
-    font-weight: 900;
-    color: var(--text);
-    line-height: 1;
-}
-
-.biz-health-max {
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--muted);
-    margin-top: 2px;
-}
-
-.biz-health-label {
-    font-size: 12px;
-    font-weight: 700;
-    margin-top: 4px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-}
-
-.biz-health-label.good {
-    color: var(--success);
-}
-
-.biz-health-label.ok {
-    color: var(--warning);
-}
-
-.biz-health-label.poor {
-    color: var(--danger);
-}
-
-.biz-health-breakdown {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    width: 100%;
-}
-
-.biz-health-item {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 12px;
-}
-
-.biz-health-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    flex-shrink: 0;
-}
-
-.biz-health-item-label {
-    flex: 1;
-    font-weight: 600;
-    color: var(--text);
-}
-
-.biz-health-item-score {
-    font-family: 'JetBrains Mono', monospace;
-    font-weight: 700;
-    color: var(--text);
-    font-size: 13px;
-}
-
-.biz-health-item-score small {
-    font-weight: 400;
-    color: var(--muted);
-    font-size: 10px;
-}
 
 /* ── Insight / Recommendation Items ── */
 .biz-insight-list {
@@ -2792,91 +2591,7 @@ body {
    Category Dashboard — Specific Styles
    ══════════════════════════════════════════════════════════════ */
 
-/* ── Category Health Pill Grid ── */
-.cat-health-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
-}
 
-.cat-health-pill {
-    border-radius: var(--radius-sm);
-    padding: 16px 14px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 4px;
-    text-align: center;
-    transition: transform 0.2s;
-}
-
-.cat-health-pill:hover {
-    transform: translateY(-2px);
-}
-
-.cat-health-pill.green {
-    background: rgba(16, 185, 129, 0.08);
-    border: 1px solid rgba(16, 185, 129, 0.2);
-}
-
-.cat-health-pill.red {
-    background: rgba(239, 68, 68, 0.08);
-    border: 1px solid rgba(239, 68, 68, 0.2);
-}
-
-.cat-health-pill.amber {
-    background: rgba(245, 158, 11, 0.08);
-    border: 1px solid rgba(245, 158, 11, 0.2);
-}
-
-.cat-health-pill.purple {
-    background: rgba(139, 92, 246, 0.08);
-    border: 1px solid rgba(139, 92, 246, 0.2);
-}
-
-.cat-health-pill-label {
-    font-size: 10px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--muted);
-}
-
-.cat-health-pill strong {
-    font-size: 24px;
-    font-family: 'JetBrains Mono', monospace;
-    font-weight: 800;
-    line-height: 1;
-}
-
-.cat-health-pill.green strong {
-    color: var(--success);
-}
-
-.cat-health-pill.red strong {
-    color: var(--danger);
-}
-
-.cat-health-pill.amber strong {
-    color: var(--warning);
-}
-
-.cat-health-pill.purple strong {
-    color: #8b5cf6;
-}
-
-.cat-health-pill-change {
-    font-size: 10px;
-    font-weight: 600;
-}
-
-.cat-health-pill-change.up {
-    color: var(--up-color);
-}
-
-.cat-health-pill-change.down {
-    color: var(--down-color);
-}
 
 /* ── Inventory Position Buckets ── */
 .cat-inv-buckets {

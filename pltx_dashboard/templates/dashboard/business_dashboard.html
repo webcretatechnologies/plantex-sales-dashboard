@@ -72,8 +72,8 @@
             </div>
         </div>
         <div class="ceo-kpi-value">{{ payload.kpis.gross_margin_pct|floatformat:1 }}%</div>
-        <div class="ceo-kpi-change up">
-            ▲ 2.8pp <span class="sub">vs prev. period</span>
+        <div class="ceo-kpi-change {% if payload.kpis.gross_margin_change >= 0 %}up{% else %}down{% endif %}">
+            {% if payload.kpis.gross_margin_change >= 0 %}▲{% else %}▼{% endif %} {{ payload.kpis.gross_margin_change|abs_val }}pp <span class="sub">vs prev. period</span>
         </div>
     </div>
 
@@ -327,22 +327,18 @@
         </div>
     </div>
 
-    <!-- Bottom 5 Products by Growth -->
+    <!-- Declining Products (MOM) -->
     <div class="ceo-card" id="biz-card-bottom-products">
         <div class="ceo-card-header">
-            <div>
-                <span class="ceo-card-title">Bottom 5 Products by Growth</span>
-                <div style="font-size:11px;color:var(--muted);margin-top:2px;">Declining products to watch</div>
-            </div>
-            <button class="ceo-view-all-btn" onclick="openModal('decliningModal')" id="biz-btn-declining-viewall">View
-                All</button>
+            <span class="ceo-card-title">Declining Products (MOM)</span>
+            <button class="ceo-view-all-btn" onclick="openModal('bizDecliningModal')" id="biz-btn-declining-viewall">View All</button>
         </div>
         <div class="ceo-card-body no-pad">
             <table class="ceo-table">
                 <thead>
                     <tr>
                         <th>SKU</th>
-                        <th class="num">Drop %</th>
+                        <th class="num">MOM Drop %</th>
                         <th class="num">Impact (₹)</th>
                     </tr>
                 </thead>
@@ -359,9 +355,7 @@
                         <td class="num" style="color:var(--danger);">-{{ prod.impact|fmt_rupee }}</td>
                     </tr>
                     {% empty %}
-                    <tr>
-                        <td colspan="3" class="empty">No data available</td>
-                    </tr>
+                    <tr><td colspan="3" class="empty">No data available</td></tr>
                     {% endfor %}
                 </tbody>
             </table>
@@ -369,38 +363,38 @@
     </div>
 </div>
 
-<!-- ════════════ ROW 4: Inventory Health | OOS Impact | Marketing Performance | Returns & VOC ════════════ -->
+<!-- ════════════ ROW 4: Inventory Health | OOS Impact | Marketing Performance ════════════ -->
 <div class="biz-row-4">
-    <!-- Inventory Health -->
+    <!-- Inventory Health (CEO-style) -->
     <div class="ceo-card" id="biz-card-inventory">
-        <div class="ceo-card-header">
+        <div class="ceo-card-header" style="display: flex; justify-content: space-between; align-items: center;">
             <div>
                 <span class="ceo-card-title">Inventory Health</span>
                 <div style="font-size:11px;color:var(--muted);margin-top:2px;">Current stock status</div>
             </div>
-            <button class="ceo-view-all-btn" id="biz-btn-inv-viewall">View All</button>
+            <button class="ceo-view-all-btn" onclick="openModal('bizInventoryHealthModal')">View Details</button>
         </div>
         <div class="ceo-card-body">
-            <div class="biz-inv-grid">
-                <div class="biz-inv-pill good">
-                    <span class="biz-inv-pill-icon">&#10003;</span>
-                    <span class="biz-inv-pill-label">In Stock</span>
-                    <strong>{{ payload.inventory.in_stock }} SKUs</strong>
+            <div class="ceo-inv-grid">
+                <div class="ceo-inv-card">
+                    <div class="ceo-inv-icon good">✓</div>
+                    <div class="ceo-inv-label">In Stock</div>
+                    <div class="ceo-inv-value good">{{ payload.inventory.in_stock }} SKUs</div>
                 </div>
-                <div class="biz-inv-pill warn">
-                    <span class="biz-inv-pill-icon">!</span>
-                    <span class="biz-inv-pill-label">Low Stock</span>
-                    <strong>{{ payload.inventory.low_stock }} SKUs</strong>
+                <div class="ceo-inv-card">
+                    <div class="ceo-inv-icon warn">!</div>
+                    <div class="ceo-inv-label">Low Stock</div>
+                    <div class="ceo-inv-value warn">{{ payload.inventory.low_stock }} SKUs</div>
                 </div>
-                <div class="biz-inv-pill danger">
-                    <span class="biz-inv-pill-icon">&#10005;</span>
-                    <span class="biz-inv-pill-label">OOS</span>
-                    <strong>{{ payload.inventory.oos }} SKUs</strong>
+                <div class="ceo-inv-card">
+                    <div class="ceo-inv-icon danger">✕</div>
+                    <div class="ceo-inv-label">OOS</div>
+                    <div class="ceo-inv-value danger">{{ payload.inventory.oos }} SKUs</div>
                 </div>
-                <div class="biz-inv-pill neutral">
-                    <span class="biz-inv-pill-icon">&#11014;</span>
-                    <span class="biz-inv-pill-label">Overstock</span>
-                    <strong>{{ payload.inventory.overstock }} SKUs</strong>
+                <div class="ceo-inv-card">
+                    <div class="ceo-inv-icon neutral">⬆</div>
+                    <div class="ceo-inv-label">Overstock</div>
+                    <div class="ceo-inv-value neutral">{{ payload.inventory.overstock }} SKUs</div>
                 </div>
             </div>
         </div>
@@ -413,7 +407,6 @@
                 <span class="ceo-card-title">OOS Impact</span>
                 <div style="font-size:11px;color:var(--muted);margin-top:2px;">Business impact of out-of-stock</div>
             </div>
-            <button class="ceo-view-all-btn" id="biz-btn-oos-viewall">View All</button>
         </div>
         <div class="ceo-card-body">
             <div class="biz-metric-row">
@@ -447,7 +440,6 @@
                 <span class="ceo-card-title">Marketing Performance</span>
                 <div style="font-size:11px;color:var(--muted);margin-top:2px;">Ad performance overview</div>
             </div>
-            <button class="ceo-view-all-btn" id="biz-btn-mkt-viewall">View All</button>
         </div>
         <div class="ceo-card-body">
             <div class="biz-metric-row">
@@ -498,7 +490,8 @@
     </div>
 </div>
 
-<!-- ════════════ ROW 5: Profitability Overview | Business Health Score | Key Insights ════════════ -->
+
+<!-- ════════════ ROW 5: Profitability Overview | Today's Priorities ════════════ -->
 <div class="biz-row-3-bottom">
     <!-- Profitability Overview -->
     <div class="ceo-card" id="biz-card-profitability">
@@ -507,95 +500,30 @@
                 <span class="ceo-card-title">Profitability Overview</span>
                 <div style="font-size:11px;color:var(--muted);margin-top:2px;">Track financial performance</div>
             </div>
-            <button class="ceo-view-all-btn" id="biz-btn-profit-viewall">View All</button>
         </div>
         <div class="ceo-card-body">
             <div class="ceo-chart-wrap" style="height:240px;"><canvas id="bizProfitChart"></canvas></div>
         </div>
     </div>
 
-    <!-- Business Health Score -->
-    <div class="ceo-card" id="biz-card-health">
-        <div class="ceo-card-header">
-            <span class="ceo-card-title">Business Health Score</span>
-            <div style="font-size:11px;color:var(--muted);">Overall business performance indicator</div>
+    <!-- Today's Priorities (CEO-style) -->
+    <div class="ceo-card" id="biz-card-priorities">
+        <div class="ceo-card-header" style="display: flex; justify-content: space-between; align-items: center;">
+            <span class="ceo-card-title">Today's Priorities</span>
+            <button class="ceo-view-all-btn" onclick="openModal('bizPriorityDetailsModal')">View Details</button>
         </div>
-        <div class="ceo-card-body">
-            <div class="biz-health-container">
-                <div class="biz-health-gauge-wrap">
-                    <canvas id="bizHealthGauge" width="200" height="200"></canvas>
-                    <div class="biz-health-center">
-                        <div class="biz-health-score">{{ payload.business_health.score }}</div>
-                        <div class="biz-health-max">/100</div>
-                        <div class="biz-health-label
-                            {% if payload.business_health.score >= 80 %}good
-                            {% elif payload.business_health.score >= 60 %}ok
-                            {% else %}poor{% endif %}">
-                            {% if payload.business_health.score >= 80 %}Good
-                            {% elif payload.business_health.score >= 60 %}Fair
-                            {% else %}Needs Work{% endif %}
-                        </div>
-                    </div>
+        <div class="ceo-priority-list">
+            {% for task in payload.priorities %}
+            <div class="ceo-priority-item">
+                <div class="ceo-priority-rank">{{ task.rank }}</div>
+                <div class="ceo-priority-content">
+                    <div class="ceo-priority-title">{{ task.title }}</div>
+                    <div class="ceo-priority-subtitle">{{ task.subtitle }}</div>
                 </div>
-                <div class="biz-health-breakdown">
-                    <div class="biz-health-item">
-                        <span class="biz-health-dot" style="background:#10b981;"></span>
-                        <span class="biz-health-item-label">Growth</span>
-                        <span class="biz-health-item-score">{{ payload.business_health.breakdown.growth }}<small>/100</small></span>
-                    </div>
-                    <div class="biz-health-item">
-                        <span class="biz-health-dot" style="background:#3b82f6;"></span>
-                        <span class="biz-health-item-label">Profitability</span>
-                        <span class="biz-health-item-score">{{ payload.business_health.breakdown.profitability }}<small>/100</small></span>
-                    </div>
-                    <div class="biz-health-item">
-                        <span class="biz-health-dot" style="background:#f59e0b;"></span>
-                        <span class="biz-health-item-label">Inventory</span>
-                        <span class="biz-health-item-score">{{ payload.business_health.breakdown.inventory }}<small>/100</small></span>
-                    </div>
-                    <div class="biz-health-item">
-                        <span class="biz-health-dot" style="background:#8b5cf6;"></span>
-                        <span class="biz-health-item-label">Operations</span>
-                        <span class="biz-health-item-score">{{ payload.business_health.breakdown.operations }}<small>/100</small></span>
-                    </div>
-                </div>
+                <span class="ceo-priority-badge {% if task.priority == 'High' %}high{% elif task.priority == 'Medium' %}medium{% else %}low{% endif %}">{{ task.priority }}</span>
+                <span class="ceo-priority-arrow">›</span>
             </div>
-        </div>
-    </div>
-
-    <!-- Key Insights & Recommendations -->
-    <div class="ceo-card" id="biz-card-insights">
-        <div class="ceo-card-header">
-            <span class="ceo-card-title">Key Insights &amp; Recommendations</span>
-            <button class="ceo-view-all-btn" id="biz-btn-insights-viewall">View All</button>
-        </div>
-        <div class="ceo-card-body no-pad">
-            <div class="biz-insight-list">
-                <div class="biz-insight-item">
-                    <div class="biz-insight-icon">&#128161;</div>
-                    <div class="biz-insight-content">
-                        <div class="biz-insight-title">Increase inventory for top 20 SKUs</div>
-                        <div class="biz-insight-subtitle">Potential revenue boost: {{ payload.kpis.revenue|multiply:0.1|fmt_rupee }}</div>
-                    </div>
-                    <span class="ceo-priority-badge high">High</span>
-                </div>
-                <div class="biz-insight-item">
-                    <div class="biz-insight-icon">&#128202;</div>
-                    <div class="biz-insight-content">
-                        <div class="biz-insight-title">Optimize ads for Bathroom category</div>
-                        <div class="biz-insight-subtitle">ROAS can improve by 0.8x</div>
-                    </div>
-                    <span class="ceo-priority-badge medium">Medium</span>
-                </div>
-                <div class="biz-insight-item">
-                    <div class="biz-insight-icon">&#128269;</div>
-                    <div class="biz-insight-content">
-                        <div class="biz-insight-title">Review pricing for 5 declining SKUs</div>
-                        <div class="biz-insight-subtitle">Potential to recover {{ payload.kpis.revenue|multiply:0.03|fmt_rupee }}</div>
-                    </div>
-                    <span class="ceo-priority-badge low">Low</span>
-                </div>
-            </div>
+            {% endfor %}
         </div>
     </div>
 </div>
@@ -771,27 +699,84 @@
     </div>
 </div>
 
-<!-- Declining Products Modal -->
-<div class="tbl-overlay" id="decliningModal">
+
+
+<!-- Inventory Health Breakdown Modal -->
+<div class="tbl-overlay" id="bizInventoryHealthModal">
+    <div class="tbl-overlay-inner" style="max-width: 900px;">
+        <div class="tbl-overlay-header">
+            <div>
+                <span class="tbl-overlay-title">Inventory Health Breakdown</span>
+                <div style="font-size: 11px; color: var(--muted); margin-top: 4px;">
+                    Calculated based on average units sold (<strong>{{ payload.inventory.avg_units }}</strong>). 
+                    Low Stock: &le;25% of avg. Overstock: &ge;200% of avg.
+                </div>
+            </div>
+            <button class="tbl-overlay-close" onclick="closeModal('bizInventoryHealthModal')">✕ Close</button>
+        </div>
+        <div class="tbl-overlay-scroll">
+            <table class="ceo-table" style="min-width: 700px;">
+                <thead>
+                    <tr>
+                        <th>SKU</th>
+                        <th>Category</th>
+                        <th class="num">Units Sold</th>
+                        <th class="num">Revenue</th>
+                        <th>Status</th>
+                        <th>Calculation</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in payload.inventory.details %}
+                    <tr>
+                        <td>
+                            <div class="ceo-sku-cell">
+                                <div class="ceo-sku-thumb">📦</div>
+                                <span>{{ item.sku }}</span>
+                            </div>
+                        </td>
+                        <td>{{ item.category }}</td>
+                        <td class="num">{{ item.units|fmt_num }}</td>
+                        <td class="num">{{ item.revenue|fmt_rupee }}</td>
+                        <td>
+                            <span class="ceo-inv-value {{ item.status_class }}" style="padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600;">
+                                {{ item.status }}
+                            </span>
+                        </td>
+                        <td style="font-size: 11px; color: var(--muted); font-family: 'JetBrains Mono', monospace;">
+                            {{ item.reason|safe }}
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="6" class="empty">No inventory data available</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Declining Products (MOM) — Full View Modal -->
+<div class="tbl-overlay" id="bizDecliningModal">
     <div class="tbl-overlay-inner">
         <div class="tbl-overlay-header">
-            <span class="tbl-overlay-title">Declining Products &mdash; Full View</span>
-            <button class="tbl-overlay-close" onclick="closeModal('decliningModal')">&#10005; Close</button>
+            <span class="tbl-overlay-title">Declining Products (MOM) — Full View</span>
+            <button class="tbl-overlay-close" onclick="closeModal('bizDecliningModal')">✕ Close</button>
         </div>
         <div class="tbl-overlay-scroll">
             <table class="ceo-table" style="min-width:600px;">
                 <thead>
                     <tr>
                         <th>SKU</th>
-                        <th class="num">Drop %</th>
-                        <th class="num">Impact (&#8377;)</th>
+                        <th class="num">MOM Drop %</th>
+                        <th class="num">Impact (₹)</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for prod in payload.cat_all_under_products %}
                     <tr>
-                        <td><div class="ceo-sku-cell"><div class="ceo-sku-thumb">&#128230;</div><span>{{ prod.sku }}</span></div></td>
-                        <td class="num growth-down">&#9660; {{ prod.drop_pct|abs_val }}%</td>
+                        <td><div class="ceo-sku-cell"><div class="ceo-sku-thumb">📦</div><span>{{ prod.sku }}</span></div></td>
+                        <td class="num growth-down">▼ {{ prod.drop_pct|abs_val }}%</td>
                         <td class="num" style="color:var(--danger);">-{{ prod.impact|fmt_rupee }}</td>
                     </tr>
                     {% endfor %}
@@ -801,6 +786,50 @@
     </div>
 </div>
 
-
+<!-- Priority Calculation Details Modal -->
+<div class="tbl-overlay" id="bizPriorityDetailsModal">
+    <div class="tbl-overlay-inner" style="max-width: 900px;">
+        <div class="tbl-overlay-header">
+            <div>
+                <span class="tbl-overlay-title">Priority Calculation Logic</span>
+                <div style="font-size: 11px; color: var(--muted); margin-top: 4px;">
+                    System-generated priorities based on business performance thresholds.
+                </div>
+            </div>
+            <button class="tbl-overlay-close" onclick="closeModal('bizPriorityDetailsModal')">✕ Close</button>
+        </div>
+        <div class="tbl-overlay-scroll">
+            <table class="ceo-table">
+                <thead>
+                    <tr>
+                        <th>Rank</th>
+                        <th>Priority Task</th>
+                        <th>Level</th>
+                        <th>Calculation Logic</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for task in payload.priorities %}
+                    <tr>
+                        <td style="font-weight: 600; color: var(--muted);">#{{ task.rank }}</td>
+                        <td>
+                            <div style="font-weight: 600;">{{ task.title }}</div>
+                            <div style="font-size: 11px; color: var(--muted);">{{ task.subtitle }}</div>
+                        </td>
+                        <td>
+                            <span class="ceo-priority-badge {% if task.priority == 'High' %}high{% elif task.priority == 'Medium' %}medium{% else %}low{% endif %}">
+                                {{ task.priority }}
+                            </span>
+                        </td>
+                        <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--accent);">
+                            {{ task.calculation }}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
 
 {% endblock %}

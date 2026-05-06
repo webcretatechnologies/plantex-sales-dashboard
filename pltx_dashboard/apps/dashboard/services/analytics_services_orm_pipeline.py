@@ -7,7 +7,7 @@ from apps.dashboard.services.analytics_services_orm import (
 from apps.dashboard.services.analytics_services_orm_tables import (
     generate_bi_data_orm,
 )
-from django.db.models import Sum
+from django.db.models import Sum, Max
 
 def safe_replace_year(d, year_offset=-1):
     try:
@@ -190,7 +190,7 @@ def get_available_filters_orm_cached(qs, fk_qs, data_owner_id, show_amazon=True,
     return filters
 
 
-import time
+
 def run_orm_computation(
     qs, fk_qs, spend_qs, filters, user, cached_filter_metadata=None
 ):
@@ -215,9 +215,14 @@ def run_orm_computation(
         
     prev_rev_by_asin = {r["asin"]: r["revenue"] for r in table_data_prev}
     prev_rev_by_port = {}
+    prev_rev_by_cat = {}
+    prev_az_rev = sum(r.get("az_revenue", 0) for r in table_data_prev)
+    prev_fk_rev = sum(r.get("fk_revenue", 0) for r in table_data_prev)
     for r in table_data_prev:
         port = r.get("portfolio") or "Unknown"
         prev_rev_by_port[port] = prev_rev_by_port.get(port, 0) + r["revenue"]
+        cat = r.get("category") or "Unknown"
+        prev_rev_by_cat[cat] = prev_rev_by_cat.get(cat, 0) + r["revenue"]
     
     total_revenue = sum(r["revenue"] for r in table_data)
     total_spend = sum(r["total_spend"] for r in table_data)
@@ -270,7 +275,11 @@ def run_orm_computation(
         prev = kpis_prev.get(key, 0)
         kpis[f"{key}_change"] = _safe_growth(curr, prev)
 
-    today = datetime.date.today()
+    max_qs = qs.aggregate(m=Max('date'))['m'] if qs is not None else None
+    max_fk = fk_qs.aggregate(m=Max('date'))['m'] if fk_qs is not None else None
+    latest_dates = [d for d in (max_qs, max_fk) if d]
+    today = max(latest_dates) if latest_dates else datetime.date.today()
+    
     cm_start = today.replace(day=1)
     cm_end = today
     pm_end = cm_start - datetime.timedelta(days=1)
@@ -297,6 +306,8 @@ def run_orm_computation(
     kpis["prev_mom"] = _safe_growth(pm_rev, ppm_rev)
     kpis["prev_yoy"] = _safe_growth(pm_rev, yoy_pm_rev)
     kpis["profit_change"] = _safe_growth(kpis["net_profit"], kpis_prev.get("net_profit", 0))
+    kpis["gross_margin_change"] = round(kpis["gross_margin_pct"] - kpis_prev.get("gross_margin_pct", 0), 1)
+    kpis["contribution_margin_change"] = round(kpis["contribution_margin"] - kpis_prev.get("contribution_margin", 0), 1)
 
     kpis["mom_spend_growth"] = _safe_growth(cm_spend, pm_spend)
     
@@ -316,20 +327,18 @@ def run_orm_computation(
     # 6. Platform breakdown
     az_rev = sum(r.get("az_revenue", 0) for r in table_data)
     fk_rev = sum(r.get("fk_revenue", 0) for r in table_data)
-    az_prev_rev = float(kpis_prev.get("revenue", 0)) if kpis_prev else 0
-
     platforms_dict = {}
     if az_rev > 0:
         platforms_dict["Amazon"] = {
             "revenue": az_rev,
             "pct": round(az_rev / total_revenue * 100, 1) if total_revenue > 0 else 0,
-            "growth": _safe_growth(az_rev, az_prev_rev),
+            "growth": _safe_growth(az_rev, prev_az_rev),
         }
     if fk_rev > 0:
         platforms_dict["Flipkart"] = {
             "revenue": fk_rev,
             "pct": round(fk_rev / total_revenue * 100, 1) if total_revenue > 0 else 0,
-            "growth": _safe_growth(fk_rev, 0),
+            "growth": _safe_growth(fk_rev, prev_fk_rev),
         }
 
     # 7. Category performance
@@ -340,15 +349,17 @@ def run_orm_computation(
             cat_perf_dict[cat] = {"name": cat, "revenue": 0.0}
         cat_perf_dict[cat]["revenue"] += r["revenue"]
 
-    cat_perf_list = [
-        {
-            "category": v["name"],
-            "revenue": v["revenue"],
-            "growth": 0.0,
-            "contribution": round(v["revenue"] / total_revenue * 100, 1) if total_revenue > 0 else 0,
-        }
-        for v in cat_perf_dict.values()
-    ]
+    cat_perf_list = []
+    for v in cat_perf_dict.values():
+        cat_name = v["name"]
+        cat_rev = v["revenue"]
+        cat_prev = prev_rev_by_cat.get(cat_name, 0)
+        cat_perf_list.append({
+            "category": cat_name,
+            "revenue": cat_rev,
+            "growth": _safe_growth(cat_rev, cat_prev),
+            "contribution": round(cat_rev / total_revenue * 100, 1) if total_revenue > 0 else 0,
+        })
     cat_perf_list.sort(key=lambda x: x["revenue"], reverse=True)
 
     # 8. Filter metadata for dropdowns
@@ -368,9 +379,8 @@ def run_orm_computation(
         "zero_sales_pageviews": kpis.get("zero_sales_pageviews", 0),
     }
 
-    in_stock_count = low_stock_count = oos_count = overstock_count = oos_skus = 0
+    in_stock_count = low_stock_count = oos_count = overstock_count = 0
     total_lost_sales = 0.0
-    inventory_details = []
 
     all_units = [r["units"] for r in table_data if r["units"] > 0]
     avg_units = sum(all_units) / len(all_units) if all_units else 1
@@ -388,7 +398,6 @@ def run_orm_computation(
         
         if u == 0:
             oos_count += 1
-            oos_skus += 1
             total_lost_sales += rev
             status = "OOS"
             status_class = "danger"
@@ -425,13 +434,13 @@ def run_orm_computation(
         "avg_units": round(float(avg_units), 1)
     }
 
-    oos_impact = {"lost_sales": round(total_lost_sales, 2), "skus_affected": oos_skus, "orders_lost": 0}
+    oos_impact = {"lost_sales": round(total_lost_sales, 2), "skus_affected": oos_count, "orders_lost": 0}
 
     inventory_position = []
     if total_revenue > 0:
         cat_buckets = {"in_stock": 0.0, "low_stock": 0.0, "oos": 0.0, "critical": 0.0}
         for r in table_data:
-            rev_val = r.get("az_revenue", 0)  # inventory based on amazon originally
+            rev_val = r.get("revenue", 0)
             u = r["units"]
             if u == 0:
                 cat_buckets["oos"] += rev_val
@@ -453,32 +462,16 @@ def run_orm_computation(
             pct = round(rev_val / total_revenue * 100, 1) if total_revenue > 0 else 0
             inventory_position.append({"label": label, "revenue": rev_val, "pct": pct, "color": color})
 
-    category_health = {
-        "active_skus": in_stock_count + low_stock_count + overstock_count, "active_change": 0,
-        "oos": oos_count, "oos_change": 0, "low_stock": low_stock_count, "low_stock_change": 0,
-        "at_risk_rating": 0, "at_risk_change": 0,
-    }
 
-    total_skus = in_stock_count + low_stock_count + oos_count + overstock_count or 1
-    growth_score = min(100, max(0, 50 + kpis.get("revenue_change", 0)))
-    profitability_score = min(100, max(0, kpis["gross_margin_pct"]))
-    inventory_score = min(100, int(in_stock_count / total_skus * 100))
-    ops_score = min(100, int(kpis.get("conversion", 0) * 10))
-    
-    business_health = {
-        "score": round(growth_score * 0.3 + profitability_score * 0.3 + inventory_score * 0.25 + ops_score * 0.15),
-        "breakdown": {"growth": round(growth_score), "profitability": round(profitability_score), "inventory": round(inventory_score), "operations": round(ops_score)}
-    }
 
-    import datetime as _dt
-    today = _dt.date.today()
-    days_in_month = (today.replace(month=today.month % 12 + 1, day=1) - _dt.timedelta(days=1)).day if today.month < 12 else 31
+    # Use the dynamic `today` (latest data date) already computed above
+    days_in_month = (today.replace(month=today.month % 12 + 1, day=1) - datetime.timedelta(days=1)).day if today.month < 12 else 31
     days_elapsed = max(today.day, 1)
 
     if today.day <= 5:
         # At start of a new month, use last week's data from previous month for forecasting
-        prev_month_end = today.replace(day=1) - _dt.timedelta(days=1)
-        prev_month_last_week_start = prev_month_end - _dt.timedelta(days=6)
+        prev_month_end = today.replace(day=1) - datetime.timedelta(days=1)
+        prev_month_last_week_start = prev_month_end - datetime.timedelta(days=6)
         last_week_rev = get_revenue_for_period(qs, fk_qs, prev_month_last_week_start, prev_month_end)
         daily_rate = last_week_rev / 7 if last_week_rev > 0 else (kpis["revenue"] / days_elapsed if days_elapsed > 0 else 0)
     else:
@@ -608,14 +601,14 @@ def run_orm_computation(
         prev_rev = prev_rev_by_asin.get(sku, 0)
         growth = _safe_growth(curr_rev, prev_rev)
         
-        top_prods.append({"sku": sku, "product_name": f"Product {sku}", "cluster": row.get("portfolio") or "Standard", "revenue": curr_rev, "growth": growth, "units_sold": row["units"], "rating": 4.5})
+        top_prods.append({"sku": sku, "cluster": row.get("portfolio") or "Standard", "revenue": curr_rev, "growth": growth, "units_sold": row["units"]})
         
         # Declining based on MOM drop
         sku_cm = cm_sku_rev.get(sku, 0)
         sku_pm = pm_sku_rev.get(sku, 0)
         mom_growth = _safe_growth(sku_cm, sku_pm)
         if mom_growth < 0:
-            under_prods.append({"sku": sku, "product_name": f"Product {sku}", "revenue": sku_cm, "drop_pct": mom_growth, "impact": sku_cm - sku_pm})
+            under_prods.append({"sku": sku, "revenue": sku_cm, "drop_pct": mom_growth, "impact": sku_cm - sku_pm})
             
     under_prods.sort(key=lambda x: x["drop_pct"])  # Sort by most negative growth
 
@@ -642,9 +635,9 @@ def run_orm_computation(
     return {
         "kpis": kpis, "charts": charts, "category_performance": cat_perf_list,
         "platforms": platforms_dict, "filters": filter_meta,
-        "oos_impact": oos_impact, "business_health": business_health, "category_health": category_health,
+        "oos_impact": oos_impact,
         "inventory": inventory, "inventory_position": inventory_position, "forecast": forecast,
-        "profit_summary": {}, "priorities": priorities, "marketing": marketing,
+        "priorities": priorities, "marketing": marketing,
         "waterfall": waterfall, "cluster_performance": cluster_performance, "cat_top_products": top_prods[:5],
         "cat_under_products": under_prods[:5], "cat_all_top_products": top_prods[:100], "cat_all_under_products": under_prods[:100],
         "growth_opportunities": [],

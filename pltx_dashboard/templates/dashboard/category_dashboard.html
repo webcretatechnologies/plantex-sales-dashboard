@@ -80,8 +80,8 @@
             <div class="ceo-kpi-icon amber"><span class="material-icons-round" style="font-size:16px">account_balance_wallet</span></div>
         </div>
         <div class="ceo-kpi-value">{{ payload.kpis.gross_margin_pct|floatformat:1 }}%</div>
-        <div class="ceo-kpi-change up">
-            ▲ 1.8pp <span class="sub">vs prev. period</span>
+        <div class="ceo-kpi-change {% if payload.kpis.gross_margin_change >= 0 %}up{% else %}down{% endif %}">
+            {% if payload.kpis.gross_margin_change >= 0 %}▲{% else %}▼{% endif %} {{ payload.kpis.gross_margin_change|abs_val }}pp <span class="sub">vs prev. period</span>
         </div>
     </div>
 
@@ -297,7 +297,6 @@
                             <th class="num">Revenue</th>
                             <th class="num">Growth</th>
                             <th class="num">Units</th>
-                            <th class="num">Rating</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -313,10 +312,9 @@
                             <td class="num">{{ prod.revenue|fmt_rupee }}</td>
                             <td class="num growth-up">▲ {{ prod.growth }}%</td>
                             <td class="num">{{ prod.units_sold|fmt_num }}</td>
-                            <td class="num"><span class="cat-rating-star">★</span>{{ prod.rating }}</td>
                         </tr>
                         {% empty %}
-                        <tr><td colspan="6" class="empty">No data available</td></tr>
+                        <tr><td colspan="5" class="empty">No data available</td></tr>
                         {% endfor %}
                     </tbody>
                 </table>
@@ -324,24 +322,19 @@
         </div>
     </div>
 
-    <!-- Top 5 Underperforming Products -->
-    <div class="ceo-card" id="cat-card-under-products">
+    <!-- Declining Products (MOM) -->
+    <div class="ceo-card" id="cat-card-declining-mom">
         <div class="ceo-card-header">
-            <div>
-                <span class="ceo-card-title">Underperforming Products</span>
-                <div style="font-size:11px;color:var(--muted);margin-top:2px;">Declining products to investigate</div>
-            </div>
-            <button class="ceo-view-all-btn" onclick="openModal('underProductsModal')" id="cat-btn-under-viewall">View All</button>
+            <span class="ceo-card-title">Declining Products (MOM)</span>
+            <button class="ceo-view-all-btn" onclick="openModal('decliningModal')" id="cat-btn-declining-viewall">View All</button>
         </div>
         <div class="ceo-card-body no-pad">
             <table class="ceo-table">
                 <thead>
                     <tr>
                         <th>SKU</th>
-                        <th class="num">Revenue</th>
-                        <th class="num">Drop %</th>
+                        <th class="num">MOM Drop %</th>
                         <th class="num">Impact (₹)</th>
-                        <th>Action</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -353,56 +346,55 @@
                                 <span>{{ prod.sku }}</span>
                             </div>
                         </td>
-                        <td class="num">{{ prod.revenue|fmt_rupee }}</td>
                         <td class="num growth-down">▼ {{ prod.drop_pct|abs_val }}%</td>
                         <td class="num" style="color:var(--danger);">-{{ prod.impact|fmt_rupee }}</td>
-                        <td><button class="cat-investigate-btn">Investigate</button></td>
                     </tr>
                     {% empty %}
-                    <tr><td colspan="5" class="empty">No data available</td></tr>
+                    <tr><td colspan="3" class="empty">No data available</td></tr>
                     {% endfor %}
                 </tbody>
             </table>
         </div>
     </div>
 
-    <!-- Category Health -->
-    <div class="ceo-card" id="cat-card-health">
-        <div class="ceo-card-header">
+    <!-- Inventory Health -->
+    <div class="ceo-card" id="cat-card-inventory">
+        <div class="ceo-card-header" style="display: flex; justify-content: space-between; align-items: center;">
             <div>
-                <span class="ceo-card-title">Category Health</span>
+                <span class="ceo-card-title">Inventory Health</span>
+                <div style="font-size:11px;color:var(--muted);margin-top:2px;">Current stock status</div>
             </div>
-            <button class="ceo-view-all-btn" id="cat-btn-health-viewall">View All</button>
+            <button class="ceo-view-all-btn" onclick="openModal('catInventoryHealthModal')">View Details</button>
         </div>
         <div class="ceo-card-body">
-            <div class="cat-health-grid">
-                <div class="cat-health-pill green">
-                    <span class="cat-health-pill-label">Active SKUs</span>
-                    <strong>{{ payload.category_health.active_skus }}</strong>
-                    <span class="cat-health-pill-change up">▲ {{ payload.category_health.active_change }} new</span>
+            <div class="ceo-inv-grid">
+                <div class="ceo-inv-card">
+                    <div class="ceo-inv-icon good">✓</div>
+                    <div class="ceo-inv-label">In Stock</div>
+                    <div class="ceo-inv-value good">{{ payload.inventory.in_stock }} SKUs</div>
                 </div>
-                <div class="cat-health-pill red">
-                    <span class="cat-health-pill-label">OOS SKUs</span>
-                    <strong>{{ payload.category_health.oos }}</strong>
-                    <span class="cat-health-pill-change up">▲ {{ payload.category_health.oos_change }}</span>
+                <div class="ceo-inv-card">
+                    <div class="ceo-inv-icon warn">!</div>
+                    <div class="ceo-inv-label">Low Stock</div>
+                    <div class="ceo-inv-value warn">{{ payload.inventory.low_stock }} SKUs</div>
                 </div>
-                <div class="cat-health-pill amber">
-                    <span class="cat-health-pill-label">Low Stock</span>
-                    <strong>{{ payload.category_health.low_stock }}</strong>
-                    <span class="cat-health-pill-change up">▲ {{ payload.category_health.low_stock_change }}</span>
+                <div class="ceo-inv-card">
+                    <div class="ceo-inv-icon danger">✕</div>
+                    <div class="ceo-inv-label">OOS</div>
+                    <div class="ceo-inv-value danger">{{ payload.inventory.oos }} SKUs</div>
                 </div>
-                <div class="cat-health-pill purple">
-                    <span class="cat-health-pill-label">At Risk (Rating)</span>
-                    <strong>{{ payload.category_health.at_risk_rating }}</strong>
-                    <span class="cat-health-pill-change up">▲ {{ payload.category_health.at_risk_change }}</span>
+                <div class="ceo-inv-card">
+                    <div class="ceo-inv-icon neutral">⬆</div>
+                    <div class="ceo-inv-label">Overstock</div>
+                    <div class="ceo-inv-value neutral">{{ payload.inventory.overstock }} SKUs</div>
                 </div>
             </div>
         </div>
     </div>
 </div>
 
-<!-- ════════════ ROW 4: OOS Impact | Inventory Position | Returns & Ratings | Growth Opportunities ════════════ -->
-<div class="biz-row-4">
+<!-- ════════════ ROW 4: OOS Impact | Inventory Position | Growth Opportunities ════════════ -->
+<div class="biz-row-3-equal">
     <!-- OOS Impact -->
     <div class="ceo-card" id="cat-card-oos">
         <div class="ceo-card-header">
@@ -501,111 +493,6 @@
     </div>
 </div>
 
-<!-- ════════════ FULL CATEGORY PERFORMANCE TABLE ════════════ -->
-<div class="ceo-card" id="cat-full-category-perf" style="margin-top: 24px;">
-    <div class="ceo-card-header" style="display: flex; justify-content: space-between; align-items: center;">
-        <div>
-            <span class="ceo-card-title">Category Performance</span>
-            <div style="font-size:11px;color:var(--muted);margin-top:2px;">All categories — revenue, MOM growth & contribution</div>
-        </div>
-        <div style="position: relative; width: 260px;">
-            <span class="material-icons-round" style="position: absolute; left: 10px; top: 50%; transform: translateY(-50%); font-size: 18px; color: var(--muted);">search</span>
-            <input type="text" id="catDashSearchInput" placeholder="Search categories..." style="width: 100%; padding: 8px 12px 8px 36px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; outline: none; background: var(--card-bg, #fff); color: var(--text); transition: border-color 0.2s;" onfocus="this.style.borderColor='var(--accent)'" onblur="this.style.borderColor='var(--border)'">
-        </div>
-    </div>
-    <div class="ceo-card-body no-pad">
-        <table class="ceo-table" id="catDashCategoryPerformanceTable">
-            <thead>
-                <tr>
-                    <th>#</th>
-                    <th>Category</th>
-                    <th class="num">Revenue</th>
-                    <th class="num">MOM Growth</th>
-                    <th class="num">Contribution</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for cat in payload.category_performance %}
-                <tr>
-                    <td style="color:var(--muted);font-size:12px;">{{ forloop.counter }}</td>
-                    <td style="font-weight:600;">{{ cat.category }}</td>
-                    <td class="num">{{ cat.revenue|fmt_rupee }}</td>
-                    <td class="num {% if cat.growth >= 0 %}growth-up{% else %}growth-down{% endif %}">
-                        {% if cat.growth >= 0 %}▲{% else %}▼{% endif %} {{ cat.growth|abs_val }}%
-                    </td>
-                    <td class="num">{{ cat.contribution }}%</td>
-                </tr>
-                {% empty %}
-                <tr><td colspan="5" class="empty" style="text-align: center; padding: 20px; color: var(--muted);">No data available</td></tr>
-                {% endfor %}
-            </tbody>
-        </table>
-        <div class="pagination-container" style="display: flex; justify-content: center; align-items: center; padding: 14px 18px; gap: 6px; border-top: 1px solid var(--border-light);" id="catDashCatPagination"></div>
-    </div>
-</div>
-
-<script>
-(function() {
-    function initCatDashPaginatedTable(tableId, searchId, paginationId, rowsPerPage = 10) {
-        const table = document.getElementById(tableId);
-        if (!table) return;
-        const tbody = table.querySelector('tbody');
-        if (!tbody) return;
-        let rows = Array.from(tbody.querySelectorAll('tr'));
-        if (rows.length === 0 || (rows.length === 1 && rows[0].querySelector('.empty'))) return;
-
-        const searchInput = document.getElementById(searchId);
-        const paginationControls = document.getElementById(paginationId);
-        let currentPage = 1;
-        let filteredRows = [...rows];
-
-        function renderTable() {
-            const start = (currentPage - 1) * rowsPerPage;
-            const end = start + rowsPerPage;
-            rows.forEach(r => r.style.display = 'none');
-            filteredRows.slice(start, end).forEach(r => r.style.display = '');
-            renderPagination();
-        }
-
-        function renderPagination() {
-            if (!paginationControls) return;
-            const totalPages = Math.ceil(filteredRows.length / rowsPerPage);
-            paginationControls.innerHTML = '';
-            if (totalPages <= 1) return;
-            for (let i = 1; i <= totalPages; i++) {
-                const btn = document.createElement('button');
-                btn.className = `btn-page ${i === currentPage ? 'active' : ''}`;
-                btn.innerText = i;
-                btn.onclick = () => { currentPage = i; renderTable(); };
-                paginationControls.appendChild(btn);
-            }
-        }
-
-        if (searchInput) {
-            searchInput.oninput = (e) => {
-                const query = e.target.value.toLowerCase();
-                filteredRows = rows.filter(r => r.innerText.toLowerCase().includes(query));
-                currentPage = 1;
-                renderTable();
-            };
-        }
-        renderTable();
-    }
-
-    window.catDashPaginationInit = function() {
-        initCatDashPaginatedTable('catDashCategoryPerformanceTable', 'catDashSearchInput', 'catDashCatPagination', 10);
-    };
-
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', window.catDashPaginationInit);
-    } else {
-        window.catDashPaginationInit();
-    }
-    
-    document.body.removeEventListener('htmx:afterSettle', window.catDashPaginationInit);
-    document.body.addEventListener('htmx:afterSettle', window.catDashPaginationInit);
-})();
-</script>
 
 <!-- ════════════ VIEW ALL MODALS ════════════ -->
 
@@ -659,7 +546,6 @@
                         <th class="num">Revenue</th>
                         <th class="num">Growth</th>
                         <th class="num">Units</th>
-                        <th class="num">Rating</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -670,7 +556,6 @@
                         <td class="num">{{ prod.revenue|fmt_rupee }}</td>
                         <td class="num growth-up">▲ {{ prod.growth }}%</td>
                         <td class="num">{{ prod.units_sold|fmt_num }}</td>
-                        <td class="num"><span class="cat-rating-star">★</span>{{ prod.rating }}</td>
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -679,20 +564,19 @@
     </div>
 </div>
 
-<!-- Underperforming Products Modal -->
-<div class="tbl-overlay" id="underProductsModal">
+<!-- Declining Products Modal -->
+<div class="tbl-overlay" id="decliningModal">
     <div class="tbl-overlay-inner">
         <div class="tbl-overlay-header">
-            <span class="tbl-overlay-title">Underperforming Products — Full View</span>
-            <button class="tbl-overlay-close" onclick="closeModal('underProductsModal')">✕ Close</button>
+            <span class="tbl-overlay-title">Declining Products (MOM) — Full View</span>
+            <button class="tbl-overlay-close" onclick="closeModal('decliningModal')">✕ Close</button>
         </div>
         <div class="tbl-overlay-scroll">
             <table class="ceo-table" style="min-width:600px;">
                 <thead>
                     <tr>
                         <th>SKU</th>
-                        <th class="num">Revenue</th>
-                        <th class="num">Drop %</th>
+                        <th class="num">MOM Drop %</th>
                         <th class="num">Impact (₹)</th>
                     </tr>
                 </thead>
@@ -700,10 +584,64 @@
                     {% for prod in payload.cat_all_under_products %}
                     <tr>
                         <td><div class="ceo-sku-cell"><div class="ceo-sku-thumb">📦</div><span>{{ prod.sku }}</span></div></td>
-                        <td class="num">{{ prod.revenue|fmt_rupee }}</td>
                         <td class="num growth-down">▼ {{ prod.drop_pct|abs_val }}%</td>
                         <td class="num" style="color:var(--danger);">-{{ prod.impact|fmt_rupee }}</td>
                     </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Inventory Health Breakdown Modal -->
+<div class="tbl-overlay" id="catInventoryHealthModal">
+    <div class="tbl-overlay-inner" style="max-width: 900px;">
+        <div class="tbl-overlay-header">
+            <div>
+                <span class="tbl-overlay-title">Inventory Health Breakdown</span>
+                <div style="font-size: 11px; color: var(--muted); margin-top: 4px;">
+                    Calculated based on average units sold (<strong>{{ payload.inventory.avg_units }}</strong>). 
+                    Low Stock: &le;25% of avg. Overstock: &ge;200% of avg.
+                </div>
+            </div>
+            <button class="tbl-overlay-close" onclick="closeModal('catInventoryHealthModal')">✕ Close</button>
+        </div>
+        <div class="tbl-overlay-scroll">
+            <table class="ceo-table" style="min-width: 700px;">
+                <thead>
+                    <tr>
+                        <th>SKU</th>
+                        <th>Category</th>
+                        <th class="num">Units Sold</th>
+                        <th class="num">Revenue</th>
+                        <th>Status</th>
+                        <th>Calculation</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in payload.inventory.details %}
+                    <tr>
+                        <td>
+                            <div class="ceo-sku-cell">
+                                <div class="ceo-sku-thumb">📦</div>
+                                <span>{{ item.sku }}</span>
+                            </div>
+                        </td>
+                        <td>{{ item.category }}</td>
+                        <td class="num">{{ item.units|fmt_num }}</td>
+                        <td class="num">{{ item.revenue|fmt_rupee }}</td>
+                        <td>
+                            <span class="ceo-inv-value {{ item.status_class }}" style="padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600;">
+                                {{ item.status }}
+                            </span>
+                        </td>
+                        <td style="font-size: 11px; color: var(--muted); font-family: 'JetBrains Mono', monospace;">
+                            {{ item.reason|safe }}
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="6" class="empty">No inventory data available</td></tr>
                     {% endfor %}
                 </tbody>
             </table>

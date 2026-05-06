@@ -159,8 +159,8 @@
             <div class="ceo-kpi-icon blue"><span class="material-icons-round" style="font-size:16px">trending_up</span></div>
         </div>
         <div class="ceo-kpi-value">{{ payload.kpis.revenue|fmt_rupee }}</div>
-        <div class="ceo-kpi-change up">
-            ▲ {{ payload.kpis.revenue_change|fmt_pct }} <span class="sub">vs prev. period</span>
+        <div class="ceo-kpi-change {% if payload.kpis.revenue_change >= 0 %}up{% else %}down{% endif %}">
+            {% if payload.kpis.revenue_change >= 0 %}▲{% else %}▼{% endif %} {{ payload.kpis.revenue_change|abs_val|fmt_pct }} <span class="sub">vs prev. period</span>
         </div>
         <div style="display:flex; justify-content:space-between; margin-top:10px; font-size:10px; color:var(--muted); font-family:'JetBrains Mono', monospace; padding-top:8px; border-top:1px dashed var(--border-light);">
             <span><span style="color:#3b82f6;font-size:8px;">●</span> {{ payload.kpis.az_revenue|fmt_rupee }}</span>
@@ -203,8 +203,8 @@
             <div class="ceo-kpi-icon purple"><span class="material-icons-round" style="font-size:16px">account_balance_wallet</span></div>
         </div>
         <div class="ceo-kpi-value">{{ payload.kpis.net_profit|fmt_rupee }}</div>
-        <div class="ceo-kpi-change up">
-            ▲ {{ payload.kpis.profit_change|fmt_pct }} <span class="sub">vs prev. period</span>
+        <div class="ceo-kpi-change {% if payload.kpis.profit_change >= 0 %}up{% else %}down{% endif %}">
+            {% if payload.kpis.profit_change >= 0 %}▲{% else %}▼{% endif %} {{ payload.kpis.profit_change|abs_val|fmt_pct }} <span class="sub">vs prev. period</span>
         </div>
     </div>
     
@@ -313,8 +313,8 @@
             <span class="ceo-kpi-label">Contribution Margin</span>
         </div>
         <div class="ceo-kpi-value">{{ payload.kpis.contribution_margin|fmt_pct }}</div>
-        <div class="ceo-kpi-change up">
-            ▲ {{ payload.kpis.contribution_margin_change }}pp
+        <div class="ceo-kpi-change {% if payload.kpis.contribution_margin_change >= 0 %}up{% else %}down{% endif %}">
+            {% if payload.kpis.contribution_margin_change >= 0 %}▲{% else %}▼{% endif %} {{ payload.kpis.contribution_margin_change|abs_val }}pp
         </div>
     </div>
 </div>
