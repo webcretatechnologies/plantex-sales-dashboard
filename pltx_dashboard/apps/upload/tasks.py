@@ -30,6 +30,7 @@ def process_upload_file_task(
     file_type,
     user_id,
     data_owner_id,
+    upload_log_id=None,
     date_str="",
     is_last=False,
     is_flipkart=False,
@@ -58,11 +59,14 @@ def process_upload_file_task(
         Whether this file belongs to the Flipkart pipeline.
     """
     from apps.accounts.models import Users  # noqa: F401
+    from apps.upload.models import UploadLog
     from apps.upload.services import (
         process_category_file,
         process_price_file,
         process_spend_file,
         process_sales_file,
+        process_fba_stock_file,
+        process_flex_stock_file,
         generate_dashboard_data,
         process_fk_search_traffic,
         process_fk_category,
@@ -78,6 +82,13 @@ def process_upload_file_task(
 
     try:
         data_owner = Users.objects.get(pk=data_owner_id)
+        upload_log = None
+        if upload_log_id:
+            upload_log = UploadLog.objects.filter(pk=upload_log_id).first()
+            if upload_log:
+                upload_log.status = UploadLog.STATUS_PROCESSING
+                upload_log.message = "Processing started."
+                upload_log.save(update_fields=["status", "message", "updated_at"])
 
         # Open the file from disk
         with open(file_path, "rb") as fh:
@@ -89,6 +100,10 @@ def process_upload_file_task(
                 process_spend_file(fh, data_owner)
             elif file_type == "sales":
                 process_sales_file(fh, date_str, data_owner)
+            elif file_type == "fba_stock":
+                process_fba_stock_file(fh, data_owner)
+            elif file_type == "flex_stock":
+                process_flex_stock_file(fh, data_owner)
             elif file_type == "fk_search_traffic":
                 process_fk_search_traffic(fh, data_owner)
             elif file_type == "fk_category":
@@ -120,6 +135,11 @@ def process_upload_file_task(
         else:
             _send_ws(user_id, f"{file_type} processed successfully.", "partial")
 
+        if upload_log:
+            upload_log.status = UploadLog.STATUS_SUCCESS
+            upload_log.message = "Processed successfully."
+            upload_log.save(update_fields=["status", "message", "updated_at"])
+
         return {
             "status": "success",
             "file_type": file_type,
@@ -129,6 +149,16 @@ def process_upload_file_task(
     except Exception as exc:
         logger.exception("[UploadTask] Error processing %s: %s", file_type, exc)
         _send_ws(user_id, f"Error processing file: {str(exc)}", "error")
+
+        if upload_log_id:
+            try:
+                upload_log = UploadLog.objects.filter(pk=upload_log_id).first()
+                if upload_log:
+                    upload_log.status = UploadLog.STATUS_ERROR
+                    upload_log.message = str(exc)
+                    upload_log.save(update_fields=["status", "message", "updated_at"])
+            except Exception:
+                logger.exception("[UploadTask] Failed updating UploadLog status.")
 
         # Clean up temp file on error too
         try:
@@ -141,36 +171,3 @@ def process_upload_file_task(
             "file_type": file_type,
             "message": str(exc),
         }
-
-
-@shared_task(bind=True)
-def generate_dashboard_task(self, user_id, data_owner_id, is_flipkart=False):
-    """
-    Standalone task to regenerate dashboard data and refresh
-    materialized views. Can be called independently of file uploads
-    (e.g., to force a cache refresh).
-    """
-    from apps.accounts.models import Users
-    from apps.upload.services import (
-        generate_dashboard_data,
-        generate_flipkart_dashboard_data,
-    )
-
-    _send_ws(user_id, "Regenerating dashboard data...", "processing")
-
-    try:
-        data_owner = Users.objects.get(pk=data_owner_id)
-
-        if is_flipkart:
-            generate_flipkart_dashboard_data(data_owner)
-        else:
-            generate_dashboard_data(data_owner)
-
-        _send_ws(user_id, "Dashboard data regenerated successfully!", "complete")
-
-        return {"status": "success"}
-
-    except Exception as exc:
-        logger.exception("[DashboardTask] Error: %s", exc)
-        _send_ws(user_id, f"Error regenerating dashboard: {str(exc)}", "error")
-        return {"status": "error", "message": str(exc)}

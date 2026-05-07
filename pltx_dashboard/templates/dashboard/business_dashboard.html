@@ -379,22 +379,22 @@
                 <div class="ceo-inv-card">
                     <div class="ceo-inv-icon good">✓</div>
                     <div class="ceo-inv-label">In Stock</div>
-                    <div class="ceo-inv-value good">{{ payload.inventory.in_stock }} SKUs</div>
+                    <div class="ceo-inv-value good">{{ payload.inventory.in_stock }} Rows</div>
                 </div>
                 <div class="ceo-inv-card">
                     <div class="ceo-inv-icon warn">!</div>
                     <div class="ceo-inv-label">Low Stock</div>
-                    <div class="ceo-inv-value warn">{{ payload.inventory.low_stock }} SKUs</div>
+                    <div class="ceo-inv-value warn">{{ payload.inventory.low_stock }} Rows</div>
                 </div>
                 <div class="ceo-inv-card">
                     <div class="ceo-inv-icon danger">✕</div>
                     <div class="ceo-inv-label">OOS</div>
-                    <div class="ceo-inv-value danger">{{ payload.inventory.oos }} SKUs</div>
+                    <div class="ceo-inv-value danger">{{ payload.inventory.oos }} Rows</div>
                 </div>
                 <div class="ceo-inv-card">
                     <div class="ceo-inv-icon neutral">⬆</div>
                     <div class="ceo-inv-label">Overstock</div>
-                    <div class="ceo-inv-value neutral">{{ payload.inventory.overstock }} SKUs</div>
+                    <div class="ceo-inv-value neutral">{{ payload.inventory.overstock }} Rows</div>
                 </div>
             </div>
         </div>
@@ -703,24 +703,32 @@
 
 <!-- Inventory Health Breakdown Modal -->
 <div class="tbl-overlay" id="bizInventoryHealthModal">
-    <div class="tbl-overlay-inner" style="max-width: 900px;">
+    <div class="tbl-overlay-inner" style="max-width: 1000px;">
         <div class="tbl-overlay-header">
             <div>
-                <span class="tbl-overlay-title">Inventory Health Breakdown</span>
+                <span class="tbl-overlay-title">Inventory Health Breakdown (DOC)</span>
                 <div style="font-size: 11px; color: var(--muted); margin-top: 4px;">
-                    Calculated based on average units sold (<strong>{{ payload.inventory.avg_units }}</strong>). 
-                    Low Stock: &le;25% of avg. Overstock: &ge;200% of avg.
+                    DOC = Stock Qty / Same-Day Sales.
+                    OOS: Stock=0. Low Stock: DOC≤15. In Stock: 15&lt;DOC≤60. Overstock: DOC&gt;60.
                 </div>
+                {% if payload.inventory.details_truncated %}
+                <div style="font-size: 11px; color: var(--muted); margin-top: 4px;">
+                    Showing latest {{ payload.inventory.details_shown|fmt_num }} of {{ payload.inventory.details_total|fmt_num }} rows.
+                </div>
+                {% endif %}
             </div>
             <button class="tbl-overlay-close" onclick="closeModal('bizInventoryHealthModal')">✕ Close</button>
         </div>
         <div class="tbl-overlay-scroll">
-            <table class="ceo-table" style="min-width: 700px;">
+            <table class="ceo-table" style="min-width: 800px;">
                 <thead>
                     <tr>
+                        <th>Date</th>
                         <th>SKU</th>
                         <th>Category</th>
-                        <th class="num">Units Sold</th>
+                        <th class="num">Stock Qty</th>
+                        <th class="num">Sale Qty</th>
+                        <th class="num">DOC (Days)</th>
                         <th class="num">Revenue</th>
                         <th>Status</th>
                         <th>Calculation</th>
@@ -729,6 +737,7 @@
                 <tbody>
                     {% for item in payload.inventory.details %}
                     <tr>
+                        <td>{{ item.date|date:"d M Y" }}</td>
                         <td>
                             <div class="ceo-sku-cell">
                                 <div class="ceo-sku-thumb">📦</div>
@@ -736,7 +745,9 @@
                             </div>
                         </td>
                         <td>{{ item.category }}</td>
-                        <td class="num">{{ item.units|fmt_num }}</td>
+                        <td class="num">{{ item.stock_qty|fmt_num }}</td>
+                        <td class="num">{{ item.sale_qty|fmt_num }}</td>
+                        <td class="num" style="font-weight:600;">{{ item.doc }}</td>
                         <td class="num">{{ item.revenue|fmt_rupee }}</td>
                         <td>
                             <span class="ceo-inv-value {{ item.status_class }}" style="padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600;">
@@ -748,7 +759,7 @@
                         </td>
                     </tr>
                     {% empty %}
-                    <tr><td colspan="6" class="empty">No inventory data available</td></tr>
+                    <tr><td colspan="9" class="empty">No inventory data available</td></tr>
                     {% endfor %}
                 </tbody>
             </table>

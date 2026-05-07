@@ -65,23 +65,3 @@ def require_feature(feature_code):
         return _wrapped_view
 
     return decorator
-
-
-def main_user_required(view_func):
-    @wraps(view_func)
-    def _wrapped_view(arg, *args, **kwargs):
-        # arg is request for FBV, self for CBV method
-        request = arg if hasattr(arg, "session") else args[0]
-        user_id = request.session.get("user_id")
-        if not user_id:
-            return redirect("account-login")
-        try:
-            user = Users.objects.get(id=user_id)
-            if not user.is_main_user:
-                return redirect(_first_allowed_dashboard_for(user))
-            request.user = user  # convenience
-            return view_func(arg, *args, **kwargs)
-        except Users.DoesNotExist:
-            return redirect("account-login")
-
-    return _wrapped_view

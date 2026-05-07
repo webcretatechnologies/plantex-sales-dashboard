@@ -1,8 +1,6 @@
 import json
 import numpy as np
 import pandas as pd
-import os
-from django.conf import settings
 
 
 class DashboardEncoder(json.JSONEncoder):
@@ -20,11 +18,6 @@ class DashboardEncoder(json.JSONEncoder):
         if hasattr(obj, "isoformat"):
             return obj.isoformat()
         return super().default(obj)
-
-
-def serialize_payload(payload):
-    """Serialise a payload dict so numpy/pandas types don't trip up JSONField."""
-    return json.loads(json.dumps(payload, cls=DashboardEncoder))
 
 
 def clean_currency(x):
@@ -50,28 +43,6 @@ def clean_number(x):
         return int(float(x))  # float() handles cases like '10.0'
     except (ValueError, TypeError):
         return 0
-
-
-def resolve_path(path):
-    """Resolve a path relative to the project root if it's not absolute."""
-    if not path:
-        return None
-    # Strip shell-style backslash escaping (e.g. "Devarth\ Nanavaty" → "Devarth Nanavaty")
-    path = path.replace("\\ ", " ")
-    if os.path.isabs(path):
-        return path
-
-    # Try relative to settings.BASE_DIR (pltx_dashboard/)
-    p1 = os.path.join(settings.BASE_DIR, path)
-    if os.path.exists(p1):
-        return p1
-
-    # Try relative to project root (one level up from pltx_dashboard/)
-    p2 = os.path.join(os.path.dirname(settings.BASE_DIR), path)
-    if os.path.exists(p2):
-        return p2
-
-    return p1  # Fallback to default behavior
 
 
 def extract_days(value):

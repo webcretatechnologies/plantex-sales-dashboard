@@ -13,11 +13,6 @@ from apps.accounts.models import Feature
 # Logic imports
 from .tasks import validate_reports_celery, generate_master_celery
 
-# Functions moved to utils.py
-# resolve_path
-# extract_days
-
-
 from apps.accounts.decorators import require_feature
 
 

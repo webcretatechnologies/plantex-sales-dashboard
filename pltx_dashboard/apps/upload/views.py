@@ -6,6 +6,7 @@ from rest_framework.parsers import MultiPartParser, FormParser
 from celery.result import AsyncResult
 
 from apps.accounts.utils import get_logged_in_user
+from .models import UploadLog
 from .tasks import process_upload_file_task
 
 
@@ -18,6 +19,22 @@ FK_FILE_TYPES = {
     "fk_pla",
     "fk_sales_invoice",
     "fk_coupon",
+}
+
+UPLOAD_TYPE_LABELS = {
+    "sales": "Daily Sales",
+    "category": "Category Mapping",
+    "spend": "Ads Spends",
+    "price": "Pricing Data",
+    "fba_stock": "FBA Stock File",
+    "flex_stock": "Flex Stock File",
+    "fk_search_traffic": "FK Search Traffic",
+    "fk_category": "FK Category",
+    "fk_price": "FK Price",
+    "fk_pca": "FK PCA",
+    "fk_pla": "FK PLA",
+    "fk_sales_invoice": "FK Sales Report",
+    "fk_coupon": "FK Coupon Value",
 }
 
 
@@ -83,16 +100,36 @@ class FileUploadView(APIView):
         except Exception as e:
             return Response({"error": f"Failed to save file: {str(e)}"}, status=500)
 
-        # Dispatch Celery task
-        task = process_upload_file_task.delay(
-            file_path=file_path,
-            file_type=file_type,
-            user_id=user.id,
-            data_owner_id=data_owner.id,
-            date_str=date_str,
-            is_last=is_last,
-            is_flipkart=is_flipkart,
+        upload_log = UploadLog.objects.create(
+            data_owner=data_owner,
+            uploaded_by=user,
+            file_name=filename,
+            upload_type=UPLOAD_TYPE_LABELS.get(file_type, file_type),
+            status=UploadLog.STATUS_QUEUED,
+            message="Queued for processing.",
         )
+
+        # Dispatch Celery task
+        try:
+            task = process_upload_file_task.delay(
+                file_path=file_path,
+                file_type=file_type,
+                user_id=user.id,
+                data_owner_id=data_owner.id,
+                upload_log_id=upload_log.id,
+                date_str=date_str,
+                is_last=is_last,
+                is_flipkart=is_flipkart,
+            )
+        except Exception as exc:
+            try:
+                os.remove(file_path)
+            except OSError:
+                pass
+            upload_log.status = UploadLog.STATUS_ERROR
+            upload_log.message = f"Failed to queue task: {str(exc)}"
+            upload_log.save(update_fields=["status", "message", "updated_at"])
+            return Response({"error": "Failed to queue file for processing."}, status=500)
 
         return Response(
             {

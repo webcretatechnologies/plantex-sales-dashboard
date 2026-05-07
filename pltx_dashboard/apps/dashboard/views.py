@@ -12,6 +12,66 @@ from apps.dashboard.utils import DashboardEncoder
 
 
 from apps.accounts.utils import get_logged_in_user
+from copy import deepcopy
+
+DASHBOARD_PAYLOAD_CACHE_VERSION = 10
+TEMPLATE_MAX_INVENTORY_DETAILS = 1000
+
+
+def _build_payload_json(payload):
+    """
+    Return full payload JSON for frontend consumers.
+    """
+    if not payload:
+        return "null"
+    return json.dumps(payload, cls=DashboardEncoder, separators=(",", ":"))
+
+
+def _build_template_payload(payload):
+    """
+    Keep template rendering fast by capping very large tabular lists.
+    Full data is still available in payload_json.
+    """
+    if not isinstance(payload, dict):
+        return payload
+
+    template_payload = deepcopy(payload)
+    inventory = template_payload.get("inventory")
+    if isinstance(inventory, dict):
+        details = inventory.get("details")
+        if isinstance(details, list):
+            details_total = int(inventory.get("details_total", len(details)))
+            details_shown = min(len(details), TEMPLATE_MAX_INVENTORY_DETAILS)
+            inventory["details"] = details[:details_shown]
+            inventory["details_total"] = details_total
+            inventory["details_shown"] = details_shown
+            inventory["details_truncated"] = details_total > details_shown
+    return template_payload
+
+
+def _payload_needs_refresh(payload):
+    """
+    Detect stale cached payloads from older schema versions that can
+    cause oversized HTML responses and outdated calculations.
+    """
+    if not isinstance(payload, dict):
+        return True
+
+    inventory = payload.get("inventory")
+    if not isinstance(inventory, dict):
+        return True
+
+    required_inventory_keys = {
+        "details_total",
+        "details_shown",
+        "details_truncated",
+        "has_stock_data",
+        "num_sale_days",
+    }
+    if not required_inventory_keys.issubset(inventory.keys()):
+        return True
+
+    return False
 
 
 def no_cache_for_htmx(view_func):
@@ -183,10 +243,15 @@ def get_dashboard_context(request):
     
     # Get current data version for this user
     data_version = cache.get(f"dashboard_data_version_{data_owner.id}", 0)
-    cache_key = f"dashboard_payload_{data_owner.id}_{data_version}_{cache_hash}"
+    cache_key = (
+        f"dashboard_payload_v{DASHBOARD_PAYLOAD_CACHE_VERSION}_"
+        f"{data_owner.id}_{data_version}_{cache_hash}"
+    )
     
-    # Bypass cache temporarily to ensure new data structures (like inventory.details) are populated
-    payload = None # cache.get(cache_key)
+    payload = cache.get(cache_key)
+    if payload and _payload_needs_refresh(payload):
+        payload = None
+
     if not payload:
         payload = run_orm_computation(
             qs,
@@ -198,12 +263,13 @@ def get_dashboard_context(request):
         )
         cache.set(cache_key, payload, timeout=3600 * 24)  # Cache for 24 hours
 
+    template_payload = _build_template_payload(payload)
 
     return {
         "logged_user": user,
         "user_features": user_features,
-        "payload": payload,
-        "payload_json": json.dumps(payload, cls=DashboardEncoder),
+        "payload": template_payload,
+        "payload_json": _build_payload_json(payload),
         "filters": filters,
         "selected_filters": selected_filters,
         "selected_filters_json": json.dumps(selected_filters),
@@ -279,6 +345,7 @@ def upload_view(request):
     user = get_logged_in_user(request)
     if not user:
         return redirect("account-login")
+    data_owner = user.created_by if user.created_by else user
 
     if user.is_main_user:
         user_features = [f.code_name for f in Feature.objects.all()]
@@ -286,6 +353,10 @@ def upload_view(request):
         user_features = (
             [f.code_name for f in user.role.features.all()] if user.role else []
         )
+    from apps.upload.models import UploadLog
+    upload_logs = UploadLog.objects.filter(data_owner=data_owner).select_related(
+        "uploaded_by"
+    )[:100]
 
     return render(
         request,
@@ -293,6 +364,7 @@ def upload_view(request):
         {
             "logged_user": user,
             "user_features": user_features,
+            "upload_logs": upload_logs,
             "payload_json": "null",
             "selected_filters_json": "{}",
         },
