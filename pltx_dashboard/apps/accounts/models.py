@@ -48,7 +48,8 @@ class Users(models.Model):
 
     @property
     def is_main_user(self):
-        return self.role is not None and self.role.name.lower() == "admin"
+        # Main users are top-level accounts (not created by another user).
+        return self.created_by_id is None
 
     def __str__(self):
         return f"{self.fname} {self.lname}"

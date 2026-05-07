@@ -1,4 +1,5 @@
 import datetime
+import calendar
 
 from apps.dashboard.services.analytics_services_orm import (
     generate_kpis_orm,
@@ -7,13 +8,82 @@ from apps.dashboard.services.analytics_services_orm import (
 from apps.dashboard.services.analytics_services_orm_tables import (
     generate_bi_data_orm,
 )
+from django.core.cache import cache
 from django.db.models import Sum, Max
+from django.utils import timezone
 
 def safe_replace_year(d, year_offset=-1):
     try:
         return d.replace(year=d.year + year_offset)
     except ValueError:
         return d.replace(year=d.year + year_offset, day=28)
+
+
+def safe_shift_month(d, month_offset=-1):
+    month_index = (d.year * 12 + (d.month - 1)) + month_offset
+    year = month_index // 12
+    month = (month_index % 12) + 1
+    day = min(d.day, calendar.monthrange(year, month)[1])
+    return datetime.date(year, month, day)
+
+
+def _parse_ymd_date(value):
+    if not value:
+        return None
+    try:
+        return datetime.datetime.strptime(str(value), "%Y-%m-%d").date()
+    except Exception:
+        return None
+
+
+def resolve_growth_period(filters, reference_date):
+    """
+    Determine the active period for MOM/YOY growth.
+    - No date filter: current month to date.
+    - Preset date-range: that preset period.
+    - Custom start/end: exact selected range.
+    """
+    start_custom = _parse_ymd_date(filters.get("start_date"))
+    end_custom = _parse_ymd_date(filters.get("end_date"))
+    if start_custom and end_custom:
+        if end_custom < start_custom:
+            start_custom, end_custom = end_custom, start_custom
+        return start_custom, end_custom
+    if start_custom and not end_custom:
+        return start_custom, reference_date
+    if end_custom and not start_custom:
+        return end_custom.replace(day=1), end_custom
+
+    date_range = filters.get("date_range")
+    if date_range and date_range != "custom":
+        if date_range == "yesterday":
+            start = end = reference_date - datetime.timedelta(days=1)
+        elif date_range == "last_7_days":
+            start = reference_date - datetime.timedelta(days=6)
+            end = reference_date
+        elif date_range == "last_15_days":
+            start = reference_date - datetime.timedelta(days=14)
+            end = reference_date
+        elif date_range == "last_month":
+            first_day = reference_date.replace(day=1)
+            end = first_day - datetime.timedelta(days=1)
+            start = end.replace(day=1)
+        elif date_range == "last_3_months":
+            start = reference_date - datetime.timedelta(days=90)
+            end = reference_date
+        elif date_range == "last_6_months":
+            start = reference_date - datetime.timedelta(days=180)
+            end = reference_date
+        elif date_range == "last_1_year":
+            start = reference_date - datetime.timedelta(days=365)
+            end = reference_date
+        else:
+            start = reference_date.replace(day=1)
+            end = reference_date
+        return start, end
+
+    # Default (no date filter): current month-to-date
+    return reference_date.replace(day=1), reference_date
 
 def get_revenue_for_period(q, fk_q, start, end):
     rev = 0
@@ -43,7 +113,7 @@ def apply_global_filters_orm(qs, filters):
     start = end = None
     date_range = filters.get("date_range")
     if date_range and date_range != "custom":
-        today = datetime.date.today()
+        today = timezone.localdate()
         if date_range == "yesterday":
             start = end = today - datetime.timedelta(days=1)
         elif date_range == "last_7_days":
@@ -167,8 +237,6 @@ def get_available_filters_orm(qs, fk_qs):
         "dates": [],  # not used for UI dropdown
     }
 
-from django.core.cache import cache
-
 def get_available_filters_orm_cached(qs, fk_qs, data_owner_id, show_amazon=True, show_flipkart=True):
     cache_key = f"dashboard_filters_{data_owner_id}_{show_amazon}_{show_flipkart}"
     filters = cache.get(cache_key)
@@ -275,17 +343,17 @@ def run_orm_computation(
         prev = kpis_prev.get(key, 0)
         kpis[f"{key}_change"] = _safe_growth(curr, prev)
 
-    max_qs = qs.aggregate(m=Max('date'))['m'] if qs is not None else None
-    max_fk = fk_qs.aggregate(m=Max('date'))['m'] if fk_qs is not None else None
+    max_qs = qs.aggregate(m=Max("date"))["m"] if qs is not None else None
+    max_fk = fk_qs.aggregate(m=Max("date"))["m"] if fk_qs is not None else None
     latest_dates = [d for d in (max_qs, max_fk) if d]
-    today = max(latest_dates) if latest_dates else datetime.date.today()
-    
-    cm_start = today.replace(day=1)
-    cm_end = today
-    pm_end = cm_start - datetime.timedelta(days=1)
-    pm_start = pm_end.replace(day=1)
-    ppm_end = pm_start - datetime.timedelta(days=1)
-    ppm_start = ppm_end.replace(day=1)
+    data_anchor_date = max(latest_dates) if latest_dates else datetime.date.today()
+
+    growth_ref_date = timezone.localdate()
+    cm_start, cm_end = resolve_growth_period(filters, growth_ref_date)
+    pm_start = safe_shift_month(cm_start, -1)
+    pm_end = safe_shift_month(cm_end, -1)
+    ppm_start = safe_shift_month(cm_start, -2)
+    ppm_end = safe_shift_month(cm_end, -2)
 
     yoy_cm_start = safe_replace_year(cm_start)
     yoy_cm_end = safe_replace_year(cm_end)
@@ -305,6 +373,12 @@ def run_orm_computation(
     kpis["yoy_growth"] = _safe_growth(cm_rev, yoy_cm_rev)
     kpis["prev_mom"] = _safe_growth(pm_rev, ppm_rev)
     kpis["prev_yoy"] = _safe_growth(pm_rev, yoy_pm_rev)
+    kpis["mom_period_current_start"] = cm_start
+    kpis["mom_period_current_end"] = cm_end
+    kpis["mom_period_previous_start"] = pm_start
+    kpis["mom_period_previous_end"] = pm_end
+    kpis["yoy_period_previous_start"] = yoy_cm_start
+    kpis["yoy_period_previous_end"] = yoy_cm_end
     kpis["profit_change"] = _safe_growth(kpis["net_profit"], kpis_prev.get("net_profit", 0))
     kpis["gross_margin_change"] = round(kpis["gross_margin_pct"] - kpis_prev.get("gross_margin_pct", 0), 1)
     kpis["contribution_margin_change"] = round(kpis["contribution_margin"] - kpis_prev.get("contribution_margin", 0), 1)
@@ -320,6 +394,9 @@ def run_orm_computation(
     cm_tacos = (cm_spend / cm_rev_ads * 100) if cm_rev_ads > 0 else 0
     pm_tacos = (pm_spend / pm_rev_ads * 100) if pm_rev_ads > 0 else 0
     kpis["mom_tacos_change"] = round(cm_tacos - pm_tacos, 1)
+
+    # Used by forecast and other sections that should anchor to data freshness.
+    today = data_anchor_date
 
     # 5. Charts
     charts = generate_charts_data_orm(qs_f, fk_qs_f, table_data=table_data)
@@ -382,48 +459,213 @@ def run_orm_computation(
     in_stock_count = low_stock_count = oos_count = overstock_count = 0
     total_lost_sales = 0.0
 
-    all_units = [r["units"] for r in table_data if r["units"] > 0]
-    avg_units = sum(all_units) / len(all_units) if all_units else 1
+    # ── DOC-only Inventory Health (ASIN + Date level) ──
+    from apps.dashboard.models import FBAStockData, FlexStockData, SalesData, CategoryMapping
 
-    # Create inventory details with rounded floats to ensure JSON serialization
+    # Build ASIN allow-list for category/portfolio/subcategory filters
+    allowed_asins = None
+    if filters.get("category") or filters.get("portfolio") or filters.get("subcategory"):
+        cat_map_qs = CategoryMapping.objects.filter(user=user)
+
+        category_filter = filters.get("category")
+        if category_filter:
+            if isinstance(category_filter, (list, tuple)):
+                cat_map_qs = cat_map_qs.filter(category__in=category_filter)
+            else:
+                cat_map_qs = cat_map_qs.filter(category=category_filter)
+
+        portfolio_filter = filters.get("portfolio")
+        if portfolio_filter:
+            cat_map_qs = cat_map_qs.filter(portfolio=portfolio_filter)
+
+        subcategory_filter = filters.get("subcategory")
+        if subcategory_filter:
+            if isinstance(subcategory_filter, (list, tuple)):
+                cat_map_qs = cat_map_qs.filter(subcategory__in=subcategory_filter)
+            else:
+                cat_map_qs = cat_map_qs.filter(subcategory=subcategory_filter)
+
+        allowed_asins = set(cat_map_qs.values_list("asin", flat=True))
+
+    # Sales (Units Ordered) at ASIN + Date level
+    sales_qs = SalesData.objects.filter(user=user)
+    sales_qs = apply_global_filters_orm(sales_qs, filters)
+
+    asin_filter = filters.get("asin")
+    if asin_filter:
+        if isinstance(asin_filter, (list, tuple)):
+            sales_qs = sales_qs.filter(asin__in=asin_filter)
+        else:
+            sales_qs = sales_qs.filter(asin=asin_filter)
+    if allowed_asins is not None:
+        sales_qs = sales_qs.filter(asin__in=allowed_asins)
+
+    sale_days = list(sales_qs.values_list("date", flat=True).distinct())
+    num_sale_days = max(len(sale_days), 1)
+
+    sales_by_key = {}
+    for row in sales_qs.values("asin", "date").annotate(total_units=Sum("units")):
+        key = (str(row["asin"]), row["date"])
+        sales_by_key[key] = int(row["total_units"] or 0)
+
+    # Revenue map at ASIN + Date level (for OOS impact + details table)
+    revenue_by_key = {}
+    revenue_by_asin = {}
+    if qs_f is not None:
+        for row in qs_f.values("asin", "date").annotate(total_revenue=Sum("revenue")):
+            key = (str(row["asin"]), row["date"])
+            revenue_by_key[key] = float(row["total_revenue"] or 0)
+        for row in qs_f.values("asin").annotate(total_revenue=Sum("revenue")):
+            revenue_by_asin[str(row["asin"])] = float(row["total_revenue"] or 0)
+
+    # Category map by ASIN for display
+    asin_category_map = {
+        str(r["asin"]): str(r["category"] or "Unknown")
+        for r in CategoryMapping.objects.filter(user=user).values("asin", "category")
+    }
+
+    # FBA + Flex stock at ASIN + Date level
+    fba_qs = apply_global_filters_orm(FBAStockData.objects.filter(user=user), filters)
+    flex_qs = apply_global_filters_orm(FlexStockData.objects.filter(user=user), filters)
+
+    if asin_filter:
+        if isinstance(asin_filter, (list, tuple)):
+            fba_qs = fba_qs.filter(asin__in=asin_filter)
+            flex_qs = flex_qs.filter(asin__in=asin_filter)
+        else:
+            fba_qs = fba_qs.filter(asin=asin_filter)
+            flex_qs = flex_qs.filter(asin=asin_filter)
+    if allowed_asins is not None:
+        fba_qs = fba_qs.filter(asin__in=allowed_asins)
+        flex_qs = flex_qs.filter(asin__in=allowed_asins)
+
+    fba_stock_by_key = {}
+    for row in fba_qs.values("asin", "date").annotate(total=Sum("ending_warehouse_balance")):
+        key = (str(row["asin"]), row["date"])
+        fba_stock_by_key[key] = int(row["total"] or 0)
+
+    flex_stock_by_key = {}
+    for row in flex_qs.values("asin", "date").annotate(total=Sum("qty")):
+        key = (str(row["asin"]), row["date"])
+        flex_stock_by_key[key] = int(row["total"] or 0)
+
+    stock_keys = set(fba_stock_by_key.keys()) | set(flex_stock_by_key.keys())
+    sales_keys = set(sales_by_key.keys())
+
+    has_stock_data = bool(stock_keys)
+
+    # Inventory health must be computed only on dates where BOTH sales and stock
+    # exist. This keeps date alignment strict and prevents mismatched-day joins.
+    stock_dates = {d for _asin, d in stock_keys if d}
+    sales_dates = {d for _asin, d in sales_keys if d}
+    aligned_dates = stock_dates & sales_dates
+
+    if has_stock_data and aligned_dates:
+        # Include:
+        # 1) stock snapshot rows for aligned dates
+        # 2) same-day sales rows even when stock row is missing for that SKU
+        # This ensures Sale Qty is not dropped from inventory health tables.
+        aligned_stock_keys = {k for k in stock_keys if k[1] in aligned_dates}
+        aligned_sales_keys = {k for k in sales_keys if k[1] in aligned_dates}
+        all_keys = aligned_stock_keys | aligned_sales_keys
+    else:
+        all_keys = set()
+
+    key_count_by_asin = {}
+    for asin, _row_date in all_keys:
+        key_count_by_asin[asin] = key_count_by_asin.get(asin, 0) + 1
+
     inventory_details = []
-    for r in table_data:
-        u = int(r["units"])
-        rev = float(r["revenue"])
-        sku = str(r["asin"])
-        cat = str(r.get("category") or "Unknown")
-        status = "In Stock"
-        status_class = "good"
-        reason = f"Units ({u}) are within normal range"
-        
-        if u == 0:
-            oos_count += 1
-            total_lost_sales += rev
+    inventory_revenue_buckets = {
+        "in_stock": 0.0,
+        "low_stock": 0.0,
+        "oos": 0.0,
+        "overstock": 0.0,
+    }
+    inventory_detail_rows_total = len(all_keys)
+
+    def _inventory_sort_key(key):
+        asin, row_date = key
+        sale_qty = int(sales_by_key.get((asin, row_date), 0))
+        rev = float(revenue_by_key.get((asin, row_date), 0.0) or 0.0)
+        return (
+            row_date or datetime.date.min,
+            1 if sale_qty > 0 else 0,
+            sale_qty,
+            rev,
+            asin,
+        )
+
+    for asin, row_date in sorted(all_keys, key=_inventory_sort_key, reverse=True):
+        sale_qty = int(sales_by_key.get((asin, row_date), 0))
+        fba_qty = int(fba_stock_by_key.get((asin, row_date), 0))
+        flex_qty = int(flex_stock_by_key.get((asin, row_date), 0))
+        stock_qty = fba_qty + flex_qty
+        key_count = max(int(key_count_by_asin.get(asin, 1)), 1)
+        rev = float(
+            revenue_by_key.get(
+                (asin, row_date),
+                float(revenue_by_asin.get(asin, 0.0)) / key_count,
+            )
+            or 0
+        )
+        cat = asin_category_map.get(asin, "Unknown")
+
+        same_day_sales = float(sale_qty)
+        if same_day_sales > 0:
+            doc = round(stock_qty / same_day_sales, 1)
+        else:
+            doc = 999.0 if stock_qty > 0 else 0.0
+
+        if stock_qty <= 0:
             status = "OOS"
             status_class = "danger"
-            reason = "Units are 0"
-        elif u >= avg_units * 2:
-            overstock_count += 1
+            oos_count += 1
+            total_lost_sales += rev
+            reason = f"Stock Qty = 0 (FBA: {fba_qty}, Flex: {flex_qty})"
+            inventory_revenue_buckets["oos"] += rev
+        elif sale_qty <= 0:
             status = "Overstock"
             status_class = "neutral"
-            reason = f"{u} &ge; 200% of avg ({avg_units*2:.1f})"
-        elif u <= avg_units * 0.25:
-            low_stock_count += 1
+            overstock_count += 1
+            reason = f"DOC = ∞ (Stock: {stock_qty}, No sales)"
+            inventory_revenue_buckets["overstock"] += rev
+        elif doc <= 15:
             status = "Low Stock"
             status_class = "warn"
-            reason = f"{u} &le; 25% of avg ({avg_units*0.25:.1f})"
+            low_stock_count += 1
+            reason = f"DOC = {doc} days (Stock: {stock_qty} / Same-Day Sales: {same_day_sales:.1f})"
+            inventory_revenue_buckets["low_stock"] += rev
+        elif doc > 60:
+            status = "Overstock"
+            status_class = "neutral"
+            overstock_count += 1
+            reason = f"DOC = {doc} days (Stock: {stock_qty} / Same-Day Sales: {same_day_sales:.1f})"
+            inventory_revenue_buckets["overstock"] += rev
         else:
+            status = "In Stock"
+            status_class = "good"
             in_stock_count += 1
+            reason = f"DOC = {doc} days (Stock: {stock_qty} / Same-Day Sales: {same_day_sales:.1f})"
+            inventory_revenue_buckets["in_stock"] += rev
 
-        inventory_details.append({
-            "sku": sku,
-            "category": cat,
-            "units": u,
-            "revenue": round(rev, 2),
-            "status": status,
-            "status_class": status_class,
-            "reason": reason
-        })
+        inventory_details.append(
+            {
+                "date": row_date,
+                "sku": asin,
+                "category": cat,
+                "stock_qty": stock_qty,
+                "fba_qty": fba_qty,
+                "flex_qty": flex_qty,
+                "sale_qty": sale_qty,
+                "doc": doc,
+                "units": sale_qty,
+                "revenue": round(rev, 2),
+                "status": status,
+                "status_class": status_class,
+                "reason": reason,
+            }
+        )
 
     inventory = {
         "in_stock": int(in_stock_count), 
@@ -431,35 +673,29 @@ def run_orm_computation(
         "oos": int(oos_count), 
         "overstock": int(overstock_count),
         "details": inventory_details,
-        "avg_units": round(float(avg_units), 1)
+        "details_total": int(inventory_detail_rows_total),
+        "details_shown": int(len(inventory_details)),
+        "details_truncated": inventory_detail_rows_total > len(inventory_details),
+        "has_stock_data": has_stock_data,
+        "num_sale_days": num_sale_days,
     }
 
     oos_impact = {"lost_sales": round(total_lost_sales, 2), "skus_affected": oos_count, "orders_lost": 0}
 
     inventory_position = []
     if total_revenue > 0:
-        cat_buckets = {"in_stock": 0.0, "low_stock": 0.0, "oos": 0.0, "critical": 0.0}
-        for r in table_data:
-            rev_val = r.get("revenue", 0)
-            u = r["units"]
-            if u == 0:
-                cat_buckets["oos"] += rev_val
-            elif u <= 10:
-                cat_buckets["critical"] += rev_val
-            elif u <= 30:
-                cat_buckets["low_stock"] += rev_val
-            else:
-                cat_buckets["in_stock"] += rev_val
+        tracked_revenue_total = sum(inventory_revenue_buckets.values())
+        pct_denominator = tracked_revenue_total if tracked_revenue_total > 0 else total_revenue
 
         bucket_defs = [
-            ("In Stock (>30 Days)", "in_stock", "green"),
-            ("Low Stock (15–30D)", "low_stock", "amber"),
-            ("Critical (<15 Days)", "critical", "orange"),
+            ("In Stock (15–60D)", "in_stock", "green"),
+            ("Low Stock (<=15D)", "low_stock", "amber"),
+            ("Overstock (>60D)", "overstock", "orange"),
             ("Out of Stock", "oos", "red"),
         ]
         for label, key, color in bucket_defs:
-            rev_val = cat_buckets[key]
-            pct = round(rev_val / total_revenue * 100, 1) if total_revenue > 0 else 0
+            rev_val = inventory_revenue_buckets[key]
+            pct = round(rev_val / pct_denominator * 100, 1) if pct_denominator > 0 else 0
             inventory_position.append({"label": label, "revenue": rev_val, "pct": pct, "color": color})
 
 

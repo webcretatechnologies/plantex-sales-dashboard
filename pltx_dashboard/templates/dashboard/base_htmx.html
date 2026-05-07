@@ -20,6 +20,12 @@
 <!-- OOB swap for the user role -->
 <span id="page-user-role" class="user-role" hx-swap-oob="true">{% block user_role %}Business Head{% endblock %}</span>
 
+<!-- OOB swap for stock upload warning banner -->
+<div id="stockUploadBanner" hx-swap-oob="true" style="margin: 12px 22px 0; background: #dc2626; color: #ffffff; border: 1px solid #b91c1c; border-radius: 10px; padding: 10px 14px; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; {% if show_stock_upload_banner %}display:flex;{% else %}display:none;{% endif %}">
+    <span class="material-icons-round" style="font-size: 18px;">warning</span>
+    <span>Please upload today's stock files to get inventory health.</span>
+</div>
+
 <!-- ═══════════════════════════════════════════════════════════════════════════
      OOB swap for the TOPBAR FILTER BAR
      This fully re-renders the filter form with correct server-side option data

@@ -54,6 +54,66 @@ class PriceData(models.Model):
         unique_together = ("user", "asin")
 
 
+class FBAStockData(models.Model):
+    """FBA Stock file — per-ASIN ending warehouse balance."""
+
+    user = models.ForeignKey(
+        "accounts.Users", on_delete=models.CASCADE, related_name="fba_stock_data"
+    )
+    date = models.DateField(db_index=True, null=True, blank=True)
+    fnsku = models.CharField(max_length=50, null=True, blank=True)
+    asin = models.CharField(max_length=50, db_index=True)
+    msku = models.CharField(max_length=100, null=True, blank=True)
+    title = models.CharField(max_length=500, null=True, blank=True)
+    disposition = models.CharField(max_length=50, null=True, blank=True)
+    starting_warehouse_balance = models.IntegerField(default=0)
+    in_transit_between_warehouses = models.IntegerField(default=0)
+    receipts = models.IntegerField(default=0)
+    customer_shipments = models.IntegerField(default=0)
+    customer_returns = models.IntegerField(default=0)
+    vendor_returns = models.IntegerField(default=0)
+    warehouse_transfer_in_out = models.IntegerField(default=0)
+    found = models.IntegerField(default=0)
+    lost = models.IntegerField(default=0)
+    damaged = models.IntegerField(default=0)
+    disposed = models.IntegerField(default=0)
+    other_events = models.IntegerField(default=0)
+    ending_warehouse_balance = models.IntegerField(default=0)
+    unknown_events = models.IntegerField(default=0)
+    location = models.CharField(max_length=200, null=True, blank=True)
+
+    class Meta:
+        unique_together = ("user", "asin", "date", "disposition", "location")
+        indexes = [
+            models.Index(fields=["user", "asin"], name="idx_fba_user_asin"),
+        ]
+
+    def __str__(self):
+        return f"FBA Stock: {self.asin} ({self.ending_warehouse_balance})"
+
+
+class FlexStockData(models.Model):
+    """Flex Stock file — per-ASIN cluster-level stock quantity."""
+
+    user = models.ForeignKey(
+        "accounts.Users", on_delete=models.CASCADE, related_name="flex_stock_data"
+    )
+    date = models.DateField(db_index=True, null=True, blank=True)
+    asin = models.CharField(max_length=50, db_index=True)
+    cluster = models.CharField(max_length=100, null=True, blank=True)
+    qty = models.IntegerField(default=0)
+
+    class Meta:
+        unique_together = ("user", "asin", "date", "cluster")
+        indexes = [
+            models.Index(fields=["user", "asin"], name="idx_flex_user_asin"),
+            models.Index(fields=["user", "asin", "date"], name="idx_flex_u_a_d"),
+        ]
+
+    def __str__(self):
+        return f"Flex Stock: {self.asin} ({self.qty}) [{self.date}]"
+
+
 class ProcessedDashboardData(models.Model):
     user = models.ForeignKey(
         "accounts.Users",

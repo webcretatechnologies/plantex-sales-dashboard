@@ -4,6 +4,8 @@ from .models import (
     SpendData,
     CategoryMapping,
     PriceData,
+    FBAStockData,
+    FlexStockData,
     ProcessedDashboardData,
     FlipkartSearchTraffic,
     FlipkartCategoryMap,
@@ -38,6 +40,20 @@ class CategoryMappingAdmin(admin.ModelAdmin):
 @admin.register(PriceData)
 class PriceDataAdmin(admin.ModelAdmin):
     list_display = ("user", "asin", "price")
+
+
+@admin.register(FBAStockData)
+class FBAStockDataAdmin(admin.ModelAdmin):
+    list_display = ("user", "date", "asin", "fnsku", "ending_warehouse_balance", "location")
+    list_filter = ("date", "user")
+    search_fields = ("asin", "fnsku", "msku")
+
+
+@admin.register(FlexStockData)
+class FlexStockDataAdmin(admin.ModelAdmin):
+    list_display = ("user", "asin", "cluster", "qty")
+    list_filter = ("user",)
+    search_fields = ("asin", "cluster")
 
 
 @admin.register(ProcessedDashboardData)

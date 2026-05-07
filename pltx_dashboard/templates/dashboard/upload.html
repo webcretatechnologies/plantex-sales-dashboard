@@ -245,6 +245,94 @@
         gap: 20px;
     }
 
+    .upload-log-section {
+        margin-top: 46px;
+    }
+
+    .upload-log-card {
+        background: var(--surface);
+        border: 1px solid var(--border-light);
+        border-radius: 20px;
+        padding: 24px;
+        box-shadow: 0 8px 22px rgba(15, 23, 42, 0.05);
+    }
+
+    .upload-log-title {
+        font-size: 18px;
+        font-weight: 700;
+        color: var(--text);
+        margin-bottom: 6px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .upload-log-subtitle {
+        font-size: 13px;
+        color: var(--muted);
+        margin-bottom: 16px;
+    }
+
+    .upload-log-table-wrap {
+        overflow-x: auto;
+        border: 1px solid var(--border-light);
+        border-radius: 12px;
+    }
+
+    .upload-log-table {
+        width: 100%;
+        border-collapse: collapse;
+        min-width: 760px;
+    }
+
+    .upload-log-table th,
+    .upload-log-table td {
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--border-light);
+        font-size: 12px;
+        color: var(--text2);
+        text-align: left;
+        white-space: nowrap;
+    }
+
+    .upload-log-table th {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--muted);
+        background: rgba(148, 163, 184, 0.08);
+    }
+
+    .upload-log-badge {
+        display: inline-flex;
+        align-items: center;
+        border-radius: 999px;
+        padding: 3px 8px;
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: capitalize;
+    }
+
+    .upload-log-badge.queued {
+        color: #1d4ed8;
+        background: #dbeafe;
+    }
+
+    .upload-log-badge.processing {
+        color: #92400e;
+        background: #fef3c7;
+    }
+
+    .upload-log-badge.success {
+        color: #166534;
+        background: #dcfce7;
+    }
+
+    .upload-log-badge.error {
+        color: #991b1b;
+        background: #fee2e2;
+    }
+
     .btn-process {
         background: linear-gradient(135deg, var(--accent), var(--accent2));
         color: #ffffff;
@@ -401,6 +489,36 @@
                 </label>
                 <div id="priceFileList" class="file-list"></div>
             </div>
+
+            <!-- FBA Stock Card -->
+            <div class="upload-card">
+                <div class="upload-card-title">
+                    <span class="material-icons-round">warehouse</span>
+                    FBA Stock File
+                </div>
+                <label class="modern-dropzone" for="fbaStockFile">
+                    <div class="material-icons-round drop-icon">inventory</div>
+                    <div class="drop-text">Drag & drop FBA Stock file here</div>
+                    <div class="drop-subtext">Required: Date + full FBA stock columns including Ending Warehouse Balance</div>
+                    <input type="file" id="fbaStockFile" accept=".csv,.xlsx,.xls" multiple style="display:none">
+                </label>
+                <div id="fbaStockFileList" class="file-list"></div>
+            </div>
+
+            <!-- Flex Stock Card -->
+            <div class="upload-card">
+                <div class="upload-card-title">
+                    <span class="material-icons-round">local_shipping</span>
+                    Flex Stock File
+                </div>
+                <label class="modern-dropzone" for="flexStockFile">
+                    <div class="material-icons-round drop-icon">inventory_2</div>
+                    <div class="drop-text">Drag & drop Flex Stock file here</div>
+                    <div class="drop-subtext">Required columns: Date / ASIN / Cluster / Qty</div>
+                    <input type="file" id="flexStockFile" accept=".csv,.xlsx,.xls" multiple style="display:none">
+                </label>
+                <div id="flexStockFileList" class="file-list"></div>
+            </div>
         </div>
     </div>
 
@@ -522,10 +640,50 @@
         <div id="statusMsg"></div>
     </div>
 
+    <div class="upload-log-section">
+        <div class="upload-log-card">
+            <div class="upload-log-title">
+                <span class="material-icons-round">history</span>
+                Upload Log Notes
+            </div>
+            <div class="upload-log-subtitle">
+                System-generated upload history (read-only).
+            </div>
+            <div class="upload-log-table-wrap">
+                <table class="upload-log-table">
+                    <thead>
+                        <tr>
+                            <th>File Name</th>
+                            <th>Upload Type</th>
+                            <th>Upload Date & Time</th>
+                            <th>Uploaded By</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for log in upload_logs %}
+                        <tr>
+                            <td>{{ log.file_name }}</td>
+                            <td>{{ log.upload_type }}</td>
+                            <td>{{ log.created_at|date:"d M Y, h:i A" }}</td>
+                            <td>{{ log.uploaded_by.fname }} {{ log.uploaded_by.lname }}</td>
+                            <td><span class="upload-log-badge {{ log.status }}">{{ log.status }}</span></td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="5" style="text-align:center;color:var(--muted);padding:20px;">No upload logs yet.</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
     {% csrf_token %}
 </div>
 {% endblock %}
 
 {% block dashboard_scripts %}
-<script src="/static/js/upload.js?v=5"></script>
+<script src="/static/js/upload.js?v=6"></script>
 {% endblock %}

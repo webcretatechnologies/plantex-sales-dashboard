@@ -1,5 +1,6 @@
 import pandas as pd
 import datetime
+import re
 
 from apps.dashboard.utils import clean_currency, clean_number
 
@@ -8,6 +9,8 @@ from apps.dashboard.models import (
     SpendData,
     CategoryMapping,
     PriceData,
+    FBAStockData,
+    FlexStockData,
     ProcessedDashboardData,
     # Slim Flipkart models
     FlipkartSearchTraffic,
@@ -43,6 +46,101 @@ def load_file_obj(file_obj, **kwargs):
         except Exception:
             file_obj.seek(0)
             return pd.read_excel(file_obj, engine="openpyxl", **kwargs)
+
+
+def _parse_numeric_report_date(value):
+    """
+    Parse numeric date cells robustly:
+    - Excel serial days (e.g. 45816)
+    - Unix timestamps (seconds / milliseconds)
+    - YYYYMMDD integers
+    """
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return None
+
+    if pd.isna(num) or num <= 0:
+        return None
+
+    as_int = int(round(num))
+
+    # YYYYMMDD
+    if abs(num - as_int) < 1e-9 and 19000101 <= as_int <= 21001231:
+        dt = pd.to_datetime(str(as_int), format="%Y%m%d", errors="coerce")
+        if not pd.isna(dt):
+            return dt.date()
+
+    # Excel serial date (days since 1899-12-30)
+    if 10_000 <= num <= 90_000:
+        dt = pd.to_datetime(num, unit="D", origin="1899-12-30", errors="coerce")
+        if not pd.isna(dt):
+            return dt.date()
+
+    # Unix timestamp
+    if num >= 1_000_000_000_000:  # ms
+        dt = pd.to_datetime(num, unit="ms", origin="unix", errors="coerce")
+        if not pd.isna(dt):
+            return dt.date()
+    elif num >= 1_000_000_000:  # sec
+        dt = pd.to_datetime(num, unit="s", origin="unix", errors="coerce")
+        if not pd.isna(dt):
+            return dt.date()
+
+    return None
+
+
+def parse_report_date(value, prefer_dayfirst=None):
+    """
+    Parse date values from CSV/XLSX cells with flexible handling for
+    text dates, datetime values, and Excel numeric serials.
+    """
+    if pd.isna(value):
+        raise ValueError("empty date")
+
+    if isinstance(value, datetime.datetime):
+        return value.date()
+    if isinstance(value, datetime.date):
+        return value
+
+    # Numeric types from Excel/CSV
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        parsed = _parse_numeric_report_date(value)
+        if parsed:
+            return parsed
+        raise ValueError(f"unsupported numeric date: {value}")
+
+    raw = str(value).strip()
+    if not raw:
+        raise ValueError("empty date")
+
+    # Numeric-looking strings
+    raw_num = raw.replace(",", "")
+    parsed = _parse_numeric_report_date(raw_num)
+    if parsed:
+        return parsed
+
+    # Ambiguous numeric-string dates can be interpreted with an explicit
+    # preference from the caller.
+    if re.fullmatch(r"\d{1,2}[-/]\d{1,2}[-/]\d{4}", raw):
+        if prefer_dayfirst is True:
+            fmts = ("%d-%m-%Y", "%d/%m/%Y", "%m-%d-%Y", "%m/%d/%Y")
+        elif prefer_dayfirst is False:
+            fmts = ("%m-%d-%Y", "%m/%d/%Y", "%d-%m-%Y", "%d/%m/%Y")
+        else:
+            fmts = ("%m-%d-%Y", "%m/%d/%Y", "%d-%m-%Y", "%d/%m/%Y")
+        for fmt in fmts:
+            try:
+                return datetime.datetime.strptime(raw, fmt).date()
+            except ValueError:
+                pass
+
+    dt = pd.to_datetime(raw, errors="coerce", dayfirst=False)
+    if pd.isna(dt):
+        dt = pd.to_datetime(raw, errors="coerce", dayfirst=True)
+    if pd.isna(dt):
+        raise ValueError(f"unparseable date: {value}")
+    return dt.date()
 
 
 # ---------------------------------------------------------------------------
@@ -266,6 +364,215 @@ def process_sales_file(file_obj, date_str, user):
     print(
         f"[SalesData] date={date_obj}, Processed and upserted bulk batch of {len(new_sales)} records."
     )
+
+
+# ---------------------------------------------------------------------------
+# FBA Stock
+# ---------------------------------------------------------------------------
+
+
+def process_fba_stock_file(file_obj, user):
+    """
+    Parse Amazon FBA Stock file.
+    Required columns: Date, FNSKU, ASIN, MSKU, Title, Disposition,
+    Starting Warehouse Balance, In Transit Between Warehouses, Receipts,
+    Customer Shipments, Customer Returns, Vendor Returns,
+    Warehouse Transfer In/Out, Found, Lost, Damaged, Disposed,
+    Other Events, Ending Warehouse Balance, Unknown Events, Location.
+    """
+    df = load_file_obj(file_obj)
+
+    # Be tolerant to common header variations (BOM, extra spaces, case).
+    col_lookup = {}
+    for c in df.columns:
+        key = str(c).replace("\ufeff", "").strip().lower()
+        if key and key not in col_lookup:
+            col_lookup[key] = c
+
+    required_cols = [
+        "Date",
+        "FNSKU",
+        "ASIN",
+        "MSKU",
+        "Title",
+        "Disposition",
+        "Starting Warehouse Balance",
+        "In Transit Between Warehouses",
+        "Receipts",
+        "Customer Shipments",
+        "Customer Returns",
+        "Vendor Returns",
+        "Warehouse Transfer In/Out",
+        "Found",
+        "Lost",
+        "Damaged",
+        "Disposed",
+        "Other Events",
+        "Ending Warehouse Balance",
+        "Unknown Events",
+        "Location",
+    ]
+    missing_cols = [c for c in required_cols if c.lower() not in col_lookup]
+    if missing_cols:
+        raise ValueError(
+            f"FBA Stock file missing required columns: {', '.join(missing_cols)}"
+        )
+
+    records = []
+    for idx, row in enumerate(df.to_dict("records"), start=2):
+        asin = str(row.get(col_lookup["asin"], "")).strip()
+        if not asin or asin.lower() == "nan":
+            continue
+
+        try:
+            row_date = parse_report_date(
+                row.get(col_lookup["date"]), prefer_dayfirst=False
+            )
+        except Exception as exc:
+            raise ValueError(
+                f"Invalid Date value in FBA Stock at row {idx}: {exc}"
+            )
+
+        records.append(
+            FBAStockData(
+                user=user,
+                date=row_date,
+                fnsku=str(row.get(col_lookup["fnsku"], "") or "").strip(),
+                asin=asin,
+                msku=str(row.get(col_lookup["msku"], "") or "").strip(),
+                title=str(row.get(col_lookup["title"], "") or "").strip()[:500],
+                disposition=str(row.get(col_lookup["disposition"], "") or "").strip(),
+                starting_warehouse_balance=clean_number(
+                    row.get(col_lookup["starting warehouse balance"], 0)
+                ),
+                in_transit_between_warehouses=clean_number(
+                    row.get(col_lookup["in transit between warehouses"], 0)
+                ),
+                receipts=clean_number(row.get(col_lookup["receipts"], 0)),
+                customer_shipments=clean_number(
+                    row.get(col_lookup["customer shipments"], 0)
+                ),
+                customer_returns=clean_number(
+                    row.get(col_lookup["customer returns"], 0)
+                ),
+                vendor_returns=clean_number(row.get(col_lookup["vendor returns"], 0)),
+                warehouse_transfer_in_out=clean_number(
+                    row.get(col_lookup["warehouse transfer in/out"], 0)
+                ),
+                found=clean_number(row.get(col_lookup["found"], 0)),
+                lost=clean_number(row.get(col_lookup["lost"], 0)),
+                damaged=clean_number(row.get(col_lookup["damaged"], 0)),
+                disposed=clean_number(row.get(col_lookup["disposed"], 0)),
+                other_events=clean_number(row.get(col_lookup["other events"], 0)),
+                ending_warehouse_balance=clean_number(
+                    row.get(col_lookup["ending warehouse balance"], 0)
+                ),
+                unknown_events=clean_number(
+                    row.get(col_lookup["unknown events"], 0)
+                ),
+                location=str(row.get(col_lookup["location"], "") or "").strip(),
+            )
+        )
+
+    if records:
+        batch_size = 10_000
+        for i in range(0, len(records), batch_size):
+            FBAStockData.objects.bulk_create(
+                records[i : i + batch_size],
+                **_get_upsert_kwargs(
+                    unique_fields=["user", "asin", "date", "disposition", "location"],
+                    update_fields=[
+                        "fnsku",
+                        "msku",
+                        "title",
+                        "starting_warehouse_balance",
+                        "in_transit_between_warehouses",
+                        "receipts",
+                        "customer_shipments",
+                        "customer_returns",
+                        "vendor_returns",
+                        "warehouse_transfer_in_out",
+                        "found",
+                        "lost",
+                        "damaged",
+                        "disposed",
+                        "other_events",
+                        "ending_warehouse_balance",
+                        "unknown_events",
+                    ],
+                ),
+            )
+
+    print(f"[FBAStockData] Processed {len(records)} records.")
+
+
+# ---------------------------------------------------------------------------
+# Flex Stock
+# ---------------------------------------------------------------------------
+
+
+def process_flex_stock_file(file_obj, user):
+    """
+    Parse Amazon Flex Stock file.
+    Required columns: Date, ASIN, Cluster, Qty.
+    """
+    df = load_file_obj(file_obj)
+
+    # Be tolerant to common header variations (BOM, extra spaces, case).
+    col_lookup = {}
+    for c in df.columns:
+        key = str(c).replace("\ufeff", "").strip().lower()
+        if key and key not in col_lookup:
+            col_lookup[key] = c
+
+    required_cols = ["Date", "ASIN", "Cluster", "Qty"]
+    missing_cols = [c for c in required_cols if c.lower() not in col_lookup]
+    if missing_cols:
+        raise ValueError(
+            f"Flex Stock file missing required columns: {', '.join(missing_cols)}"
+        )
+
+    records = []
+    for idx, row in enumerate(df.to_dict("records"), start=2):
+        asin = str(row.get(col_lookup["asin"], "")).strip()
+        if not asin or asin.lower() == "nan":
+            continue
+
+        try:
+            row_date = parse_report_date(
+                row.get(col_lookup["date"]), prefer_dayfirst=False
+            )
+        except Exception as exc:
+            raise ValueError(
+                f"Invalid Date value in Flex Stock at row {idx}: {exc}"
+            )
+
+        cluster = str(row.get(col_lookup["cluster"], "") or "").strip()
+        qty = clean_number(row.get(col_lookup["qty"], 0))
+
+        records.append(
+            FlexStockData(
+                user=user,
+                date=row_date,
+                asin=asin,
+                cluster=cluster,
+                qty=qty,
+            )
+        )
+
+    if records:
+        batch_size = 10_000
+        for i in range(0, len(records), batch_size):
+            FlexStockData.objects.bulk_create(
+                records[i : i + batch_size],
+                **_get_upsert_kwargs(
+                    unique_fields=["user", "asin", "date", "cluster"],
+                    update_fields=["qty"],
+                ),
+            )
+
+    print(f"[FlexStockData] Processed {len(records)} records.")
+
 
 
 # ---------------------------------------------------------------------------

@@ -30,8 +30,8 @@ document.querySelectorAll('input[name="platform"]').forEach(radio => {
 // ---------------------------------------------------------------------------
 // File input IDs and list IDs — grouped by platform
 // ---------------------------------------------------------------------------
-const AMAZON_IDS = ['csvInput', 'catFile', 'spendFile', 'priceFile'];
-const AMAZON_LISTS = ['fileList', 'catFileList', 'spendFileList', 'priceFileList'];
+const AMAZON_IDS = ['csvInput', 'catFile', 'spendFile', 'priceFile', 'fbaStockFile', 'flexStockFile'];
+const AMAZON_LISTS = ['fileList', 'catFileList', 'spendFileList', 'priceFileList', 'fbaStockFileList', 'flexStockFileList'];
 
 const FK_IDS = [
     'fkSearchTrafficFile', 'fkCategoryFile', 'fkPriceFile',
@@ -59,7 +59,10 @@ function updateProcessButton() {
     let hasFiles = false;
 
     if (platform === 'amazon') {
-        hasFiles = document.getElementById('csvInput').files.length > 0;
+        AMAZON_IDS.forEach(id => {
+            let el = document.getElementById(id);
+            if (el && el.files.length > 0) hasFiles = true;
+        });
     } else {
         FK_IDS.forEach(id => {
             let el = document.getElementById(id);
@@ -86,6 +89,9 @@ function updateProcessButton() {
     { id: 'fkPlaNewFile', listId: 'fkPlaNewFileList' },
     { id: 'fkSalesInvoiceFile', listId: 'fkSalesInvoiceFileList' },
     { id: 'fkCouponFile', listId: 'fkCouponFileList' },
+    // Amazon stock files
+    { id: 'fbaStockFile', listId: 'fbaStockFileList' },
+    { id: 'flexStockFile', listId: 'flexStockFileList' },
 ].forEach(cfg => {
     let el = document.getElementById(cfg.id);
     if (!el) return;
@@ -180,16 +186,21 @@ async function loadDashboard() {
             let spendFiles = document.getElementById('spendFile').files;
             let priceFiles = document.getElementById('priceFile').files;
 
-            if (csvFiles.length === 0) {
-                alert("Please upload at least one Daily Sales CSV!");
-                btn.disabled = false;
-                return;
-            }
-
             for (let i = 0; i < csvFiles.length; i++) fileQueue.push({ file: csvFiles[i], type: 'sales' });
             for (let i = 0; i < catFiles.length; i++) fileQueue.push({ file: catFiles[i], type: 'category' });
             for (let i = 0; i < spendFiles.length; i++) fileQueue.push({ file: spendFiles[i], type: 'spend' });
             for (let i = 0; i < priceFiles.length; i++) fileQueue.push({ file: priceFiles[i], type: 'price' });
+
+            let fbaStockFiles = document.getElementById('fbaStockFile').files;
+            let flexStockFiles = document.getElementById('flexStockFile').files;
+            for (let i = 0; i < fbaStockFiles.length; i++) fileQueue.push({ file: fbaStockFiles[i], type: 'fba_stock' });
+            for (let i = 0; i < flexStockFiles.length; i++) fileQueue.push({ file: flexStockFiles[i], type: 'flex_stock' });
+
+            if (fileQueue.length === 0) {
+                alert("Please upload at least one Amazon file.");
+                btn.disabled = false;
+                return;
+            }
 
         } else {
             // Flipkart — 7 file types mapped to slim pipeline
