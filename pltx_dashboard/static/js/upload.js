@@ -42,6 +42,53 @@ const FK_LISTS = [
     'fkPcaNewFileList', 'fkPlaNewFileList', 'fkSalesInvoiceFileList', 'fkCouponFileList'
 ];
 
+const DEMO_TEMPLATE_MAP = {
+    csvInput: 'upload_sales',
+    catFile: 'upload_category',
+    spendFile: 'upload_spend',
+    priceFile: 'upload_price',
+    fbaStockFile: 'upload_fba_stock',
+    flexStockFile: 'upload_flex_stock',
+    fkSearchTrafficFile: 'fk_search_traffic',
+    fkCategoryFile: 'fk_category',
+    fkPriceFile: 'fk_price',
+    fkPcaNewFile: 'fk_pca',
+    fkPlaNewFile: 'fk_pla',
+    fkSalesInvoiceFile: 'fk_sales_invoice',
+    fkCouponFile: 'fk_coupon',
+};
+
+function initDemoTemplateButtons() {
+    Object.entries(DEMO_TEMPLATE_MAP).forEach(([inputId, templateKey]) => {
+        const input = document.getElementById(inputId);
+        if (!input) return;
+        const card = input.closest('.upload-card');
+        if (!card || card.querySelector(`.demo-template-link[data-template="${templateKey}"]`)) return;
+
+        const link = document.createElement('a');
+        link.href = `/api/demo-template/?template=${encodeURIComponent(templateKey)}`;
+        link.className = 'demo-template-link';
+        link.setAttribute('data-template', templateKey);
+        link.textContent = 'Download Demo File';
+        link.style.cssText = 'display:inline-flex;align-items:center;gap:6px;margin:-8px 0 16px;padding:8px 12px;border-radius:8px;border:1px solid #dbeafe;background:#eff6ff;color:#1d4ed8;font-size:12px;font-weight:600;text-decoration:none;';
+
+        const title = card.querySelector('.upload-card-title');
+        if (title && title.nextSibling) {
+            card.insertBefore(link, title.nextSibling);
+        } else if (title) {
+            title.insertAdjacentElement('afterend', link);
+        } else {
+            card.prepend(link);
+        }
+    });
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initDemoTemplateButtons);
+} else {
+    initDemoTemplateButtons();
+}
+
 function clearAllFiles() {
     // Amazon inputs
     AMAZON_IDS.forEach(id => { let el = document.getElementById(id); if (el) el.value = ''; });

@@ -5,32 +5,34 @@
 {% block view_type %}replenishment{% endblock %}
 
 {% block extra_head_scripts %}
-<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link
+    href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+    rel="stylesheet">
 <link rel="stylesheet" href="{% static 'replenishment/style.css' %}">
 {% endblock extra_head_scripts %}
 
 {% block extra_head_css %}
-    /* Override some styles to fit within the dashboard layout */
-    .app-shell {
-        display: block;
-        height: auto;
-        background: transparent;
-    }
+/* Override some styles to fit within the dashboard layout */
+.app-shell {
+display: block;
+height: auto;
+background: transparent;
+}
 
-    .main-content {
-        padding: 0;
-    }
+.main-content {
+padding: 0;
+}
 
-    .sidebar {
-        display: none;
-        /* We use the main dashboard sidebar */
-    }f
+.sidebar {
+display: none;
+/* We use the main dashboard sidebar */
+}f
 
-    .panel {
-        background: #ffffff;
-        border: 1px solid #e2e8f0;
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-    }
+.panel {
+background: #ffffff;
+border: 1px solid #e2e8f0;
+box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
 {% endblock extra_head_css %}
 
 {% block dashboard_title %}Replenishment Report Generator{% endblock %}
@@ -280,7 +282,8 @@
                                         </div>
                                         <div class="file-info">
                                             <span class="file-label-text">Flex Qty</span>
-                                            <span class="file-status-text">Click to upload file (ASIN | Cluster | Qty)</span>
+                                            <span class="file-status-text">Click to upload file (ASIN | Cluster |
+                                                Qty)</span>
                                         </div>
                                     </div>
                                 </div>

@@ -7,6 +7,7 @@ from .views import (
     ceo_dashboard_view,
     category_dashboard_view,
     download_calculated_data,
+    download_demo_template,
 )
 
 urlpatterns = [
@@ -25,4 +26,5 @@ urlpatterns = [
         download_calculated_data,
         name="dashboard-download",
     ),
+    path("api/demo-template/", download_demo_template, name="dashboard-demo-template"),
 ]

@@ -83,6 +83,42 @@ document.addEventListener('DOMContentLoaded', () => {
         'fileSales', 'fileStock', 'fileLIS', 'fileShipment', 
         'fileAssortment', 'fileFCCluster', 'filePincode', 'fileInputSheet', 'fileBusiness', 'fileFlexQty'
     ];
+    const demoTemplateMap = {
+        fileSales: 'repl_sales',
+        fileStock: 'repl_stock',
+        fileLIS: 'repl_lis',
+        fileShipment: 'repl_shipment',
+        fileAssortment: 'repl_assortment',
+        fileFCCluster: 'repl_fc_cluster',
+        filePincode: 'repl_pincode_cluster',
+        fileInputSheet: 'repl_input_sheet',
+        fileBusiness: 'repl_business_report',
+        fileFlexQty: 'repl_flex_qty',
+    };
+
+    function initDemoTemplateLinks() {
+        Object.entries(demoTemplateMap).forEach(([inputId, templateKey]) => {
+            const input = document.getElementById(inputId);
+            if (!input) return;
+            const field = input.closest('.field');
+            if (!field || field.querySelector(`.demo-template-link[data-template="${templateKey}"]`)) return;
+
+            const link = document.createElement('a');
+            link.href = `/api/demo-template/?template=${encodeURIComponent(templateKey)}`;
+            link.className = 'demo-template-link';
+            link.setAttribute('data-template', templateKey);
+            link.textContent = 'Download Demo File';
+            link.style.cssText = 'display:inline-flex;align-items:center;gap:6px;margin:0 0 8px;padding:6px 10px;border-radius:8px;border:1px solid #dbeafe;background:#eff6ff;color:#1d4ed8;font-size:12px;font-weight:600;text-decoration:none;';
+
+            const label = field.querySelector('.field-label');
+            if (label) {
+                label.insertAdjacentElement('afterend', link);
+            } else {
+                field.prepend(link);
+            }
+        });
+    }
+    initDemoTemplateLinks();
 
     // --- Custom File Upload UI Handling ---
     function updateFileUploadUI(input) {

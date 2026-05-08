@@ -113,6 +113,97 @@ document.addEventListener('keydown', function (e) {
     }
 });
 
+function _invCellText(el) {
+    return String(el && el.innerText ? el.innerText : '').replace(/\s+/g, ' ').trim();
+}
+
+function _invCsvEscape(value) {
+    var text = String(value == null ? '' : value);
+    if (/[",\n]/.test(text)) {
+        return '"' + text.replace(/"/g, '""') + '"';
+    }
+    return text;
+}
+
+function _invDownloadBlob(blob, filename) {
+    var url = window.URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+}
+
+function _invVisibleRows(tbody) {
+    return Array.from(tbody.querySelectorAll('tr')).filter(function (row) {
+        if (row.querySelector('.empty')) return false;
+        return row.style.display !== 'none';
+    });
+}
+
+function initInventoryHealthModals() {
+    var modals = document.querySelectorAll('.inventory-health-modal');
+    modals.forEach(function (modal) {
+        if (modal.dataset.invHealthInit === '1') return;
+        modal.dataset.invHealthInit = '1';
+
+        var table = modal.querySelector('.inv-health-table');
+        var tbody = table ? table.querySelector('tbody') : null;
+        if (!table || !tbody) return;
+
+        var allRows = Array.from(tbody.querySelectorAll('tr')).filter(function (row) {
+            return !row.querySelector('.empty');
+        });
+
+        var searchInput = modal.querySelector('.inv-health-search');
+        if (searchInput) {
+            searchInput.addEventListener('input', function (e) {
+                var q = String(e.target.value || '').toLowerCase().trim();
+                allRows.forEach(function (row) {
+                    if (!q) {
+                        row.style.display = '';
+                        return;
+                    }
+                    var match = _invCellText(row).toLowerCase().indexOf(q) !== -1;
+                    row.style.display = match ? '' : 'none';
+                });
+            });
+        }
+
+        modal.querySelectorAll('.inv-health-download').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                var format = btn.getAttribute('data-format');
+                var headers = Array.from(table.querySelectorAll('thead th')).map(_invCellText);
+                var rows = _invVisibleRows(tbody).map(function (row) {
+                    return Array.from(row.querySelectorAll('td')).map(_invCellText);
+                });
+                var stamp = new Date().toISOString().slice(0, 10);
+                var baseName = 'inventory_health_breakdown_' + stamp;
+
+                if (format === 'csv') {
+                    var csvLines = [];
+                    csvLines.push(headers.map(_invCsvEscape).join(','));
+                    rows.forEach(function (cols) {
+                        csvLines.push(cols.map(_invCsvEscape).join(','));
+                    });
+                    var csvBlob = new Blob([csvLines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+                    _invDownloadBlob(csvBlob, baseName + '.csv');
+                } else {
+                    var tableHtml = '<table><thead><tr>' + headers.map(function (h) {
+                        return '<th>' + h + '</th>';
+                    }).join('') + '</tr></thead><tbody>' + rows.map(function (cols) {
+                        return '<tr>' + cols.map(function (c) { return '<td>' + c + '</td>'; }).join('') + '</tr>';
+                    }).join('') + '</tbody></table>';
+                    var xlsBlob = new Blob([tableHtml], { type: 'application/vnd.ms-excel;charset=utf-8;' });
+                    _invDownloadBlob(xlsBlob, baseName + '.xls');
+                }
+            });
+        });
+    });
+}
+
 /* ══════════════════════════════════════════════════════════════
    INIT CHARTS
    ══════════════════════════════════════════════════════════════ */
@@ -411,6 +502,7 @@ function renderForecastChart(data) {
    ══════════════════════════════════════════════════════════════ */
 window.addEventListener('DOMContentLoaded', function () {
     initCharts();
+    initInventoryHealthModals();
     syncFilterVisibility();
 });
 
@@ -418,5 +510,6 @@ window.addEventListener('DOMContentLoaded', function () {
 document.addEventListener('dashboardContentLoaded', function () {
     setTimeout(function () {
         initCharts();
+        initInventoryHealthModals();
     }, 50);
 });
