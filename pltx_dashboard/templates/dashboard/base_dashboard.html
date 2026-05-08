@@ -154,7 +154,8 @@
          This tag is cleared by dashboardContentLoaded JS on every HTMX navigation
          so no non-dashboard CSS can persist and distort the dashboard layout. -->
     <style id="page-specific-styles">
-        {% block extra_head_css %}{% endblock %}
+        {% block extra_head_css %}
+        {% endblock %}
     </style>
     {% block extra_head_scripts %}{% endblock %}
 </head>
@@ -234,8 +235,7 @@
             pointer-events: auto;
             animation: toastSlideIn 0.3s cubic-bezier(0.4,0,0.2,1);
         ">
-            <span class="material-icons-round" style="font-size:18px;">{% if 'error' in message.tags %}error{% elif
-                'success' in message.tags %}check_circle{% else %}info{% endif %}</span>
+            <span class="material-icons-round" style="font-size:18px;">{% if 'error' in message.tags %}error{% elif 'success' in message.tags %}check_circle{% else %}info{% endif %}</span>
             {{ message }}
         </div>
         {% endfor %}
@@ -367,8 +367,7 @@
     <div class="app-main">
         <div class="topbar">
             <div class="topbar-title" id="page-topbar-title">{% block dashboard_title %}Dashboard{% endblock %}</div>
-            <div class="topbar-subtitle" id="page-topbar-subtitle">{% block dashboard_subtitle %}Real-time business
-                overview & performance insights{% endblock %}</div>
+            <div class="topbar-subtitle" id="page-topbar-subtitle">{% block dashboard_subtitle %}Real-time business overview & performance insights{% endblock %}</div>
             <div class="topbar-spacer"></div>
 
             <div id="dashboardTopbarFilters">
@@ -390,7 +389,8 @@
             </a>
         </div>
 
-        <div id="stockUploadBanner" style="margin: 12px 22px 0; background: #dc2626; color: #ffffff; border: 1px solid #b91c1c; border-radius: 10px; padding: 10px 14px; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; {% if show_stock_upload_banner %}display:flex;{% else %}display:none;{% endif %}">
+        <div id="stockUploadBanner"
+            style="margin: 12px 22px 0; background: #dc2626; color: #ffffff; border: 1px solid #b91c1c; border-radius: 10px; padding: 10px 14px; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; {% if show_stock_upload_banner %}display:flex;{% else %}display:none;{% endif %}">
             <span class="material-icons-round" style="font-size: 18px;">warning</span>
             <span>Please upload today's stock files to get inventory health.</span>
         </div>
@@ -407,14 +407,20 @@
                     <select class="filter-select-top" id="dateRangeSelect" name="date_range"
                         onchange="handleDateRangeChange(event, this)">
                         <option value="">All Time</option>
-                        <option value="yesterday" {% if request.GET.date_range == 'yesterday' %}selected{% endif %}>Yesterday</option>
-                        <option value="last_7_days" {% if request.GET.date_range == 'last_7_days' %}selected{% endif %}>Last 7 Days</option>
-                        <option value="last_15_days" {% if request.GET.date_range == 'last_15_days' %}selected{% endif %}>Last 15 Days</option>
-                        <option value="last_month" {% if request.GET.date_range == 'last_month' %}selected{% endif %}>Last Month</option>
+                        <option value="yesterday" {% if request.GET.date_range == 'yesterday' %}selected{% endif %}>
+                            Yesterday</option>
+                        <option value="last_7_days" {% if request.GET.date_range == 'last_7_days' %}selected{% endif %}>
+                            Last 7 Days</option>
+                        <option value="last_15_days" {% if request.GET.date_range == 'last_15_days' %}selected{% endif %}>
+                            Last 15 Days</option>
+                        <option value="last_month" {% if request.GET.date_range == 'last_month' %}selected{% endif %}>Last
+                            Month</option>
                         <option value="last_3_months" {% if request.GET.date_range == 'last_3_months' %}selected{% endif %}>Last 3 Months</option>
                         <option value="last_6_months" {% if request.GET.date_range == 'last_6_months' %}selected{% endif %}>Last 6 Months</option>
-                        <option value="last_1_year" {% if request.GET.date_range == 'last_1_year' %}selected{% endif %}>Last 1 Year</option>
-                        <option value="custom" {% if request.GET.date_range == 'custom' %}selected{% endif %}>Custom Dates</option>
+                        <option value="last_1_year" {% if request.GET.date_range == 'last_1_year' %}selected{% endif %}>
+                            Last 1 Year</option>
+                        <option value="custom" {% if request.GET.date_range == 'custom' %}selected{% endif %}>Custom Dates
+                        </option>
                     </select>
                 </div>
                 <div class="topbar-filter-group custom-date-group" id="customDateGroup"
@@ -451,8 +457,10 @@
                         <option value="{{ p }}" {% if request.GET.platform == p %}selected{% endif %}>{{ p }}</option>
                         {% endfor %}
                         {% else %}
-                        <option value="Amazon" {% if request.GET.platform == 'Amazon' %}selected{% endif %}>Amazon</option>
-                        <option value="Flipkart" {% if request.GET.platform == 'Flipkart' %}selected{% endif %}>Flipkart</option>
+                        <option value="Amazon" {% if request.GET.platform == 'Amazon' %}selected{% endif %}>Amazon
+                        </option>
+                        <option value="Flipkart" {% if request.GET.platform == 'Flipkart' %}selected{% endif %}>Flipkart
+                        </option>
                         {% endif %}
                     </select>
                 </div>
@@ -540,8 +548,8 @@
 
     <script>
         window.DASHBOARD_VIEW_TYPE = "{% block view_type %}business{% endblock %}";
-        window.DASHBOARD_PAYLOAD = {{ payload_json | safe |default:"null" }};
-        window.SELECTED_FILTERS = {{ selected_filters_json | safe |default:"{}" }};
+        window.DASHBOARD_PAYLOAD = {{ payload_json|safe|default:"null" }};
+        window.SELECTED_FILTERS = {{ selected_filters_json|safe|default:"{}" }};
 
         // Function to update active nav item based on view type
         function updateActiveNav(viewType) {

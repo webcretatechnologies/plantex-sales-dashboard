@@ -649,23 +649,25 @@ def run_orm_computation(
             reason = f"DOC = {doc} days (Stock: {stock_qty} / Same-Day Sales: {same_day_sales:.1f})"
             inventory_revenue_buckets["in_stock"] += rev
 
-        inventory_details.append(
-            {
-                "date": row_date,
-                "sku": asin,
-                "category": cat,
-                "stock_qty": stock_qty,
-                "fba_qty": fba_qty,
-                "flex_qty": flex_qty,
-                "sale_qty": sale_qty,
-                "doc": doc,
-                "units": sale_qty,
-                "revenue": round(rev, 2),
-                "status": status,
-                "status_class": status_class,
-                "reason": reason,
-            }
-        )
+        # Only add to detailed list if within limit or if searching for a specific ASIN
+        if asin_filter or len(inventory_details) < 100:
+            inventory_details.append(
+                {
+                    "date": row_date,
+                    "sku": asin,
+                    "category": cat,
+                    "stock_qty": stock_qty,
+                    "fba_qty": fba_qty,
+                    "flex_qty": flex_qty,
+                    "sale_qty": sale_qty,
+                    "doc": doc,
+                    "units": sale_qty,
+                    "revenue": round(rev, 2),
+                    "status": status,
+                    "status_class": status_class,
+                    "reason": reason,
+                }
+            )
 
     inventory = {
         "in_stock": int(in_stock_count), 
