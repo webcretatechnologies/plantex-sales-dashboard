@@ -1,5 +1,9 @@
 import os
 import tempfile
+from datetime import datetime
+from uuid import uuid4
+
+from django.conf import settings
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser
@@ -38,21 +42,46 @@ UPLOAD_TYPE_LABELS = {
 }
 
 
-# Shared temp directory for upload files — must be accessible by both
-# the web process (which saves files) and the Celery worker (which reads them).
-# In Docker, this is a shared volume mounted at /tmp/upload_queue.
-UPLOAD_TEMP_DIR = os.path.join(tempfile.gettempdir(), "upload_queue")
+UPLOAD_ROOT_DIR = os.getenv(
+    "UPLOAD_ROOT_DIR", os.path.join(settings.BASE_DIR, "uploads")
+)
+
+UPLOAD_SUBDIRS = {
+    "sales": "sales",
+    "category": "category",
+    "spend": "spend",
+    "price": "price",
+    "fba_stock": "fba_stock",
+    "flex_stock": "flex_stock",
+    "fk_search_traffic": "search_traffic",
+    "fk_category": "category",
+    "fk_price": "price",
+    "fk_pca": "pca",
+    "fk_pla": "pla",
+    "fk_sales_invoice": "sales_invoice",
+    "fk_coupon": "coupon",
+}
 
 
-def _save_upload_to_disk(file_obj):
+def _get_upload_dir(file_type):
+    platform_dir = "flipkart" if file_type in FK_FILE_TYPES else "amazon"
+    category_dir = UPLOAD_SUBDIRS.get(file_type, "misc")
+    upload_dir = os.path.join(UPLOAD_ROOT_DIR, platform_dir, category_dir)
+    os.makedirs(upload_dir, exist_ok=True)
+    return upload_dir
+
+
+def _save_upload_to_disk(file_obj, file_type):
     """
-    Save an in-memory uploaded file to a temporary location on disk
+    Save an uploaded file to a shared directory on disk
     so it can be passed to a Celery worker by path.
     Returns the absolute path to the saved file.
     """
-    os.makedirs(UPLOAD_TEMP_DIR, exist_ok=True)
+    upload_dir = _get_upload_dir(file_type)
     suffix = os.path.splitext(file_obj.name)[1] or ""
-    fd, path = tempfile.mkstemp(suffix=suffix, prefix="upload_", dir=UPLOAD_TEMP_DIR)
+    ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S_%f")
+    unique_prefix = f"upload_{ts}_{uuid4().hex[:8]}_"
+    fd, path = tempfile.mkstemp(suffix=suffix, prefix=unique_prefix, dir=upload_dir)
     with os.fdopen(fd, "wb") as f:
         for chunk in file_obj.chunks():
             f.write(chunk)
@@ -96,7 +125,7 @@ class FileUploadView(APIView):
 
         # Save uploaded file to disk for Celery worker access
         try:
-            file_path = _save_upload_to_disk(file_obj)
+            file_path = _save_upload_to_disk(file_obj, file_type)
         except Exception as e:
             return Response({"error": f"Failed to save file: {str(e)}"}, status=500)
 

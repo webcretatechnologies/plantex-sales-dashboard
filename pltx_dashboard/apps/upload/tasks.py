@@ -1,5 +1,8 @@
 import os
 import logging
+import csv
+
+from openpyxl import load_workbook
 from celery import shared_task
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
@@ -21,6 +24,40 @@ def _send_ws(user_id, message, status):
         )
     except Exception as exc:
         logger.warning("[UploadTask] WebSocket send failed: %s", exc)
+
+
+NON_CONVERTIBLE_EXCEL_TYPES = {"fk_sales_invoice"}
+EXCEL_TO_CSV_MIN_SIZE_BYTES = int(
+    os.getenv("EXCEL_TO_CSV_MIN_SIZE_MB", "5")
+) * 1024 * 1024
+
+
+def _convert_excel_to_csv_if_possible(file_path, file_type):
+    """
+    Convert single-sheet Excel uploads to CSV for faster chunked ingestion.
+    Returns the path to the file that should be processed.
+    """
+    ext = os.path.splitext(file_path)[1].lower()
+    if ext not in {".xlsx", ".xlsm"}:
+        return file_path
+
+    if file_type in NON_CONVERTIBLE_EXCEL_TYPES:
+        return file_path
+
+    if os.path.getsize(file_path) < EXCEL_TO_CSV_MIN_SIZE_BYTES:
+        return file_path
+
+    csv_path = f"{os.path.splitext(file_path)[0]}.csv"
+    wb = load_workbook(file_path, read_only=True, data_only=True)
+    ws = wb[wb.sheetnames[0]]
+
+    with open(csv_path, "w", newline="", encoding="utf-8") as out_file:
+        writer = csv.writer(out_file)
+        for row in ws.iter_rows(values_only=True):
+            writer.writerow(["" if val is None else val for val in row])
+
+    wb.close()
+    return csv_path
 
 
 @shared_task(bind=True)
@@ -82,6 +119,7 @@ def process_upload_file_task(
 
     try:
         data_owner = Users.objects.get(pk=data_owner_id)
+        files_to_cleanup = [file_path]
         upload_log = None
         if upload_log_id:
             upload_log = UploadLog.objects.filter(pk=upload_log_id).first()
@@ -90,8 +128,12 @@ def process_upload_file_task(
                 upload_log.message = "Processing started."
                 upload_log.save(update_fields=["status", "message", "updated_at"])
 
+        processing_path = _convert_excel_to_csv_if_possible(file_path, file_type)
+        if processing_path != file_path:
+            files_to_cleanup.append(processing_path)
+
         # Open the file from disk
-        with open(file_path, "rb") as fh:
+        with open(processing_path, "rb") as fh:
             if file_type == "category":
                 process_category_file(fh, data_owner)
             elif file_type == "price":
@@ -119,11 +161,12 @@ def process_upload_file_task(
             elif file_type == "fk_coupon":
                 process_fk_coupon(fh, data_owner)
 
-        # Clean up temp file after processing
-        try:
-            os.remove(file_path)
-        except OSError:
-            pass
+        # Clean up uploaded files after processing
+        for path in files_to_cleanup:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
 
         if is_last:
             _send_ws(user_id, "Generating final dashboard data...", "processing")
@@ -160,11 +203,13 @@ def process_upload_file_task(
             except Exception:
                 logger.exception("[UploadTask] Failed updating UploadLog status.")
 
-        # Clean up temp file on error too
-        try:
-            os.remove(file_path)
-        except OSError:
-            pass
+        # Clean up uploaded files on error too
+        cleanup_candidates = [file_path, f"{os.path.splitext(file_path)[0]}.csv"]
+        for path in cleanup_candidates:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
 
         return {
             "status": "error",

@@ -711,6 +711,13 @@ def download_calculated_data(request, file_format):
         else:
             filters[k] = vals
 
+    # Optional export override:
+    # If dashboard platform filter is "All", frontend can pass export_platform=Amazon|Flipkart
+    # to force a platform-specific export schema/calculation set.
+    export_platform = (request.GET.get("export_platform") or "").strip()
+    if export_platform in {"Amazon", "Flipkart"}:
+        filters["platform"] = export_platform
+
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     if file_format == "csv":

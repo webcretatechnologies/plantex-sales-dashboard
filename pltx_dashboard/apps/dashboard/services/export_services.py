@@ -1,43 +1,32 @@
 """
-Export service: builds a calculated DataFrame from the user's uploaded data
-(ProcessedDashboardData + SpendData), computes core business metrics following
-the logic in scripts/cleaning_mapping_merging.py, and returns it as CSV or
-Excel (with Annexure sheet).
+Export service: builds calculated export data from processed dashboard tables
+and returns CSV / Excel (with Annexure sheet).
 """
 
-import pandas as pd
 from io import BytesIO
-from apps.dashboard.models import ProcessedDashboardData, FlipkartProcessedDashboardData
-from apps.dashboard.services.analytics_services_orm_pipeline import (
-    apply_global_filters_orm,
-)
+
+import pandas as pd
+
+from apps.dashboard.models import FlipkartProcessedDashboardData, ProcessedDashboardData
+from apps.dashboard.services.analytics_services_orm_pipeline import apply_global_filters_orm
 
 
-def _build_export_dataframe(user, filters):
-    """
-    Query the DB for the user's data, apply dashboard filters at the ORM level,
-    merge sales + spend natively, and compute all derived metrics.
-    Returns a pandas DataFrame ready for export.
-    """
+def _get_filtered_querysets(user, filters):
+    """Return filtered Amazon + Flipkart querysets for the current user."""
     data_owner = user.created_by if user.created_by else user
 
     qs = ProcessedDashboardData.objects.filter(user=data_owner)
     fk_qs = FlipkartProcessedDashboardData.objects.filter(user=data_owner)
 
-    # 1. Apply global date/custom filters
     qs = apply_global_filters_orm(qs, filters)
     fk_qs = apply_global_filters_orm(fk_qs, filters)
 
-    # 2. Apply platform filter
     platform = filters.get("platform")
-    show_amazon = True
-    show_flipkart = True
     if platform == "Amazon":
-        show_flipkart = False
+        fk_qs = fk_qs.none()
     elif platform == "Flipkart":
-        show_amazon = False
+        qs = qs.none()
 
-    # 3. Apply entity-level filters
     category = filters.get("category")
     if category:
         if isinstance(category, (list, tuple)):
@@ -47,14 +36,14 @@ def _build_export_dataframe(user, filters):
             qs = qs.filter(category=category)
             fk_qs = fk_qs.filter(category=category)
 
-    asin_filter = filters.get("asin")
-    if asin_filter:
-        if isinstance(asin_filter, (list, tuple)):
-            qs = qs.filter(asin__in=asin_filter)
-            fk_qs = fk_qs.filter(fsn__in=asin_filter)
+    asin_or_fsn_filter = filters.get("asin") or filters.get("fsn")
+    if asin_or_fsn_filter:
+        if isinstance(asin_or_fsn_filter, (list, tuple)):
+            qs = qs.filter(asin__in=asin_or_fsn_filter)
+            fk_qs = fk_qs.filter(fsn__in=asin_or_fsn_filter)
         else:
-            qs = qs.filter(asin=asin_filter)
-            fk_qs = fk_qs.filter(fsn=asin_filter)
+            qs = qs.filter(asin=asin_or_fsn_filter)
+            fk_qs = fk_qs.filter(fsn=asin_or_fsn_filter)
 
     portfolio = filters.get("portfolio")
     if portfolio:
@@ -70,43 +59,16 @@ def _build_export_dataframe(user, filters):
             qs = qs.filter(subcategory=subcategory)
             fk_qs = fk_qs.filter(subcategory=subcategory)
 
-    if not show_amazon:
-        qs = qs.none()
-    if not show_flipkart:
-        fk_qs = fk_qs.none()
+    return qs, fk_qs
 
-    if not qs.exists() and not fk_qs.exists():
+
+def _build_amazon_export_dataframe(qs):
+    if not qs.exists():
         return pd.DataFrame()
 
-    # 4. Fetch the FILTERED subset into memory
-    df_amazon = pd.DataFrame()
-    if qs.exists():
-        df_amazon = pd.DataFrame(list(qs.values()))
-        df_amazon["platform"] = "Amazon"
+    df = pd.DataFrame(list(qs.values()))
+    df["platform"] = "Amazon"
 
-    df_fk = pd.DataFrame()
-    if fk_qs.exists():
-        df_fk = pd.DataFrame(list(fk_qs.values()))
-        df_fk = df_fk.rename(columns={"fsn": "asin"})
-        df_fk["platform"] = "Flipkart"
-        for col in ["spend_sp", "spend_sb", "spend_sd"]:
-            if col not in df_fk.columns:
-                df_fk[col] = 0.0
-
-    if df_amazon.empty:
-        df = df_fk
-    elif df_fk.empty:
-        df = df_amazon
-    else:
-        common_cols = [c for c in df_amazon.columns if c in df_fk.columns]
-        df = pd.concat([df_amazon[common_cols], df_fk[common_cols]], ignore_index=True)
-
-    if df.empty:
-        return pd.DataFrame()
-
-    # ------------------------------------------------------------------
-    # Aggregate at the ASIN level (mirrors cleaning_mapping_merging.py §5)
-    # ------------------------------------------------------------------
     agg_cols = {
         "pageviews": "sum",
         "units": "sum",
@@ -117,7 +79,6 @@ def _build_export_dataframe(user, filters):
         "spend_sd": "sum",
         "total_spend": "sum",
     }
-    # Keep first encounter of dimensional columns
     dim_cols = {}
     for col in ["portfolio", "category", "subcategory", "price", "platform"]:
         if col in df.columns:
@@ -125,7 +86,6 @@ def _build_export_dataframe(user, filters):
 
     merged = df.groupby("asin").agg({**agg_cols, **dim_cols}).reset_index()
 
-    # Rename for readability
     merged.rename(
         columns={
             "pageviews": "Page Views",
@@ -146,7 +106,6 @@ def _build_export_dataframe(user, filters):
         inplace=True,
     )
 
-    # Fill NaN
     merged["Spend"] = merged["Spend"].fillna(0)
     merged["Revenue"] = merged["Revenue"].fillna(0)
     merged["Orders"] = merged["Orders"].fillna(0)
@@ -157,37 +116,26 @@ def _build_export_dataframe(user, filters):
     merged["Subcategory"] = merged["Subcategory"].fillna("Unknown")
     merged["Portfolio"] = merged["Portfolio"].fillna("Unknown")
 
-    # ------------------------------------------------------------------
-    # Compute core metrics (mirrors cleaning_mapping_merging.py §6)
-    # ------------------------------------------------------------------
-    # ROAS (uses Revenue * 0.7)
     merged["ROAS"] = merged.apply(
         lambda r: (r["Revenue"] * 0.7 / r["Spend"]) if r["Spend"] > 0 else 0, axis=1
     )
-    # TACoS (uses Revenue * 0.7)
     merged["TACoS (%)"] = merged.apply(
-        lambda r: (r["Spend"] / (r["Revenue"] * 0.7) * 100) if r["Revenue"] > 0 else 0, axis=1
+        lambda r: (r["Spend"] / (r["Revenue"] * 0.7) * 100) if r["Revenue"] > 0 else 0,
+        axis=1,
     )
-    # CVR
     merged["CVR (%)"] = merged.apply(
         lambda r: (r["Orders"] / r["Page Views"] * 100) if r["Page Views"] > 0 else 0,
         axis=1,
     )
-    # COGS
     merged["COGS (Total)"] = merged["Units"] * merged["Price"]
-    # Gross Margin
     merged["Gross Margin"] = merged["Revenue"] - merged["COGS (Total)"]
-    # Gross Margin %
     merged["Gross Margin (%)"] = merged.apply(
         lambda r: (r["Gross Margin"] / r["Revenue"] * 100) if r["Revenue"] > 0 else 0,
         axis=1,
     )
-    # Net Profit
     merged["Net Profit"] = merged["Gross Margin"] - merged["Spend"]
-    # Contribution Margin %
     merged["Contribution Margin (%)"] = merged["Gross Margin (%)"] - merged["TACoS (%)"]
 
-    # Round
     round_cols = [
         "ROAS",
         "TACoS (%)",
@@ -199,7 +147,6 @@ def _build_export_dataframe(user, filters):
     ]
     merged[round_cols] = merged[round_cols].round(2)
 
-    # Re-order columns for a clean export
     col_order = [
         "Platform",
         "ASIN",
@@ -224,34 +171,183 @@ def _build_export_dataframe(user, filters):
         "Net Profit",
         "Contribution Margin (%)",
     ]
-    # Only keep columns that exist
-    col_order = [c for c in col_order if c in merged.columns]
-    merged = merged[col_order]
-
-    return merged
+    return merged[[c for c in col_order if c in merged.columns]]
 
 
-# Annexure data identical to the reference script
-ANNEXURE_DATA = [
+def _build_flipkart_export_dataframe(fk_qs):
+    if not fk_qs.exists():
+        return pd.DataFrame()
+
+    df = pd.DataFrame(list(fk_qs.values()))
+    df["platform"] = "Flipkart"
+
+    agg_cols = {
+        "pageviews": "sum",
+        "units": "sum",
+        "revenue": "sum",
+        "total_spend": "sum",
+        "taxable_value": "sum",
+        "invoice_amount": "sum",
+        "coupon_total": "sum",
+        "coupon_error": "max",
+    }
+    dim_cols = {}
+    for col in ["portfolio", "category", "subcategory", "price", "platform"]:
+        if col in df.columns:
+            dim_cols[col] = "first"
+
+    merged = df.groupby("fsn").agg({**agg_cols, **dim_cols}).reset_index()
+
+    merged.rename(
+        columns={
+            "platform": "Platform",
+            "fsn": "FSN",
+            "portfolio": "Portfolio",
+            "category": "Category",
+            "subcategory": "Subcategory",
+            "pageviews": "Page Views",
+            "units": "Units Sold",
+            "revenue": "Revenue",
+            "price": "Price",
+            "total_spend": "Ad Spend",
+            "taxable_value": "Taxable Value",
+            "invoice_amount": "Invoice Amount",
+            "coupon_total": "Coupon Total",
+            "coupon_error": "Coupon Error",
+        },
+        inplace=True,
+    )
+
+    for col in [
+        "Page Views",
+        "Units Sold",
+        "Revenue",
+        "Price",
+        "Ad Spend",
+        "Taxable Value",
+        "Invoice Amount",
+        "Coupon Total",
+    ]:
+        if col in merged.columns:
+            merged[col] = merged[col].fillna(0)
+
+    merged["Category"] = merged["Category"].fillna("Unknown")
+    merged["Subcategory"] = merged["Subcategory"].fillna("Unknown")
+    merged["Portfolio"] = merged["Portfolio"].fillna("Unknown")
+
+    # Same metric family as Amazon, excluding CVR/AOV (no order data for Flipkart).
+    merged["ROAS"] = merged.apply(
+        lambda r: (r["Revenue"] * 0.7 / r["Ad Spend"]) if r["Ad Spend"] > 0 else 0,
+        axis=1,
+    )
+    merged["TACoS (%)"] = merged.apply(
+        lambda r: (r["Ad Spend"] / (r["Revenue"] * 0.7) * 100) if r["Revenue"] > 0 else 0,
+        axis=1,
+    )
+    merged["COGS (Total)"] = merged["Units Sold"] * merged["Price"]
+    merged["Gross Margin"] = merged["Revenue"] - merged["COGS (Total)"]
+    merged["Gross Margin (%)"] = merged.apply(
+        lambda r: (r["Gross Margin"] / r["Revenue"] * 100) if r["Revenue"] > 0 else 0,
+        axis=1,
+    )
+    merged["Net Profit"] = merged["Gross Margin"] - merged["Ad Spend"]
+    merged["Contribution Margin (%)"] = merged["Gross Margin (%)"] - merged["TACoS (%)"]
+
+    round_cols = [
+        "ROAS",
+        "TACoS (%)",
+        "Gross Margin",
+        "Gross Margin (%)",
+        "Net Profit",
+        "Contribution Margin (%)",
+    ]
+    merged[round_cols] = merged[round_cols].round(2)
+
+    col_order = [
+        "Platform",
+        "FSN",
+        "Portfolio",
+        "Category",
+        "Subcategory",
+        "Page Views",
+        "Units Sold",
+        "Revenue",
+        "Price",
+        "Ad Spend",
+        "Taxable Value",
+        "Invoice Amount",
+        "Coupon Total",
+        "Coupon Error",
+        "ROAS",
+        "TACoS (%)",
+        "COGS (Total)",
+        "Gross Margin",
+        "Gross Margin (%)",
+        "Net Profit",
+        "Contribution Margin (%)",
+    ]
+    return merged[[c for c in col_order if c in merged.columns]]
+
+
+AMAZON_ANNEXURE_DATA = [
     {
         "Metric": "ROAS",
         "Formula": "(Revenue × 0.7) / Spend",
-        "Description": "Return on Ad Spend: For every ₹1 spent on ads, how much adjusted revenue was generated. Revenue is GST-exclusive and multiplied by 0.7.",
+        "Description": "Return on Ad Spend based on GST-adjusted revenue.",
     },
     {
         "Metric": "TACoS (%)",
         "Formula": "(Spend / (Revenue × 0.7)) * 100",
-        "Description": "Total Advertising Cost of Sale: Percentage of total revenue spent on advertising.",
+        "Description": "Total Advertising Cost of Sale as percentage of revenue.",
     },
     {
         "Metric": "CVR (%)",
         "Formula": "(Orders / Page Views) * 100",
-        "Description": "Conversion Rate: Percentage of people who viewed and purchased the product.",
+        "Description": "Conversion Rate from page views to orders.",
     },
     {
         "Metric": "COGS (Total)",
         "Formula": "Units * Price",
-        "Description": "Cost of Goods Sold: Estimated total cost based on pricing data.",
+        "Description": "Cost of goods sold based on units and unit price.",
+    },
+    {
+        "Metric": "Gross Margin",
+        "Formula": "Revenue - COGS (Total)",
+        "Description": "Profit before advertising cost.",
+    },
+    {
+        "Metric": "Gross Margin (%)",
+        "Formula": "(Gross Margin / Revenue) * 100",
+        "Description": "Gross margin as percentage of revenue.",
+    },
+    {
+        "Metric": "Net Profit",
+        "Formula": "Gross Margin - Spend",
+        "Description": "Final profit after ad spend.",
+    },
+    {
+        "Metric": "Contribution Margin (%)",
+        "Formula": "Gross Margin (%) - TACoS (%)",
+        "Description": "Net contribution margin after ads.",
+    },
+]
+
+
+FLIPKART_ANNEXURE_DATA = [
+    {
+        "Metric": "ROAS",
+        "Formula": "(Revenue × 0.7) / Ad Spend",
+        "Description": "Return on Ad Spend based on GST-adjusted revenue.",
+    },
+    {
+        "Metric": "TACoS (%)",
+        "Formula": "(Ad Spend / (Revenue × 0.7)) * 100",
+        "Description": "Total ad spend as percentage of GST-adjusted revenue.",
+    },
+    {
+        "Metric": "COGS (Total)",
+        "Formula": "Units Sold * Price",
+        "Description": "Estimated total product cost.",
     },
     {
         "Metric": "Gross Margin",
@@ -261,24 +357,54 @@ ANNEXURE_DATA = [
     {
         "Metric": "Gross Margin (%)",
         "Formula": "(Gross Margin / Revenue) * 100",
-        "Description": "Profitability percentage before advertising.",
+        "Description": "Profitability percentage before ad spend.",
     },
     {
         "Metric": "Net Profit",
-        "Formula": "Gross Margin - Spend",
-        "Description": "Money remaining after products and advertising costs.",
+        "Formula": "Gross Margin - Ad Spend",
+        "Description": "Profit after product and advertising costs.",
     },
     {
         "Metric": "Contribution Margin (%)",
         "Formula": "Gross Margin (%) - TACoS (%)",
-        "Description": "Health score: how much each sale contributes after ads.",
+        "Description": "Final margin efficiency after ads.",
     },
 ]
 
 
+def _build_export_payload(user, filters):
+    """
+    Build export dataframe + annexure based on selected platform.
+    For platform="All", combines both datasets.
+    """
+    qs, fk_qs = _get_filtered_querysets(user, filters)
+    platform = filters.get("platform")
+
+    if platform == "Amazon":
+        return _build_amazon_export_dataframe(qs), pd.DataFrame(AMAZON_ANNEXURE_DATA)
+
+    if platform == "Flipkart":
+        return _build_flipkart_export_dataframe(fk_qs), pd.DataFrame(FLIPKART_ANNEXURE_DATA)
+
+    df_amz = _build_amazon_export_dataframe(qs)
+    df_fk = _build_flipkart_export_dataframe(fk_qs)
+
+    if df_amz.empty and df_fk.empty:
+        return pd.DataFrame(), pd.DataFrame(AMAZON_ANNEXURE_DATA + FLIPKART_ANNEXURE_DATA)
+    if df_amz.empty:
+        return df_fk, pd.DataFrame(FLIPKART_ANNEXURE_DATA)
+    if df_fk.empty:
+        return df_amz, pd.DataFrame(AMAZON_ANNEXURE_DATA)
+
+    return (
+        pd.concat([df_amz, df_fk], ignore_index=True, sort=False).fillna(""),
+        pd.DataFrame(AMAZON_ANNEXURE_DATA + FLIPKART_ANNEXURE_DATA),
+    )
+
+
 def export_csv(user, filters):
     """Return a BytesIO buffer containing the calculated CSV."""
-    df = _build_export_dataframe(user, filters)
+    df, _ = _build_export_payload(user, filters)
     buf = BytesIO()
     if df.empty:
         buf.write(b"No data available for the selected filters.\n")
@@ -290,14 +416,13 @@ def export_csv(user, filters):
 
 def export_excel(user, filters):
     """Return a BytesIO buffer containing the calculated Excel with Annexure."""
-    df = _build_export_dataframe(user, filters)
-    annexure_df = pd.DataFrame(ANNEXURE_DATA)
+    df, annexure_df = _build_export_payload(user, filters)
     buf = BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as writer:
         if df.empty:
-            pd.DataFrame(
-                {"Message": ["No data available for the selected filters."]}
-            ).to_excel(writer, sheet_name="Data", index=False)
+            pd.DataFrame({"Message": ["No data available for the selected filters."]}).to_excel(
+                writer, sheet_name="Data", index=False
+            )
         else:
             df.to_excel(writer, sheet_name="Data", index=False)
         annexure_df.to_excel(writer, sheet_name="Annexure", index=False)
