@@ -225,8 +225,33 @@ def get_dashboard_context(request):
     from apps.dashboard.services.analytics_services_orm_pipeline import run_orm_computation
     import hashlib
     
-    # Generate unique hash for these filters
-    filter_key_str = json.dumps(filters, sort_keys=True)
+    # Normalize only the filters that affect payload calculations so
+    # transient query params don't cause unnecessary cache misses.
+    cache_filter_fields = [
+        "date_range",
+        "start_date",
+        "end_date",
+        "compare_start_date",
+        "compare_end_date",
+        "platform",
+        "category",
+        "asin",
+        "fsn",
+        "portfolio",
+        "subcategory",
+    ]
+    cache_filters = {}
+    for field in cache_filter_fields:
+        val = filters.get(field)
+        if isinstance(val, (list, tuple)):
+            cache_filters[field] = sorted({str(v) for v in val if str(v).strip()})
+        elif val is None:
+            cache_filters[field] = ""
+        else:
+            cache_filters[field] = str(val)
+
+    # Generate unique hash for normalized filters
+    filter_key_str = json.dumps(cache_filters, sort_keys=True)
     cache_hash = hashlib.md5(filter_key_str.encode("utf-8")).hexdigest()
     
     # Get current data version for this user
