@@ -487,46 +487,17 @@ def run_orm_computation(
 
         allowed_asins = set(cat_map_qs.values_list("asin", flat=True))
 
-    # Sales (Units Ordered) at ASIN + Date level
-    sales_qs = SalesData.objects.filter(user=user)
-    sales_qs = apply_global_filters_orm(sales_qs, filters)
-
     asin_filter = filters.get("asin")
-    if asin_filter:
-        if isinstance(asin_filter, (list, tuple)):
-            sales_qs = sales_qs.filter(asin__in=asin_filter)
-        else:
-            sales_qs = sales_qs.filter(asin=asin_filter)
-    if allowed_asins is not None:
-        sales_qs = sales_qs.filter(asin__in=allowed_asins)
-
-    sale_days = list(sales_qs.values_list("date", flat=True).distinct())
-    num_sale_days = max(len(sale_days), 1)
-
-    sales_by_key = {}
-    for row in sales_qs.values("asin", "date").annotate(total_units=Sum("units")):
-        key = (str(row["asin"]), row["date"])
-        sales_by_key[key] = int(row["total_units"] or 0)
-
-    # Revenue map at ASIN + Date level (for OOS impact + details table)
-    revenue_by_key = {}
-    revenue_by_asin = {}
-    if qs_f is not None:
-        for row in qs_f.values("asin", "date").annotate(total_revenue=Sum("revenue")):
-            key = (str(row["asin"]), row["date"])
-            revenue_by_key[key] = float(row["total_revenue"] or 0)
-        for row in qs_f.values("asin").annotate(total_revenue=Sum("revenue")):
-            revenue_by_asin[str(row["asin"])] = float(row["total_revenue"] or 0)
-
-    # Category map by ASIN for display
-    asin_category_map = {
-        str(r["asin"]): str(r["category"] or "Unknown")
-        for r in CategoryMapping.objects.filter(user=user).values("asin", "category")
-    }
+    platform_filter = (filters.get("platform") or "").strip()
+    inventory_enabled = platform_filter != "Flipkart"
 
     # FBA + Flex stock at ASIN + Date level
-    fba_qs = apply_global_filters_orm(FBAStockData.objects.filter(user=user), filters)
-    flex_qs = apply_global_filters_orm(FlexStockData.objects.filter(user=user), filters)
+    if inventory_enabled:
+        fba_qs = apply_global_filters_orm(FBAStockData.objects.filter(user=user), filters)
+        flex_qs = apply_global_filters_orm(FlexStockData.objects.filter(user=user), filters)
+    else:
+        fba_qs = FBAStockData.objects.none()
+        flex_qs = FlexStockData.objects.none()
 
     if asin_filter:
         if isinstance(asin_filter, (list, tuple)):
@@ -538,6 +509,49 @@ def run_orm_computation(
     if allowed_asins is not None:
         fba_qs = fba_qs.filter(asin__in=allowed_asins)
         flex_qs = flex_qs.filter(asin__in=allowed_asins)
+
+    has_stock_data = inventory_enabled and (fba_qs.exists() or flex_qs.exists())
+
+    # Skip expensive inventory joins when inventory is not relevant for this view
+    # (Flipkart-only) or when no stock snapshots exist for the current filters.
+    sales_by_key = {}
+    revenue_by_key = {}
+    revenue_by_asin = {}
+    asin_category_map = {}
+    num_sale_days = 1
+    if has_stock_data:
+        sales_qs = SalesData.objects.filter(user=user)
+        sales_qs = apply_global_filters_orm(sales_qs, filters)
+        if asin_filter:
+            if isinstance(asin_filter, (list, tuple)):
+                sales_qs = sales_qs.filter(asin__in=asin_filter)
+            else:
+                sales_qs = sales_qs.filter(asin=asin_filter)
+        if allowed_asins is not None:
+            sales_qs = sales_qs.filter(asin__in=allowed_asins)
+
+        sale_days = list(sales_qs.values_list("date", flat=True).distinct())
+        num_sale_days = max(len(sale_days), 1)
+
+        for row in sales_qs.values("asin", "date").annotate(total_units=Sum("units")):
+            key = (str(row["asin"]), row["date"])
+            sales_by_key[key] = int(row["total_units"] or 0)
+
+        if qs_f is not None:
+            for row in qs_f.values("asin", "date").annotate(total_revenue=Sum("revenue")):
+                key = (str(row["asin"]), row["date"])
+                revenue_by_key[key] = float(row["total_revenue"] or 0)
+            for row in qs_f.values("asin").annotate(total_revenue=Sum("revenue")):
+                revenue_by_asin[str(row["asin"])] = float(row["total_revenue"] or 0)
+
+        asin_category_map = {
+            str(r["asin"]): str(r["category"] or "Unknown")
+            for r in CategoryMapping.objects.filter(user=user).values("asin", "category")
+        }
+    else:
+        # Keep downstream loops no-op without extra DB calls.
+        fba_qs = fba_qs.none()
+        flex_qs = flex_qs.none()
 
     fba_stock_by_key = {}
     for row in fba_qs.values("asin", "date").annotate(total=Sum("ending_warehouse_balance")):
@@ -551,8 +565,6 @@ def run_orm_computation(
 
     stock_keys = set(fba_stock_by_key.keys()) | set(flex_stock_by_key.keys())
     sales_keys = set(sales_by_key.keys())
-
-    has_stock_data = bool(stock_keys)
 
     # Inventory health must be computed only on dates where BOTH sales and stock
     # exist. This keeps date alignment strict and prevents mismatched-day joins.
