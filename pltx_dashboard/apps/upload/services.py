@@ -48,6 +48,24 @@ def load_file_obj(file_obj, **kwargs):
             return pd.read_excel(file_obj, engine="openpyxl", **kwargs)
 
 
+CSV_CHUNK_SIZE = 20_000
+DB_BATCH_SIZE = 10_000
+
+
+def iter_file_chunks(file_obj, **kwargs):
+    filename = getattr(file_obj, "name", "").lower()
+    if filename.endswith(".csv"):
+        read_kwargs = dict(kwargs)
+        read_kwargs["chunksize"] = read_kwargs.get("chunksize", CSV_CHUNK_SIZE)
+        try:
+            yield from pd.read_csv(file_obj, **read_kwargs)
+        except UnicodeDecodeError:
+            file_obj.seek(0)
+            yield from pd.read_csv(file_obj, encoding="latin1", **read_kwargs)
+    else:
+        yield load_file_obj(file_obj, **kwargs)
+
+
 def _parse_numeric_report_date(value):
     """
     Parse numeric date cells robustly:
@@ -153,44 +171,43 @@ def process_category_file(file_obj, user):
     Upsert category mappings scoped to the given user.
     - Uses bulk_create with update_conflicts to elegantly update existing records.
     """
-    df = load_file_obj(file_obj)
-
     required_cols = ["ASIN", "Portfolio", "Category", "Subcategory", "Skus"]
-    missing_cols = [col for col in required_cols if col not in df.columns]
-    if missing_cols:
-        raise ValueError(
-            f"Category Mapping missing required columns: {', '.join(missing_cols)}"
-        )
-
-    new_mappings = []
-
-    for row in df.to_dict("records"):
-        asin = str(row.get("ASIN", "")).strip()
-        if not asin or asin.lower() == "nan":
-            continue
-
-        portfolio = str(row.get("Portfolio", "")).strip()
-        category = str(row.get("Category", "")).strip()
-        subcategory = str(row.get("Subcategory", "")).strip()
-
-        new_mappings.append(
-            CategoryMapping(
-                user=user,
-                asin=asin,
-                portfolio=portfolio,
-                category=category,
-                subcategory=subcategory,
+    any_chunk = False
+    for df in iter_file_chunks(file_obj):
+        any_chunk = True
+        missing_cols = [col for col in required_cols if col not in df.columns]
+        if missing_cols:
+            raise ValueError(
+                f"Category Mapping missing required columns: {', '.join(missing_cols)}"
             )
-        )
 
-    if new_mappings:
-        CategoryMapping.objects.bulk_create(
-            new_mappings,
-            **_get_upsert_kwargs(
-                unique_fields=["user", "asin"],
-                update_fields=["portfolio", "category", "subcategory"],
-            ),
-        )
+        new_mappings = []
+        for row in df.to_dict("records"):
+            asin = str(row.get("ASIN", "")).strip()
+            if not asin or asin.lower() == "nan":
+                continue
+
+            new_mappings.append(
+                CategoryMapping(
+                    user=user,
+                    asin=asin,
+                    portfolio=str(row.get("Portfolio", "")).strip(),
+                    category=str(row.get("Category", "")).strip(),
+                    subcategory=str(row.get("Subcategory", "")).strip(),
+                )
+            )
+
+        if new_mappings:
+            CategoryMapping.objects.bulk_create(
+                new_mappings,
+                **_get_upsert_kwargs(
+                    unique_fields=["user", "asin"],
+                    update_fields=["portfolio", "category", "subcategory"],
+                ),
+            )
+
+    if not any_chunk:
+        raise ValueError("Category Mapping file is empty.")
 
 
 # ---------------------------------------------------------------------------
@@ -203,33 +220,35 @@ def process_price_file(file_obj, user):
     Upsert price data scoped to the given user.
     - Uses bulk_create with update_conflicts to smartly update existing values.
     """
-    df = load_file_obj(file_obj)
-
     required_cols = ["ASIN", "Price"]
-    missing_cols = [col for col in required_cols if col not in df.columns]
-    if missing_cols:
-        raise ValueError(
-            f"Pricing Data missing required columns: {', '.join(missing_cols)}"
-        )
+    any_chunk = False
+    for df in iter_file_chunks(file_obj):
+        any_chunk = True
+        missing_cols = [col for col in required_cols if col not in df.columns]
+        if missing_cols:
+            raise ValueError(
+                f"Pricing Data missing required columns: {', '.join(missing_cols)}"
+            )
 
-    new_prices = []
+        new_prices = []
+        for row in df.to_dict("records"):
+            asin = str(row.get("ASIN", "")).strip()
+            if not asin or asin.lower() == "nan":
+                continue
+            new_prices.append(
+                PriceData(user=user, asin=asin, price=clean_currency(row.get("Price", 0)))
+            )
 
-    for row in df.to_dict("records"):
-        asin = str(row.get("ASIN", "")).strip()
-        if not asin or asin.lower() == "nan":
-            continue
+        if new_prices:
+            PriceData.objects.bulk_create(
+                new_prices,
+                **_get_upsert_kwargs(
+                    unique_fields=["user", "asin"], update_fields=["price"]
+                ),
+            )
 
-        price_val = clean_currency(row.get("Price", 0))
-
-        new_prices.append(PriceData(user=user, asin=asin, price=price_val))
-
-    if new_prices:
-        PriceData.objects.bulk_create(
-            new_prices,
-            **_get_upsert_kwargs(
-                unique_fields=["user", "asin"], update_fields=["price"]
-            ),
-        )
+    if not any_chunk:
+        raise ValueError("Pricing Data file is empty.")
 
 
 # ---------------------------------------------------------------------------
@@ -241,64 +260,65 @@ def process_spend_file(file_obj, user):
     """
     Insert spend rows scoped to the user, or update existing records directly if they already exist.
     """
-    df = load_file_obj(file_obj)
-
     required_cols = ["Date", "Ad Account", "Ad Type", "ASIN", "Spend"]
-    missing_cols = [col for col in required_cols if col not in df.columns]
-    if missing_cols:
-        raise ValueError(
-            f"Ads Spends missing required columns: {', '.join(missing_cols)}"
-        )
-
-    new_spends = []
-
-    for row in df.to_dict("records"):
-        asin = str(row.get("ASIN", "")).strip()
-        if not asin or asin.lower() == "nan":
-            continue
-
-        try:
-            row_date = pd.to_datetime(row.get("Date")).date()
-        except Exception:
-            continue
-
-        spend_val = clean_currency(row.get("Spend", 0))
-        ad_account = str(row.get("Ad Account", "")).strip()
-
-        ad_type = str(row.get("Ad Type", "")).strip().upper()
-        if ad_type in ("SPONSORED PRODUCTS", "SP"):
-            ad_type = "SP"
-        elif ad_type in ("SPONSORED BRANDS", "SB"):
-            ad_type = "SB"
-        elif ad_type in ("SPONSORED DISPLAY", "SD"):
-            ad_type = "SD"
-        else:
-            ad_type = ad_type[:10]
-
-        new_spends.append(
-            SpendData(
-                user=user,
-                date=row_date,
-                asin=asin,
-                ad_account=ad_account,
-                ad_type=ad_type,
-                spend=spend_val,
+    total_spends = 0
+    any_chunk = False
+    for df in iter_file_chunks(file_obj):
+        any_chunk = True
+        missing_cols = [col for col in required_cols if col not in df.columns]
+        if missing_cols:
+            raise ValueError(
+                f"Ads Spends missing required columns: {', '.join(missing_cols)}"
             )
-        )
 
-    if new_spends:
-        batch_size = 10_000
-        for i in range(0, len(new_spends), batch_size):
-            SpendData.objects.bulk_create(
-                new_spends[i : i + batch_size],
-                **_get_upsert_kwargs(
-                    unique_fields=["user", "date", "asin", "ad_account", "ad_type"],
-                    update_fields=["spend"],
-                ),
+        new_spends = []
+        for row in df.to_dict("records"):
+            asin = str(row.get("ASIN", "")).strip()
+            if not asin or asin.lower() == "nan":
+                continue
+
+            try:
+                row_date = pd.to_datetime(row.get("Date")).date()
+            except Exception:
+                continue
+
+            ad_type = str(row.get("Ad Type", "")).strip().upper()
+            if ad_type in ("SPONSORED PRODUCTS", "SP"):
+                ad_type = "SP"
+            elif ad_type in ("SPONSORED BRANDS", "SB"):
+                ad_type = "SB"
+            elif ad_type in ("SPONSORED DISPLAY", "SD"):
+                ad_type = "SD"
+            else:
+                ad_type = ad_type[:10]
+
+            new_spends.append(
+                SpendData(
+                    user=user,
+                    date=row_date,
+                    asin=asin,
+                    ad_account=str(row.get("Ad Account", "")).strip(),
+                    ad_type=ad_type,
+                    spend=clean_currency(row.get("Spend", 0)),
+                )
             )
+
+        total_spends += len(new_spends)
+        if new_spends:
+            for i in range(0, len(new_spends), DB_BATCH_SIZE):
+                SpendData.objects.bulk_create(
+                    new_spends[i : i + DB_BATCH_SIZE],
+                    **_get_upsert_kwargs(
+                        unique_fields=["user", "date", "asin", "ad_account", "ad_type"],
+                        update_fields=["spend"],
+                    ),
+                )
+
+    if not any_chunk:
+        raise ValueError("Ads Spends file is empty.")
 
     print(
-        f"[SpendData] Processed and upserted bulk batch of {len(new_spends)} records."
+        f"[SpendData] Processed and upserted bulk batch of {total_spends} records."
     )
 
 
@@ -318,8 +338,6 @@ def process_sales_file(file_obj, date_str, user):
             f"Invalid Date format '{date_str}' in Daily Sales filename. Please strictly use DD-MM-YYYY.csv format."
         )
 
-    df = load_file_obj(file_obj)
-
     required_cols = [
         "(Child) ASIN",
         "Page Views - Total",
@@ -327,42 +345,50 @@ def process_sales_file(file_obj, date_str, user):
         "Ordered Product Sales",
         "Total Order Items",
     ]
-    missing_cols = [col for col in required_cols if col not in df.columns]
-    if missing_cols:
-        raise ValueError(
-            f"Daily Sales missing required columns: {', '.join(missing_cols)}"
-        )
-
-    new_sales = []
-
-    for row in df.to_dict("records"):
-        asin = str(row.get("(Child) ASIN", "")).strip()
-        if not asin or asin.lower() == "nan":
-            continue
-
-        new_sales.append(
-            SalesData(
-                user=user,
-                date=date_obj,
-                asin=asin,
-                pageviews=clean_number(row.get("Page Views - Total", 0)),
-                units=clean_number(row.get("Units Ordered", 0)),
-                orders=clean_number(row.get("Total Order Items", 0)),
-                revenue=float(clean_currency(row.get("Ordered Product Sales", 0))),
+    total_sales = 0
+    any_chunk = False
+    for df in iter_file_chunks(file_obj):
+        any_chunk = True
+        missing_cols = [col for col in required_cols if col not in df.columns]
+        if missing_cols:
+            raise ValueError(
+                f"Daily Sales missing required columns: {', '.join(missing_cols)}"
             )
-        )
 
-    if new_sales:
-        SalesData.objects.bulk_create(
-            new_sales,
-            **_get_upsert_kwargs(
-                unique_fields=["user", "date", "asin"],
-                update_fields=["pageviews", "units", "orders", "revenue"],
-            ),
-        )
+        new_sales = []
+        for row in df.to_dict("records"):
+            asin = str(row.get("(Child) ASIN", "")).strip()
+            if not asin or asin.lower() == "nan":
+                continue
+
+            new_sales.append(
+                SalesData(
+                    user=user,
+                    date=date_obj,
+                    asin=asin,
+                    pageviews=clean_number(row.get("Page Views - Total", 0)),
+                    units=clean_number(row.get("Units Ordered", 0)),
+                    orders=clean_number(row.get("Total Order Items", 0)),
+                    revenue=float(clean_currency(row.get("Ordered Product Sales", 0))),
+                )
+            )
+
+        total_sales += len(new_sales)
+        if new_sales:
+            for i in range(0, len(new_sales), DB_BATCH_SIZE):
+                SalesData.objects.bulk_create(
+                    new_sales[i : i + DB_BATCH_SIZE],
+                    **_get_upsert_kwargs(
+                        unique_fields=["user", "date", "asin"],
+                        update_fields=["pageviews", "units", "orders", "revenue"],
+                    ),
+                )
+
+    if not any_chunk:
+        raise ValueError("Daily Sales file is empty.")
 
     print(
-        f"[SalesData] date={date_obj}, Processed and upserted bulk batch of {len(new_sales)} records."
+        f"[SalesData] date={date_obj}, Processed and upserted bulk batch of {total_sales} records."
     )
 
 
@@ -380,15 +406,6 @@ def process_fba_stock_file(file_obj, user):
     Warehouse Transfer In/Out, Found, Lost, Damaged, Disposed,
     Other Events, Ending Warehouse Balance, Unknown Events, Location.
     """
-    df = load_file_obj(file_obj)
-
-    # Be tolerant to common header variations (BOM, extra spaces, case).
-    col_lookup = {}
-    for c in df.columns:
-        key = str(c).replace("\ufeff", "").strip().lower()
-        if key and key not in col_lookup:
-            col_lookup[key] = c
-
     required_cols = [
         "Date",
         "FNSKU",
@@ -412,98 +429,113 @@ def process_fba_stock_file(file_obj, user):
         "Unknown Events",
         "Location",
     ]
-    missing_cols = [c for c in required_cols if c.lower() not in col_lookup]
-    if missing_cols:
-        raise ValueError(
-            f"FBA Stock file missing required columns: {', '.join(missing_cols)}"
-        )
+    total_records = 0
+    any_chunk = False
+    row_number = 1
+    for df in iter_file_chunks(file_obj):
+        any_chunk = True
+        col_lookup = {}
+        for c in df.columns:
+            key = str(c).replace("\ufeff", "").strip().lower()
+            if key and key not in col_lookup:
+                col_lookup[key] = c
 
-    records = []
-    for idx, row in enumerate(df.to_dict("records"), start=2):
-        asin = str(row.get(col_lookup["asin"], "")).strip()
-        if not asin or asin.lower() == "nan":
-            continue
-
-        try:
-            row_date = parse_report_date(
-                row.get(col_lookup["date"]), prefer_dayfirst=False
-            )
-        except Exception as exc:
+        missing_cols = [c for c in required_cols if c.lower() not in col_lookup]
+        if missing_cols:
             raise ValueError(
-                f"Invalid Date value in FBA Stock at row {idx}: {exc}"
+                f"FBA Stock file missing required columns: {', '.join(missing_cols)}"
             )
 
-        records.append(
-            FBAStockData(
-                user=user,
-                date=row_date,
-                fnsku=str(row.get(col_lookup["fnsku"], "") or "").strip(),
-                asin=asin,
-                msku=str(row.get(col_lookup["msku"], "") or "").strip(),
-                title=str(row.get(col_lookup["title"], "") or "").strip()[:500],
-                disposition=str(row.get(col_lookup["disposition"], "") or "").strip(),
-                starting_warehouse_balance=clean_number(
-                    row.get(col_lookup["starting warehouse balance"], 0)
-                ),
-                in_transit_between_warehouses=clean_number(
-                    row.get(col_lookup["in transit between warehouses"], 0)
-                ),
-                receipts=clean_number(row.get(col_lookup["receipts"], 0)),
-                customer_shipments=clean_number(
-                    row.get(col_lookup["customer shipments"], 0)
-                ),
-                customer_returns=clean_number(
-                    row.get(col_lookup["customer returns"], 0)
-                ),
-                vendor_returns=clean_number(row.get(col_lookup["vendor returns"], 0)),
-                warehouse_transfer_in_out=clean_number(
-                    row.get(col_lookup["warehouse transfer in/out"], 0)
-                ),
-                found=clean_number(row.get(col_lookup["found"], 0)),
-                lost=clean_number(row.get(col_lookup["lost"], 0)),
-                damaged=clean_number(row.get(col_lookup["damaged"], 0)),
-                disposed=clean_number(row.get(col_lookup["disposed"], 0)),
-                other_events=clean_number(row.get(col_lookup["other events"], 0)),
-                ending_warehouse_balance=clean_number(
-                    row.get(col_lookup["ending warehouse balance"], 0)
-                ),
-                unknown_events=clean_number(
-                    row.get(col_lookup["unknown events"], 0)
-                ),
-                location=str(row.get(col_lookup["location"], "") or "").strip(),
-            )
-        )
+        records = []
+        for row in df.to_dict("records"):
+            row_number += 1
+            asin = str(row.get(col_lookup["asin"], "")).strip()
+            if not asin or asin.lower() == "nan":
+                continue
 
-    if records:
-        batch_size = 10_000
-        for i in range(0, len(records), batch_size):
-            FBAStockData.objects.bulk_create(
-                records[i : i + batch_size],
-                **_get_upsert_kwargs(
-                    unique_fields=["user", "asin", "date", "disposition", "location"],
-                    update_fields=[
-                        "fnsku",
-                        "msku",
-                        "title",
-                        "starting_warehouse_balance",
-                        "in_transit_between_warehouses",
-                        "receipts",
-                        "customer_shipments",
-                        "customer_returns",
-                        "vendor_returns",
-                        "warehouse_transfer_in_out",
-                        "found",
-                        "lost",
-                        "damaged",
-                        "disposed",
-                        "other_events",
-                        "ending_warehouse_balance",
-                        "unknown_events",
-                    ],
-                ),
+            try:
+                row_date = parse_report_date(
+                    row.get(col_lookup["date"]), prefer_dayfirst=False
+                )
+            except Exception as exc:
+                raise ValueError(
+                    f"Invalid Date value in FBA Stock at row {row_number}: {exc}"
+                )
+
+            records.append(
+                FBAStockData(
+                    user=user,
+                    date=row_date,
+                    fnsku=str(row.get(col_lookup["fnsku"], "") or "").strip(),
+                    asin=asin,
+                    msku=str(row.get(col_lookup["msku"], "") or "").strip(),
+                    title=str(row.get(col_lookup["title"], "") or "").strip()[:500],
+                    disposition=str(row.get(col_lookup["disposition"], "") or "").strip(),
+                    starting_warehouse_balance=clean_number(
+                        row.get(col_lookup["starting warehouse balance"], 0)
+                    ),
+                    in_transit_between_warehouses=clean_number(
+                        row.get(col_lookup["in transit between warehouses"], 0)
+                    ),
+                    receipts=clean_number(row.get(col_lookup["receipts"], 0)),
+                    customer_shipments=clean_number(
+                        row.get(col_lookup["customer shipments"], 0)
+                    ),
+                    customer_returns=clean_number(
+                        row.get(col_lookup["customer returns"], 0)
+                    ),
+                    vendor_returns=clean_number(row.get(col_lookup["vendor returns"], 0)),
+                    warehouse_transfer_in_out=clean_number(
+                        row.get(col_lookup["warehouse transfer in/out"], 0)
+                    ),
+                    found=clean_number(row.get(col_lookup["found"], 0)),
+                    lost=clean_number(row.get(col_lookup["lost"], 0)),
+                    damaged=clean_number(row.get(col_lookup["damaged"], 0)),
+                    disposed=clean_number(row.get(col_lookup["disposed"], 0)),
+                    other_events=clean_number(row.get(col_lookup["other events"], 0)),
+                    ending_warehouse_balance=clean_number(
+                        row.get(col_lookup["ending warehouse balance"], 0)
+                    ),
+                    unknown_events=clean_number(
+                        row.get(col_lookup["unknown events"], 0)
+                    ),
+                    location=str(row.get(col_lookup["location"], "") or "").strip(),
+                )
             )
 
-    print(f"[FBAStockData] Processed {len(records)} records.")
+        total_records += len(records)
+        if records:
+            for i in range(0, len(records), DB_BATCH_SIZE):
+                FBAStockData.objects.bulk_create(
+                    records[i : i + DB_BATCH_SIZE],
+                    **_get_upsert_kwargs(
+                        unique_fields=["user", "asin", "date", "disposition", "location"],
+                        update_fields=[
+                            "fnsku",
+                            "msku",
+                            "title",
+                            "starting_warehouse_balance",
+                            "in_transit_between_warehouses",
+                            "receipts",
+                            "customer_shipments",
+                            "customer_returns",
+                            "vendor_returns",
+                            "warehouse_transfer_in_out",
+                            "found",
+                            "lost",
+                            "damaged",
+                            "disposed",
+                            "other_events",
+                            "ending_warehouse_balance",
+                            "unknown_events",
+                        ],
+                    ),
+                )
+
+    if not any_chunk:
+        raise ValueError("FBA Stock file is empty.")
+
+    print(f"[FBAStockData] Processed {total_records} records.")
 
 
 # ---------------------------------------------------------------------------
@@ -516,62 +548,65 @@ def process_flex_stock_file(file_obj, user):
     Parse Amazon Flex Stock file.
     Required columns: Date, ASIN, Cluster, Qty.
     """
-    df = load_file_obj(file_obj)
-
-    # Be tolerant to common header variations (BOM, extra spaces, case).
-    col_lookup = {}
-    for c in df.columns:
-        key = str(c).replace("\ufeff", "").strip().lower()
-        if key and key not in col_lookup:
-            col_lookup[key] = c
-
     required_cols = ["Date", "ASIN", "Cluster", "Qty"]
-    missing_cols = [c for c in required_cols if c.lower() not in col_lookup]
-    if missing_cols:
-        raise ValueError(
-            f"Flex Stock file missing required columns: {', '.join(missing_cols)}"
-        )
+    total_records = 0
+    any_chunk = False
+    row_number = 1
+    for df in iter_file_chunks(file_obj):
+        any_chunk = True
+        col_lookup = {}
+        for c in df.columns:
+            key = str(c).replace("\ufeff", "").strip().lower()
+            if key and key not in col_lookup:
+                col_lookup[key] = c
 
-    records = []
-    for idx, row in enumerate(df.to_dict("records"), start=2):
-        asin = str(row.get(col_lookup["asin"], "")).strip()
-        if not asin or asin.lower() == "nan":
-            continue
-
-        try:
-            row_date = parse_report_date(
-                row.get(col_lookup["date"]), prefer_dayfirst=False
-            )
-        except Exception as exc:
+        missing_cols = [c for c in required_cols if c.lower() not in col_lookup]
+        if missing_cols:
             raise ValueError(
-                f"Invalid Date value in Flex Stock at row {idx}: {exc}"
+                f"Flex Stock file missing required columns: {', '.join(missing_cols)}"
             )
 
-        cluster = str(row.get(col_lookup["cluster"], "") or "").strip()
-        qty = clean_number(row.get(col_lookup["qty"], 0))
+        records = []
+        for row in df.to_dict("records"):
+            row_number += 1
+            asin = str(row.get(col_lookup["asin"], "")).strip()
+            if not asin or asin.lower() == "nan":
+                continue
 
-        records.append(
-            FlexStockData(
-                user=user,
-                date=row_date,
-                asin=asin,
-                cluster=cluster,
-                qty=qty,
+            try:
+                row_date = parse_report_date(
+                    row.get(col_lookup["date"]), prefer_dayfirst=False
+                )
+            except Exception as exc:
+                raise ValueError(
+                    f"Invalid Date value in Flex Stock at row {row_number}: {exc}"
+                )
+
+            records.append(
+                FlexStockData(
+                    user=user,
+                    date=row_date,
+                    asin=asin,
+                    cluster=str(row.get(col_lookup["cluster"], "") or "").strip(),
+                    qty=clean_number(row.get(col_lookup["qty"], 0)),
+                )
             )
-        )
 
-    if records:
-        batch_size = 10_000
-        for i in range(0, len(records), batch_size):
-            FlexStockData.objects.bulk_create(
-                records[i : i + batch_size],
-                **_get_upsert_kwargs(
-                    unique_fields=["user", "asin", "date", "cluster"],
-                    update_fields=["qty"],
-                ),
-            )
+        total_records += len(records)
+        if records:
+            for i in range(0, len(records), DB_BATCH_SIZE):
+                FlexStockData.objects.bulk_create(
+                    records[i : i + DB_BATCH_SIZE],
+                    **_get_upsert_kwargs(
+                        unique_fields=["user", "asin", "date", "cluster"],
+                        update_fields=["qty"],
+                    ),
+                )
 
-    print(f"[FlexStockData] Processed {len(records)} records.")
+    if not any_chunk:
+        raise ValueError("Flex Stock file is empty.")
+
+    print(f"[FlexStockData] Processed {total_records} records.")
 
 
 
@@ -716,8 +751,6 @@ def process_fk_search_traffic(file_obj, user):
     Extracts FSN from Listing Id using Mid(Listing Id, 4, 16) → listing_id[3:19].
     Saves per-FSN per-date traffic & sales data.
     """
-    df = load_file_obj(file_obj)
-
     required_cols = [
         "Listing Id",
         "SKU Id",
@@ -727,66 +760,64 @@ def process_fk_search_traffic(file_obj, user):
         "Sales",
         "Revenue",
     ]
-    missing = [c for c in required_cols if c not in df.columns]
-    if missing:
-        raise ValueError(f"FK Search Traffic missing columns: {', '.join(missing)}")
+    total_records = 0
+    any_chunk = False
+    for df in iter_file_chunks(file_obj):
+        any_chunk = True
+        missing = [c for c in required_cols if c not in df.columns]
+        if missing:
+            raise ValueError(f"FK Search Traffic missing columns: {', '.join(missing)}")
 
-    records = []
-    for row in df.to_dict("records"):
-        listing_id = str(row.get("Listing Id", "")).strip()
-        if not listing_id or listing_id.lower() == "nan" or len(listing_id) < 19:
-            continue
+        records = []
+        for row in df.to_dict("records"):
+            listing_id = str(row.get("Listing Id", "")).strip()
+            if not listing_id or listing_id.lower() == "nan" or len(listing_id) < 19:
+                continue
 
-        fsn = listing_id[3:19]  # Mid(Listing Id, 4, 16)
+            fsn = listing_id[3:19]  # Mid(Listing Id, 4, 16)
+            try:
+                row_date = pd.to_datetime(row.get("Impression Date")).date()
+            except Exception:
+                continue
 
-        try:
-            row_date = pd.to_datetime(row.get("Impression Date")).date()
-        except Exception:
-            continue
-
-        # Page Views = Product Clicks column from Search Traffic
-        page_views = clean_number(row.get("Product Clicks", 0))
-        product_clicks = clean_number(row.get("Product Clicks", 0))
-        sales_val = clean_number(row.get("Sales", 0))
-        revenue_val = float(clean_currency(row.get("Revenue", 0)))
-        sku = str(row.get("SKU Id", "") or "").strip().replace('"', "")
-        import re
-        sku = re.sub(r"(?i)^SKU:\s*", "", sku)
-        vertical = str(row.get("Vertical", "") or "").strip()
-
-        records.append(
-            FlipkartSearchTraffic(
-                user=user,
-                fsn=fsn,
-                sku=sku,
-                vertical=vertical,
-                date=row_date,
-                page_views=page_views,
-                product_clicks=product_clicks,
-                sales=sales_val,
-                revenue=revenue_val,
-            )
-        )
-
-    if records:
-        batch_size = 10_000
-        for i in range(0, len(records), batch_size):
-            FlipkartSearchTraffic.objects.bulk_create(
-                records[i : i + batch_size],
-                **_get_upsert_kwargs(
-                    unique_fields=["user", "fsn", "date"],
-                    update_fields=[
-                        "sku",
-                        "vertical",
-                        "page_views",
-                        "product_clicks",
-                        "sales",
-                        "revenue",
-                    ],
-                ),
+            sku = str(row.get("SKU Id", "") or "").strip().replace('"', "")
+            sku = re.sub(r"(?i)^SKU:\s*", "", sku)
+            records.append(
+                FlipkartSearchTraffic(
+                    user=user,
+                    fsn=fsn,
+                    sku=sku,
+                    vertical=str(row.get("Vertical", "") or "").strip(),
+                    date=row_date,
+                    page_views=clean_number(row.get("Product Clicks", 0)),
+                    product_clicks=clean_number(row.get("Product Clicks", 0)),
+                    sales=clean_number(row.get("Sales", 0)),
+                    revenue=float(clean_currency(row.get("Revenue", 0))),
+                )
             )
 
-    print(f"[FK SearchTraffic] Processed {len(records)} records.")
+        total_records += len(records)
+        if records:
+            for i in range(0, len(records), DB_BATCH_SIZE):
+                FlipkartSearchTraffic.objects.bulk_create(
+                    records[i : i + DB_BATCH_SIZE],
+                    **_get_upsert_kwargs(
+                        unique_fields=["user", "fsn", "date"],
+                        update_fields=[
+                            "sku",
+                            "vertical",
+                            "page_views",
+                            "product_clicks",
+                            "sales",
+                            "revenue",
+                        ],
+                    ),
+                )
+
+    if not any_chunk:
+        raise ValueError("FK Search Traffic file is empty.")
+
+    print(f"[FK SearchTraffic] Processed {total_records} records.")
 
 
 # ---------------------------------------------------------------------------
@@ -799,40 +830,46 @@ def process_fk_category(file_obj, user):
     Parse Flipkart Category Dashboard (.xlsx).
     Columns: FSN ID, SKU, Portfolio, Cat, Subcat.
     """
-    df = load_file_obj(file_obj)
-
     required_cols = ["FSN ID", "Portfolio", "Cat", "Subcat"]
-    missing = [c for c in required_cols if c not in df.columns]
-    if missing:
-        raise ValueError(f"FK Category missing columns: {', '.join(missing)}")
+    total_records = 0
+    any_chunk = False
+    for df in iter_file_chunks(file_obj):
+        any_chunk = True
+        missing = [c for c in required_cols if c not in df.columns]
+        if missing:
+            raise ValueError(f"FK Category missing columns: {', '.join(missing)}")
 
-    records = []
-    for row in df.to_dict("records"):
-        fsn = str(row.get("FSN ID", "")).strip()
-        if not fsn or fsn.lower() == "nan":
-            continue
+        records = []
+        for row in df.to_dict("records"):
+            fsn = str(row.get("FSN ID", "")).strip()
+            if not fsn or fsn.lower() == "nan":
+                continue
 
-        records.append(
-            FlipkartCategoryMap(
-                user=user,
-                fsn=fsn,
-                sku=str(row.get("SKU", "") or "").strip(),
-                portfolio=str(row.get("Portfolio", "") or "").strip(),
-                category=str(row.get("Cat", "") or "").strip(),
-                subcategory=str(row.get("Subcat", "") or "").strip(),
+            records.append(
+                FlipkartCategoryMap(
+                    user=user,
+                    fsn=fsn,
+                    sku=str(row.get("SKU", "") or "").strip(),
+                    portfolio=str(row.get("Portfolio", "") or "").strip(),
+                    category=str(row.get("Cat", "") or "").strip(),
+                    subcategory=str(row.get("Subcat", "") or "").strip(),
+                )
             )
-        )
 
-    if records:
-        FlipkartCategoryMap.objects.bulk_create(
-            records,
-            **_get_upsert_kwargs(
-                unique_fields=["user", "fsn"],
-                update_fields=["sku", "portfolio", "category", "subcategory"],
-            ),
-        )
+        total_records += len(records)
+        if records:
+            FlipkartCategoryMap.objects.bulk_create(
+                records,
+                **_get_upsert_kwargs(
+                    unique_fields=["user", "fsn"],
+                    update_fields=["sku", "portfolio", "category", "subcategory"],
+                ),
+            )
 
-    print(f"[FK Category] Processed {len(records)} records.")
+    if not any_chunk:
+        raise ValueError("FK Category file is empty.")
+
+    print(f"[FK Category] Processed {total_records} records.")
 
 
 # ---------------------------------------------------------------------------
@@ -845,31 +882,41 @@ def process_fk_price(file_obj, user):
     Parse Flipkart Price file (.xlsx).
     Columns: Flipkart Serial Number → fsn, Deal → price.
     """
-    df = load_file_obj(file_obj)
-
     required_cols = ["Flipkart Serial Number", "Deal"]
-    missing = [c for c in required_cols if c not in df.columns]
-    if missing:
-        raise ValueError(f"FK Price missing columns: {', '.join(missing)}")
+    total_records = 0
+    any_chunk = False
+    for df in iter_file_chunks(file_obj):
+        any_chunk = True
+        missing = [c for c in required_cols if c not in df.columns]
+        if missing:
+            raise ValueError(f"FK Price missing columns: {', '.join(missing)}")
 
-    records = []
-    for row in df.to_dict("records"):
-        fsn = str(row.get("Flipkart Serial Number", "")).strip().replace('"', "")
-        if not fsn or fsn.lower() == "nan":
-            continue
+        records = []
+        for row in df.to_dict("records"):
+            fsn = str(row.get("Flipkart Serial Number", "")).strip().replace('"', "")
+            if not fsn or fsn.lower() == "nan":
+                continue
+            records.append(
+                FlipkartPrice(
+                    user=user,
+                    fsn=fsn,
+                    price=float(clean_currency(row.get("Deal", 0))),
+                )
+            )
 
-        price_val = float(clean_currency(row.get("Deal", 0)))
-        records.append(FlipkartPrice(user=user, fsn=fsn, price=price_val))
+        total_records += len(records)
+        if records:
+            FlipkartPrice.objects.bulk_create(
+                records,
+                **_get_upsert_kwargs(
+                    unique_fields=["user", "fsn"], update_fields=["price"]
+                ),
+            )
 
-    if records:
-        FlipkartPrice.objects.bulk_create(
-            records,
-            **_get_upsert_kwargs(
-                unique_fields=["user", "fsn"], update_fields=["price"]
-            ),
-        )
+    if not any_chunk:
+        raise ValueError("FK Price file is empty.")
 
-    print(f"[FK Price] Processed {len(records)} records.")
+    print(f"[FK Price] Processed {total_records} records.")
 
 
 # ---------------------------------------------------------------------------
@@ -883,47 +930,53 @@ def process_fk_pca(file_obj, user):
     File has 2 metadata rows (Start Time, End Time) then the header row.
     Columns: campaign_id, campaign_name, Date, fsn_id.
     """
-    df = load_file_obj(file_obj, skiprows=2)
-
     required_cols = ["campaign_id", "campaign_name", "Date", "fsn_id"]
-    missing = [c for c in required_cols if c not in df.columns]
-    if missing:
-        raise ValueError(f"FK PCA missing columns: {', '.join(missing)}")
+    total_records = 0
+    any_chunk = False
+    for df in iter_file_chunks(file_obj, skiprows=2):
+        any_chunk = True
+        missing = [c for c in required_cols if c not in df.columns]
+        if missing:
+            raise ValueError(f"FK PCA missing columns: {', '.join(missing)}")
 
-    records = []
-    for row in df.to_dict("records"):
-        campaign_id = str(row.get("campaign_id", "")).strip()
-        fsn_id = str(row.get("fsn_id", "")).strip().replace('"', "")
-        if not campaign_id or campaign_id.lower() == "nan":
-            continue
-        if not fsn_id or fsn_id.lower() == "nan":
-            continue
+        records = []
+        for row in df.to_dict("records"):
+            campaign_id = str(row.get("campaign_id", "")).strip()
+            fsn_id = str(row.get("fsn_id", "")).strip().replace('"', "")
+            if not campaign_id or campaign_id.lower() == "nan":
+                continue
+            if not fsn_id or fsn_id.lower() == "nan":
+                continue
 
-        try:
-            row_date = pd.to_datetime(row.get("Date")).date()
-        except Exception:
-            row_date = None
+            try:
+                row_date = pd.to_datetime(row.get("Date")).date()
+            except Exception:
+                row_date = None
 
-        records.append(
-            FlipkartPCA(
-                user=user,
-                campaign_id=campaign_id,
-                campaign_name=str(row.get("campaign_name", "") or "").strip(),
-                date=row_date,
-                fsn_id=fsn_id,
+            records.append(
+                FlipkartPCA(
+                    user=user,
+                    campaign_id=campaign_id,
+                    campaign_name=str(row.get("campaign_name", "") or "").strip(),
+                    date=row_date,
+                    fsn_id=fsn_id,
+                )
             )
-        )
 
-    if records:
-        FlipkartPCA.objects.bulk_create(
-            records,
-            **_get_upsert_kwargs(
-                unique_fields=["user", "campaign_id", "fsn_id", "date"],
-                update_fields=["campaign_name"],
-            ),
-        )
+        total_records += len(records)
+        if records:
+            FlipkartPCA.objects.bulk_create(
+                records,
+                **_get_upsert_kwargs(
+                    unique_fields=["user", "campaign_id", "fsn_id", "date"],
+                    update_fields=["campaign_name"],
+                ),
+            )
 
-    print(f"[FK PCA] Processed {len(records)} records.")
+    if not any_chunk:
+        raise ValueError("FK PCA file is empty.")
+
+    print(f"[FK PCA] Processed {total_records} records.")
 
 
 # ---------------------------------------------------------------------------
@@ -937,39 +990,45 @@ def process_fk_pla(file_obj, user):
     File has 2 metadata rows then the header row.
     Columns: Campaign ID, Advertised FSN ID, Ad Spend.
     """
-    df = load_file_obj(file_obj, skiprows=2)
-
     required_cols = ["Campaign ID", "Advertised FSN ID", "Ad Spend"]
-    missing = [c for c in required_cols if c not in df.columns]
-    if missing:
-        raise ValueError(f"FK PLA missing columns: {', '.join(missing)}")
+    total_records = 0
+    any_chunk = False
+    for df in iter_file_chunks(file_obj, skiprows=2):
+        any_chunk = True
+        missing = [c for c in required_cols if c not in df.columns]
+        if missing:
+            raise ValueError(f"FK PLA missing columns: {', '.join(missing)}")
 
-    records = []
-    for row in df.to_dict("records"):
-        campaign_id = str(row.get("Campaign ID", "")).strip()
-        fsn_id = str(row.get("Advertised FSN ID", "")).strip().replace('"', "")
-        if not fsn_id or fsn_id.lower() == "nan":
-            continue
+        records = []
+        for row in df.to_dict("records"):
+            campaign_id = str(row.get("Campaign ID", "")).strip()
+            fsn_id = str(row.get("Advertised FSN ID", "")).strip().replace('"', "")
+            if not fsn_id or fsn_id.lower() == "nan":
+                continue
 
-        records.append(
-            FlipkartPLA(
-                user=user,
-                campaign_id=campaign_id,
-                fsn_id=fsn_id,
-                ad_spend=float(clean_currency(row.get("Ad Spend", 0))),
+            records.append(
+                FlipkartPLA(
+                    user=user,
+                    campaign_id=campaign_id,
+                    fsn_id=fsn_id,
+                    ad_spend=float(clean_currency(row.get("Ad Spend", 0))),
+                )
             )
-        )
 
-    if records:
-        FlipkartPLA.objects.bulk_create(
-            records,
-            **_get_upsert_kwargs(
-                unique_fields=["user", "campaign_id", "fsn_id"],
-                update_fields=["ad_spend"],
-            ),
-        )
+        total_records += len(records)
+        if records:
+            FlipkartPLA.objects.bulk_create(
+                records,
+                **_get_upsert_kwargs(
+                    unique_fields=["user", "campaign_id", "fsn_id"],
+                    update_fields=["ad_spend"],
+                ),
+            )
 
-    print(f"[FK PLA] Processed {len(records)} records.")
+    if not any_chunk:
+        raise ValueError("FK PLA file is empty.")
+
+    print(f"[FK PLA] Processed {total_records} records.")
 
 
 # ---------------------------------------------------------------------------
@@ -1055,36 +1114,42 @@ def process_fk_coupon(file_obj, user):
     File has 2 header rows to skip.
     Columns: Flipkart Serial Number → fsn, Coupon Value.
     """
-    df = load_file_obj(file_obj, skiprows=2)
-
     required_cols = ["Flipkart Serial Number", "Coupon Value"]
-    missing = [c for c in required_cols if c not in df.columns]
-    if missing:
-        raise ValueError(f"FK Coupon missing columns: {', '.join(missing)}")
+    total_records = 0
+    any_chunk = False
+    for df in iter_file_chunks(file_obj, skiprows=2):
+        any_chunk = True
+        missing = [c for c in required_cols if c not in df.columns]
+        if missing:
+            raise ValueError(f"FK Coupon missing columns: {', '.join(missing)}")
 
-    records = []
-    for row in df.to_dict("records"):
-        fsn = str(row.get("Flipkart Serial Number", "")).strip().replace('"', "")
-        if not fsn or fsn.lower() == "nan":
-            continue
+        records = []
+        for row in df.to_dict("records"):
+            fsn = str(row.get("Flipkart Serial Number", "")).strip().replace('"', "")
+            if not fsn or fsn.lower() == "nan":
+                continue
 
-        records.append(
-            FlipkartCoupon(
-                user=user,
-                fsn=fsn,
-                coupon_value=float(clean_currency(row.get("Coupon Value", 0))),
+            records.append(
+                FlipkartCoupon(
+                    user=user,
+                    fsn=fsn,
+                    coupon_value=float(clean_currency(row.get("Coupon Value", 0))),
+                )
             )
-        )
 
-    if records:
-        FlipkartCoupon.objects.bulk_create(
-            records,
-            **_get_upsert_kwargs(
-                unique_fields=["user", "fsn"], update_fields=["coupon_value"]
-            ),
-        )
+        total_records += len(records)
+        if records:
+            FlipkartCoupon.objects.bulk_create(
+                records,
+                **_get_upsert_kwargs(
+                    unique_fields=["user", "fsn"], update_fields=["coupon_value"]
+                ),
+            )
 
-    print(f"[FK Coupon] Processed {len(records)} records.")
+    if not any_chunk:
+        raise ValueError("FK Coupon file is empty.")
+
+    print(f"[FK Coupon] Processed {total_records} records.")
 
 
 # ===========================================================================
@@ -1247,8 +1312,9 @@ def generate_flipkart_dashboard_data(user):
     )
 
     records = []
+    total_processed = 0
     batch_size = 10_000
-    
+
     for row in df.itertuples(index=False):
         records.append(
             FlipkartProcessedDashboardData(
@@ -1274,27 +1340,25 @@ def generate_flipkart_dashboard_data(user):
                 coupon_error=bool(getattr(row, "coupon_error", False)),
             )
         )
-        
         if len(records) >= batch_size:
-            FlipkartProcessedDashboardData.objects.bulk_create(records, ignore_conflicts=True)
+            FlipkartProcessedDashboardData.objects.bulk_create(
+                records, ignore_conflicts=True
+            )
+            total_processed += len(records)
             records = []
-            
+
     if records:
         FlipkartProcessedDashboardData.objects.bulk_create(records, ignore_conflicts=True)
+        total_processed += len(records)
 
     from django.core.cache import cache
-    
+
     # Increment dashboard data version for caching
     data_version = cache.get(f"dashboard_data_version_{user.id}", 0)
     cache.set(f"dashboard_data_version_{user.id}", data_version + 1, timeout=None)
-    
+
     for amz in (True, False):
         for flp in (True, False):
             cache.delete(f"dashboard_filters_{user.id}_{amz}_{flp}")
 
-    print(f"[FK Dashboard] Generated {len(records)} processed records.")
-    
-    from django.core.cache import cache
-    for amz in (True, False):
-        for flp in (True, False):
-            cache.delete(f"dashboard_filters_{user.id}_{amz}_{flp}")
+    print(f"[FK Dashboard] Generated {total_processed} processed records.")

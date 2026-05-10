@@ -779,10 +779,40 @@
         });
 
         function downloadCalculatedData(format) {
-            // Build the download URL preserving current filter query string
-            var qs = window.location.search || '';
-            // window.location.search includes the '?' if present
-            var url = '/dashboard/download/' + format + '/' + qs;
+            var params = new URLSearchParams(window.location.search || '');
+            var platformEl = document.getElementById('platformSelect');
+            var selectedPlatform = platformEl ? (platformEl.value || '').trim() : '';
+
+            // Keep export in sync with the visible platform filter.
+            if (selectedPlatform) {
+                params.set('platform', selectedPlatform);
+            } else {
+                params.delete('platform');
+            }
+
+            // If platform is "All" (empty), force user to choose one platform for export.
+            // Export output schema/calculations differ across Amazon vs Flipkart.
+            if (!selectedPlatform) {
+                var choice = window.prompt(
+                    'Would you like to download Amazon data or Flipkart data?\nType: Amazon or Flipkart'
+                );
+                if (choice === null) return; // user cancelled
+
+                choice = choice.trim().toLowerCase();
+                if (choice === 'amazon') {
+                    params.set('export_platform', 'Amazon');
+                } else if (choice === 'flipkart') {
+                    params.set('export_platform', 'Flipkart');
+                } else {
+                    alert('Please type exactly "Amazon" or "Flipkart".');
+                    return;
+                }
+            } else {
+                params.delete('export_platform');
+            }
+
+            var query = params.toString();
+            var url = '/dashboard/download/' + format + '/' + (query ? ('?' + query) : '');
             window.location.href = url;
         }
 
