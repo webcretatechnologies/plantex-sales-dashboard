@@ -78,10 +78,7 @@ function destroyChart(id) { if (charts[id]) { charts[id].destroy(); delete chart
 
 /** Destroy every known chart instance to prevent canvas-reuse errors */
 function destroyAllCharts() {
-    var allIds = [
-        'salesTrendChart', 'platformSplitChart', 'forecastChart',
-        'bizProfitChart', 'bizHealthGauge'
-    ];
+    var allIds = ['salesTrendChart', 'platformSplitChart', 'forecastChart'];
     allIds.forEach(function(id) { destroyChart(id); });
     // Also destroy any leftover keys
     Object.keys(charts).forEach(function(id) { destroyChart(id); });
@@ -219,49 +216,6 @@ function initCharts() {
     /* ── Business Dashboard Charts ── */
     if (viewType === 'business') {
         initCEOCharts(data);
-
-        // Profitability Overview Bar Chart
-        if (data.waterfall && data.waterfall.length > 0 && document.getElementById('bizProfitChart')) {
-            var wLabels = data.waterfall.map(function (w) { return w.label; });
-            var wVals   = data.waterfall.map(function (w) { return w.value; });
-            var wColors = data.waterfall.map(function (w) {
-                if (w.label === 'Revenue')      return '#0891b2';
-                if (w.label === 'Net Profit')   return '#8b5cf6';
-                if (w.label === 'Gross Profit') return '#10b981';
-                return w.value > 0 ? '#10b981' : '#ef4444';
-            });
-            charts.bizProfitChart = new Chart(document.getElementById('bizProfitChart'), {
-                type: 'bar',
-                data: {
-                    labels: wLabels,
-                    datasets: [{ data: wVals, backgroundColor: wColors, borderRadius: 6, maxBarThickness: 48 }]
-                },
-                options: cOpts({
-                    plugins: {
-                        legend: { display: false },
-                        tooltip: { callbacks: { label: function (ctx) {
-                            var v = ctx.raw; return (v < 0 ? '-' : '') + fmtShort(Math.abs(v));
-                        }}}
-                    },
-                    scales: {
-                        x: { grid: { display: false }, ticks: { font: { size: 10, weight: 500 }, maxRotation: 0 }, border: { display: false } },
-                        y: { grid: { color: 'rgba(148,163,184,0.08)' }, ticks: { font: { size: 10 }, callback: function (v) { return fmtShort(Math.abs(v)); } }, border: { display: false } }
-                    }
-                })
-            });
-        }
-
-        // Business Health Score Gauge (Doughnut)
-        if (document.getElementById('bizHealthGauge')) {
-            var score = data.business_health ? data.business_health.score : 0;
-            var remaining = 100 - score;
-            var gaugeColor = score >= 80 ? '#10b981' : score >= 60 ? '#f59e0b' : '#ef4444';
-            charts.bizHealthGauge = new Chart(document.getElementById('bizHealthGauge'), {
-                type: 'doughnut',
-                data: { datasets: [{ data: [score, remaining], backgroundColor: [gaugeColor, 'rgba(148,163,184,0.1)'], borderWidth: 0, circumference: 270, rotation: 225 }] },
-                options: { responsive: true, maintainAspectRatio: true, cutout: '78%', plugins: { legend: { display: false }, tooltip: { enabled: false } } }
-            });
-        }
     }
 
     /* ── CEO Dashboard Charts ── */

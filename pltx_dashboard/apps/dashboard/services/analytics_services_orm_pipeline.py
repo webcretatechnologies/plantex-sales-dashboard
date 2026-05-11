@@ -312,28 +312,86 @@ def run_orm_computation(
         "az_spend": sum(r.get("az_spend", 0) for r in table_data),
         "fk_spend": sum(r.get("fk_spend", 0) for r in table_data),
         "active_asins": len(table_data),
-        "cogs": 0.0,
     }
-    
+
+    platform_filter = (filters.get("platform") or "").strip()
     roas = (revenue_for_ads / kpis["spend"]) if kpis["spend"] > 0 else 0
-    conversion = (kpis["orders"] / kpis["pageviews"] * 100) if kpis["pageviews"] > 0 else 0
+    flipkart_cvr_mode = platform_filter == "Flipkart" or (
+        not platform_filter and kpis["az_units"] == 0 and kpis["fk_units"] > 0
+    )
+    if flipkart_cvr_mode:
+        conversion = (kpis["pageviews"] / kpis["units"]) if kpis["units"] > 0 else 0
+    else:
+        conversion = (kpis["orders"] / kpis["pageviews"] * 100) if kpis["pageviews"] > 0 else 0
     tacos = (kpis["spend"] / revenue_for_ads * 100) if revenue_for_ads > 0 else 0
-    gross_margin = kpis["revenue"] - kpis["cogs"]
-    gross_margin_pct = (gross_margin / kpis["revenue"] * 100) if kpis["revenue"] > 0 else 0
-    net_profit = gross_margin - kpis["spend"]
-    contribution_margin = round(gross_margin_pct - tacos, 1)
 
     kpis.update({
         "roas": round(roas, 2),
         "conversion": round(conversion, 2),
         "tacos": round(tacos, 2),
-        "gross_margin": gross_margin,
-        "gross_margin_pct": round(gross_margin_pct, 2),
-        "net_profit": net_profit,
-        "contribution_margin": contribution_margin,
         "ad_spend_sku_count": sum(1 for r in table_data if r.get("total_spend", 0) > 0),
-        "selling_sku_count": sum(1 for r in table_data if r.get("orders", 0) > 0),
-        "zero_sales_pageviews": sum(r.get("pageviews", 0) for r in table_data if r.get("orders", 0) == 0),
+        "selling_sku_count": sum(1 for r in table_data if r.get("units", 0) > 0),
+        "zero_sales_pageviews": sum(r.get("pageviews", 0) for r in table_data if r.get("units", 0) == 0),
+    })
+
+    # ── Flipkart Product Status Metrics ──
+    status_counts = {"Continued": 0, "Discontinued": 0}
+    status_revenue = {"Continued": 0.0, "Discontinued": 0.0}
+    if fk_qs_f is not None and fk_qs_f.exists():
+        from apps.dashboard.models import FlipkartCategoryMap
+
+        status_qs = FlipkartCategoryMap.objects.filter(user=user)
+
+        category_filter = filters.get("category")
+        if category_filter:
+            if isinstance(category_filter, (list, tuple)):
+                status_qs = status_qs.filter(category__in=category_filter)
+            else:
+                status_qs = status_qs.filter(category=category_filter)
+
+        portfolio_filter = filters.get("portfolio")
+        if portfolio_filter:
+            status_qs = status_qs.filter(portfolio=portfolio_filter)
+
+        subcategory_filter = filters.get("subcategory")
+        if subcategory_filter:
+            if isinstance(subcategory_filter, (list, tuple)):
+                status_qs = status_qs.filter(subcategory__in=subcategory_filter)
+            else:
+                status_qs = status_qs.filter(subcategory=subcategory_filter)
+
+        fsn_filter = filters.get("fsn")
+        if fsn_filter:
+            if isinstance(fsn_filter, (list, tuple)):
+                status_qs = status_qs.filter(fsn__in=fsn_filter)
+            else:
+                status_qs = status_qs.filter(fsn=fsn_filter)
+
+        # Build map of FSN to Product Status
+        fsn_to_status = {}
+        for row in status_qs.values("fsn", "product_status"):
+            fsn = str(row.get("fsn") or "").strip()
+            status_raw = str(row.get("product_status") or "").strip().lower()
+            if status_raw in ("continued", "continue"):
+                fsn_to_status[fsn] = "Continued"
+            elif status_raw in ("discontinued", "discontinue"):
+                fsn_to_status[fsn] = "Discontinued"
+
+        for status in fsn_to_status.values():
+            status_counts[status] += 1
+
+        # Sum revenue by FSN for filtered period
+        for row in fk_qs_f.values("fsn").annotate(total_revenue=Sum("revenue")):
+            fsn = str(row.get("fsn") or "").strip()
+            status = fsn_to_status.get(fsn)
+            if status in status_revenue:
+                status_revenue[status] += float(row.get("total_revenue") or 0.0)
+
+    kpis.update({
+        "continue_sales_revenue": round(status_revenue["Continued"], 2),
+        "discontinue_sales_revenue": round(status_revenue["Discontinued"], 2),
+        "continue_sku_count": int(status_counts["Continued"]),
+        "discontinued_sku_count": int(status_counts["Discontinued"]),
     })
 
     kpis_prev = generate_kpis_orm(qs_prev_f, fk_prev_f, spend_qs)
@@ -397,10 +455,6 @@ def run_orm_computation(
     kpis["mom_period_previous_end"] = pm_end
     kpis["yoy_period_previous_start"] = yoy_cm_start
     kpis["yoy_period_previous_end"] = yoy_cm_end
-    kpis["profit_change"] = _safe_growth(kpis["net_profit"], kpis_prev.get("net_profit", 0))
-    kpis["gross_margin_change"] = round(kpis["gross_margin_pct"] - kpis_prev.get("gross_margin_pct", 0), 1)
-    kpis["contribution_margin_change"] = round(kpis["contribution_margin"] - kpis_prev.get("contribution_margin", 0), 1)
-
     kpis["mom_spend_growth"] = _safe_growth(cm_spend, pm_spend)
     
     cm_rev_ads = cm_rev * 0.7
@@ -477,95 +531,131 @@ def run_orm_computation(
     in_stock_count = low_stock_count = oos_count = overstock_count = 0
     total_lost_sales = 0.0
 
-    # ── DOC-only Inventory Health (ASIN + Date level) ──
-    from apps.dashboard.models import FBAStockData, FlexStockData, SalesData, CategoryMapping
+    # ── DOC-only Inventory Health (SKU + Date level) ──
+    from apps.dashboard.models import (
+        FBAStockData,
+        FlexStockData,
+        SalesData,
+        CategoryMapping,
+        FlipkartCategoryMap,
+    )
 
-    # Build ASIN allow-list for category/portfolio/subcategory filters
-    allowed_asins = None
+    # Build SKU allow-list for category/portfolio/subcategory filters
+    is_flipkart_only = platform_filter == "Flipkart"
+    sku_filter = filters.get("fsn") if is_flipkart_only else filters.get("asin")
+
+    allowed_skus = None
     if filters.get("category") or filters.get("portfolio") or filters.get("subcategory"):
-        cat_map_qs = CategoryMapping.objects.filter(user=user)
+        if is_flipkart_only:
+            cat_map_qs = FlipkartCategoryMap.objects.filter(user=user)
+            category_field = "category"
+            portfolio_field = "portfolio"
+            subcategory_field = "subcategory"
+            id_field = "fsn"
+        else:
+            cat_map_qs = CategoryMapping.objects.filter(user=user)
+            category_field = "category"
+            portfolio_field = "portfolio"
+            subcategory_field = "subcategory"
+            id_field = "asin"
 
         category_filter = filters.get("category")
         if category_filter:
             if isinstance(category_filter, (list, tuple)):
-                cat_map_qs = cat_map_qs.filter(category__in=category_filter)
+                cat_map_qs = cat_map_qs.filter(**{f"{category_field}__in": category_filter})
             else:
-                cat_map_qs = cat_map_qs.filter(category=category_filter)
+                cat_map_qs = cat_map_qs.filter(**{category_field: category_filter})
 
         portfolio_filter = filters.get("portfolio")
         if portfolio_filter:
-            cat_map_qs = cat_map_qs.filter(portfolio=portfolio_filter)
+            cat_map_qs = cat_map_qs.filter(**{portfolio_field: portfolio_filter})
 
         subcategory_filter = filters.get("subcategory")
         if subcategory_filter:
             if isinstance(subcategory_filter, (list, tuple)):
-                cat_map_qs = cat_map_qs.filter(subcategory__in=subcategory_filter)
+                cat_map_qs = cat_map_qs.filter(**{f"{subcategory_field}__in": subcategory_filter})
             else:
-                cat_map_qs = cat_map_qs.filter(subcategory=subcategory_filter)
+                cat_map_qs = cat_map_qs.filter(**{subcategory_field: subcategory_filter})
 
-        allowed_asins = set(cat_map_qs.values_list("asin", flat=True))
+        allowed_skus = set(cat_map_qs.values_list(id_field, flat=True))
 
-    asin_filter = filters.get("asin")
-    platform_filter = (filters.get("platform") or "").strip()
-    inventory_enabled = platform_filter != "Flipkart"
+    fba_qs = apply_global_filters_orm(FBAStockData.objects.filter(user=user), filters)
+    flex_qs = apply_global_filters_orm(FlexStockData.objects.filter(user=user), filters)
 
-    # FBA + Flex stock at ASIN + Date level
-    if inventory_enabled:
-        fba_qs = apply_global_filters_orm(FBAStockData.objects.filter(user=user), filters)
-        flex_qs = apply_global_filters_orm(FlexStockData.objects.filter(user=user), filters)
-    else:
-        fba_qs = FBAStockData.objects.none()
-        flex_qs = FlexStockData.objects.none()
-
-    if asin_filter:
-        if isinstance(asin_filter, (list, tuple)):
-            fba_qs = fba_qs.filter(asin__in=asin_filter)
-            flex_qs = flex_qs.filter(asin__in=asin_filter)
+    if sku_filter:
+        if isinstance(sku_filter, (list, tuple)):
+            fba_qs = fba_qs.filter(asin__in=sku_filter)
+            flex_qs = flex_qs.filter(asin__in=sku_filter)
         else:
-            fba_qs = fba_qs.filter(asin=asin_filter)
-            flex_qs = flex_qs.filter(asin=asin_filter)
-    if allowed_asins is not None:
-        fba_qs = fba_qs.filter(asin__in=allowed_asins)
-        flex_qs = flex_qs.filter(asin__in=allowed_asins)
+            fba_qs = fba_qs.filter(asin=sku_filter)
+            flex_qs = flex_qs.filter(asin=sku_filter)
 
-    has_stock_data = inventory_enabled and (fba_qs.exists() or flex_qs.exists())
+    if allowed_skus is not None:
+        fba_qs = fba_qs.filter(asin__in=allowed_skus)
+        flex_qs = flex_qs.filter(asin__in=allowed_skus)
 
-    # Skip expensive inventory joins when inventory is not relevant for this view
-    # (Flipkart-only) or when no stock snapshots exist for the current filters.
+    has_stock_data = fba_qs.exists() and flex_qs.exists()
+
     sales_by_key = {}
     revenue_by_key = {}
-    revenue_by_asin = {}
-    asin_category_map = {}
+    revenue_by_sku = {}
+    sku_category_map = {}
     num_sale_days = 1
     if has_stock_data:
-        sales_qs = SalesData.objects.filter(user=user)
-        sales_qs = apply_global_filters_orm(sales_qs, filters)
-        if asin_filter:
-            if isinstance(asin_filter, (list, tuple)):
-                sales_qs = sales_qs.filter(asin__in=asin_filter)
-            else:
-                sales_qs = sales_qs.filter(asin=asin_filter)
-        if allowed_asins is not None:
-            sales_qs = sales_qs.filter(asin__in=allowed_asins)
+        if is_flipkart_only:
+            sales_qs = fk_qs_f if fk_qs_f is not None else fk_qs.none()
+            if sku_filter:
+                if isinstance(sku_filter, (list, tuple)):
+                    sales_qs = sales_qs.filter(fsn__in=sku_filter)
+                else:
+                    sales_qs = sales_qs.filter(fsn=sku_filter)
+            if allowed_skus is not None:
+                sales_qs = sales_qs.filter(fsn__in=allowed_skus)
+        else:
+            sales_qs = SalesData.objects.filter(user=user)
+            sales_qs = apply_global_filters_orm(sales_qs, filters)
+            if sku_filter:
+                if isinstance(sku_filter, (list, tuple)):
+                    sales_qs = sales_qs.filter(asin__in=sku_filter)
+                else:
+                    sales_qs = sales_qs.filter(asin=sku_filter)
+            if allowed_skus is not None:
+                sales_qs = sales_qs.filter(asin__in=allowed_skus)
 
         sale_days = list(sales_qs.values_list("date", flat=True).distinct())
         num_sale_days = max(len(sale_days), 1)
 
-        for row in sales_qs.values("asin", "date").annotate(total_units=Sum("units")):
-            key = (str(row["asin"]), row["date"])
-            sales_by_key[key] = int(row["total_units"] or 0)
+        if is_flipkart_only:
+            for row in sales_qs.values("fsn", "date").annotate(total_units=Sum("units")):
+                key = (str(row["fsn"]), row["date"])
+                sales_by_key[key] = int(row["total_units"] or 0)
 
-        if qs_f is not None:
-            for row in qs_f.values("asin", "date").annotate(total_revenue=Sum("revenue")):
-                key = (str(row["asin"]), row["date"])
+            for row in sales_qs.values("fsn", "date").annotate(total_revenue=Sum("revenue")):
+                key = (str(row["fsn"]), row["date"])
                 revenue_by_key[key] = float(row["total_revenue"] or 0)
-            for row in qs_f.values("asin").annotate(total_revenue=Sum("revenue")):
-                revenue_by_asin[str(row["asin"])] = float(row["total_revenue"] or 0)
+            for row in sales_qs.values("fsn").annotate(total_revenue=Sum("revenue")):
+                revenue_by_sku[str(row["fsn"])] = float(row["total_revenue"] or 0)
 
-        asin_category_map = {
-            str(r["asin"]): str(r["category"] or "Unknown")
-            for r in CategoryMapping.objects.filter(user=user).values("asin", "category")
-        }
+            sku_category_map = {
+                str(r["fsn"]): str(r["category"] or "Unknown")
+                for r in FlipkartCategoryMap.objects.filter(user=user).values("fsn", "category")
+            }
+        else:
+            for row in sales_qs.values("asin", "date").annotate(total_units=Sum("units")):
+                key = (str(row["asin"]), row["date"])
+                sales_by_key[key] = int(row["total_units"] or 0)
+
+            if qs_f is not None:
+                for row in qs_f.values("asin", "date").annotate(total_revenue=Sum("revenue")):
+                    key = (str(row["asin"]), row["date"])
+                    revenue_by_key[key] = float(row["total_revenue"] or 0)
+                for row in qs_f.values("asin").annotate(total_revenue=Sum("revenue")):
+                    revenue_by_sku[str(row["asin"])] = float(row["total_revenue"] or 0)
+
+            sku_category_map = {
+                str(r["asin"]): str(r["category"] or "Unknown")
+                for r in CategoryMapping.objects.filter(user=user).values("asin", "category")
+            }
     else:
         # Keep downstream loops no-op without extra DB calls.
         fba_qs = fba_qs.none()
@@ -601,9 +691,9 @@ def run_orm_computation(
     else:
         all_keys = set()
 
-    key_count_by_asin = {}
-    for asin, _row_date in all_keys:
-        key_count_by_asin[asin] = key_count_by_asin.get(asin, 0) + 1
+    key_count_by_sku = {}
+    for sku, _row_date in all_keys:
+        key_count_by_sku[sku] = key_count_by_sku.get(sku, 0) + 1
 
     inventory_details = []
     inventory_revenue_buckets = {
@@ -615,31 +705,31 @@ def run_orm_computation(
     inventory_detail_rows_total = len(all_keys)
 
     def _inventory_sort_key(key):
-        asin, row_date = key
-        sale_qty = int(sales_by_key.get((asin, row_date), 0))
-        rev = float(revenue_by_key.get((asin, row_date), 0.0) or 0.0)
+        sku, row_date = key
+        sale_qty = int(sales_by_key.get((sku, row_date), 0))
+        rev = float(revenue_by_key.get((sku, row_date), 0.0) or 0.0)
         return (
             row_date or datetime.date.min,
             1 if sale_qty > 0 else 0,
             sale_qty,
             rev,
-            asin,
+            sku,
         )
 
-    for asin, row_date in sorted(all_keys, key=_inventory_sort_key, reverse=True):
-        sale_qty = int(sales_by_key.get((asin, row_date), 0))
-        fba_qty = int(fba_stock_by_key.get((asin, row_date), 0))
-        flex_qty = int(flex_stock_by_key.get((asin, row_date), 0))
+    for sku, row_date in sorted(all_keys, key=_inventory_sort_key, reverse=True):
+        sale_qty = int(sales_by_key.get((sku, row_date), 0))
+        fba_qty = int(fba_stock_by_key.get((sku, row_date), 0))
+        flex_qty = int(flex_stock_by_key.get((sku, row_date), 0))
         stock_qty = fba_qty + flex_qty
-        key_count = max(int(key_count_by_asin.get(asin, 1)), 1)
+        key_count = max(int(key_count_by_sku.get(sku, 1)), 1)
         rev = float(
             revenue_by_key.get(
-                (asin, row_date),
-                float(revenue_by_asin.get(asin, 0.0)) / key_count,
+                (sku, row_date),
+                float(revenue_by_sku.get(sku, 0.0)) / key_count,
             )
             or 0
         )
-        cat = asin_category_map.get(asin, "Unknown")
+        cat = sku_category_map.get(sku, "Unknown")
 
         same_day_sales = float(sale_qty)
         if same_day_sales > 0:
@@ -679,12 +769,12 @@ def run_orm_computation(
             reason = f"DOC = {doc} days (Stock: {stock_qty} / Same-Day Sales: {same_day_sales:.1f})"
             inventory_revenue_buckets["in_stock"] += rev
 
-        # Only add to detailed list if within limit or if searching for a specific ASIN
-        if asin_filter or len(inventory_details) < 100:
+        # Only add to detailed list if within limit or if searching for a specific SKU
+        if sku_filter or len(inventory_details) < 100:
             inventory_details.append(
                 {
                     "date": row_date,
-                    "sku": asin,
+                    "sku": sku,
                     "category": cat,
                     "stock_qty": stock_qty,
                     "fba_qty": fba_qty,
@@ -782,11 +872,6 @@ def run_orm_computation(
         "days_in_month": days_in_month, "days_elapsed": days_elapsed
     }
 
-    waterfall = [
-        {"label": "Revenue", "value": round(kpis["revenue"], 2)}, {"label": "Ad Spend", "value": -round(kpis["spend"], 2)},
-        {"label": "Gross Profit", "value": round(kpis["gross_margin"], 2)}, {"label": "Net Profit", "value": round(kpis["net_profit"], 2)},
-    ]
-
     priorities = []
     if kpis.get("tacos", 0) > 15:
         priorities.append({
@@ -827,14 +912,6 @@ def run_orm_computation(
             "subtitle": f"Revenue up {kpis['revenue_change']:.1f}%.", 
             "priority": "Medium",
             "calculation": f"Revenue Change ({kpis['revenue_change']:.1f}%) > 15%"
-        })
-    if kpis.get("gross_margin_pct", 0) < 20:
-        priorities.append({
-            "rank": len(priorities)+1, 
-            "title": "Improve Gross Margins", 
-            "subtitle": f"Gross margin is at {kpis['gross_margin_pct']:.1f}%.", 
-            "priority": "Medium",
-            "calculation": f"Gross Margin ({kpis['gross_margin_pct']:.1f}%) < 20%"
         })
     if not priorities:
         priorities.append({
@@ -906,7 +983,7 @@ def run_orm_computation(
         "oos_impact": oos_impact,
         "inventory": inventory, "inventory_position": inventory_position, "forecast": forecast,
         "priorities": priorities, "marketing": marketing,
-        "waterfall": waterfall, "cluster_performance": cluster_performance, "cat_top_products": top_prods[:5],
+        "cluster_performance": cluster_performance, "cat_top_products": top_prods[:5],
         "cat_under_products": under_prods[:5], "cat_all_top_products": top_prods[:100], "cat_all_under_products": under_prods[:100],
         "growth_opportunities": [],
     }

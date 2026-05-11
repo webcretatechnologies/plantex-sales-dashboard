@@ -10,10 +10,7 @@ from .models import (
     FlipkartSearchTraffic,
     FlipkartCategoryMap,
     FlipkartPrice,
-    FlipkartPCA,
     FlipkartPLA,
-    FlipkartSalesInvoice,
-    FlipkartCoupon,
     FlipkartProcessedDashboardData,
 )
 
@@ -74,8 +71,15 @@ class FlipkartSearchTrafficAdmin(admin.ModelAdmin):
 
 @admin.register(FlipkartCategoryMap)
 class FlipkartCategoryMapAdmin(admin.ModelAdmin):
-    list_display = ("user", "fsn", "portfolio", "category", "subcategory")
-    list_filter = ("portfolio", "category")
+    list_display = (
+        "user",
+        "fsn",
+        "portfolio",
+        "category",
+        "subcategory",
+        "product_status",
+    )
+    list_filter = ("portfolio", "category", "product_status")
     search_fields = ("fsn", "sku")
 
 
@@ -85,29 +89,11 @@ class FlipkartPriceAdmin(admin.ModelAdmin):
     search_fields = ("fsn",)
 
 
-@admin.register(FlipkartPCA)
-class FlipkartPCAAdmin(admin.ModelAdmin):
-    list_display = ("user", "date", "campaign_name", "fsn_id")
-    list_filter = ("date", "user")
-    search_fields = ("campaign_id", "campaign_name", "fsn_id")
-
-
 @admin.register(FlipkartPLA)
 class FlipkartPLAAdmin(admin.ModelAdmin):
-    list_display = ("user", "campaign_id", "fsn_id", "ad_spend")
+    list_display = ("user", "date", "campaign_id", "fsn_id", "ad_spend")
+    list_filter = ("date", "user")
     search_fields = ("campaign_id", "fsn_id")
-
-
-@admin.register(FlipkartSalesInvoice)
-class FlipkartSalesInvoiceAdmin(admin.ModelAdmin):
-    list_display = ("user", "order_id", "order_item_id", "fsn", "invoice_amount")
-    search_fields = ("order_id", "order_item_id", "fsn")
-
-
-@admin.register(FlipkartCoupon)
-class FlipkartCouponAdmin(admin.ModelAdmin):
-    list_display = ("user", "fsn", "coupon_value")
-    search_fields = ("fsn",)
 
 
 @admin.register(FlipkartProcessedDashboardData)
@@ -119,7 +105,6 @@ class FlipkartProcessedDashboardDataAdmin(admin.ModelAdmin):
         "platform",
         "revenue",
         "total_spend",
-        "coupon_error",
     )
-    list_filter = ("date", "user", "coupon_error")
+    list_filter = ("date", "user")
     search_fields = ("fsn", "category")

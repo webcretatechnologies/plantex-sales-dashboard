@@ -127,24 +127,8 @@ def _build_amazon_export_dataframe(qs):
         lambda r: (r["Orders"] / r["Page Views"] * 100) if r["Page Views"] > 0 else 0,
         axis=1,
     )
-    merged["COGS (Total)"] = merged["Units"] * merged["Price"]
-    merged["Gross Margin"] = merged["Revenue"] - merged["COGS (Total)"]
-    merged["Gross Margin (%)"] = merged.apply(
-        lambda r: (r["Gross Margin"] / r["Revenue"] * 100) if r["Revenue"] > 0 else 0,
-        axis=1,
-    )
-    merged["Net Profit"] = merged["Gross Margin"] - merged["Spend"]
-    merged["Contribution Margin (%)"] = merged["Gross Margin (%)"] - merged["TACoS (%)"]
 
-    round_cols = [
-        "ROAS",
-        "TACoS (%)",
-        "CVR (%)",
-        "Gross Margin",
-        "Gross Margin (%)",
-        "Net Profit",
-        "Contribution Margin (%)",
-    ]
+    round_cols = ["ROAS", "TACoS (%)", "CVR (%)"]
     merged[round_cols] = merged[round_cols].round(2)
 
     col_order = [
@@ -165,11 +149,6 @@ def _build_amazon_export_dataframe(qs):
         "ROAS",
         "TACoS (%)",
         "CVR (%)",
-        "COGS (Total)",
-        "Gross Margin",
-        "Gross Margin (%)",
-        "Net Profit",
-        "Contribution Margin (%)",
     ]
     return merged[[c for c in col_order if c in merged.columns]]
 
@@ -186,10 +165,6 @@ def _build_flipkart_export_dataframe(fk_qs):
         "units": "sum",
         "revenue": "sum",
         "total_spend": "sum",
-        "taxable_value": "sum",
-        "invoice_amount": "sum",
-        "coupon_total": "sum",
-        "coupon_error": "max",
     }
     dim_cols = {}
     for col in ["portfolio", "category", "subcategory", "price", "platform"]:
@@ -210,10 +185,6 @@ def _build_flipkart_export_dataframe(fk_qs):
             "revenue": "Revenue",
             "price": "Price",
             "total_spend": "Ad Spend",
-            "taxable_value": "Taxable Value",
-            "invoice_amount": "Invoice Amount",
-            "coupon_total": "Coupon Total",
-            "coupon_error": "Coupon Error",
         },
         inplace=True,
     )
@@ -224,9 +195,6 @@ def _build_flipkart_export_dataframe(fk_qs):
         "Revenue",
         "Price",
         "Ad Spend",
-        "Taxable Value",
-        "Invoice Amount",
-        "Coupon Total",
     ]:
         if col in merged.columns:
             merged[col] = merged[col].fillna(0)
@@ -235,7 +203,6 @@ def _build_flipkart_export_dataframe(fk_qs):
     merged["Subcategory"] = merged["Subcategory"].fillna("Unknown")
     merged["Portfolio"] = merged["Portfolio"].fillna("Unknown")
 
-    # Same metric family as Amazon, excluding CVR/AOV (no order data for Flipkart).
     merged["ROAS"] = merged.apply(
         lambda r: (r["Revenue"] * 0.7 / r["Ad Spend"]) if r["Ad Spend"] > 0 else 0,
         axis=1,
@@ -244,23 +211,12 @@ def _build_flipkart_export_dataframe(fk_qs):
         lambda r: (r["Ad Spend"] / (r["Revenue"] * 0.7) * 100) if r["Revenue"] > 0 else 0,
         axis=1,
     )
-    merged["COGS (Total)"] = merged["Units Sold"] * merged["Price"]
-    merged["Gross Margin"] = merged["Revenue"] - merged["COGS (Total)"]
-    merged["Gross Margin (%)"] = merged.apply(
-        lambda r: (r["Gross Margin"] / r["Revenue"] * 100) if r["Revenue"] > 0 else 0,
+    merged["CVR"] = merged.apply(
+        lambda r: (r["Page Views"] / r["Units Sold"]) if r["Units Sold"] > 0 else 0,
         axis=1,
     )
-    merged["Net Profit"] = merged["Gross Margin"] - merged["Ad Spend"]
-    merged["Contribution Margin (%)"] = merged["Gross Margin (%)"] - merged["TACoS (%)"]
 
-    round_cols = [
-        "ROAS",
-        "TACoS (%)",
-        "Gross Margin",
-        "Gross Margin (%)",
-        "Net Profit",
-        "Contribution Margin (%)",
-    ]
+    round_cols = ["ROAS", "TACoS (%)", "CVR"]
     merged[round_cols] = merged[round_cols].round(2)
 
     col_order = [
@@ -274,17 +230,9 @@ def _build_flipkart_export_dataframe(fk_qs):
         "Revenue",
         "Price",
         "Ad Spend",
-        "Taxable Value",
-        "Invoice Amount",
-        "Coupon Total",
-        "Coupon Error",
         "ROAS",
         "TACoS (%)",
-        "COGS (Total)",
-        "Gross Margin",
-        "Gross Margin (%)",
-        "Net Profit",
-        "Contribution Margin (%)",
+        "CVR",
     ]
     return merged[[c for c in col_order if c in merged.columns]]
 
@@ -305,31 +253,6 @@ AMAZON_ANNEXURE_DATA = [
         "Formula": "(Orders / Page Views) * 100",
         "Description": "Conversion Rate from page views to orders.",
     },
-    {
-        "Metric": "COGS (Total)",
-        "Formula": "Units * Price",
-        "Description": "Cost of goods sold based on units and unit price.",
-    },
-    {
-        "Metric": "Gross Margin",
-        "Formula": "Revenue - COGS (Total)",
-        "Description": "Profit before advertising cost.",
-    },
-    {
-        "Metric": "Gross Margin (%)",
-        "Formula": "(Gross Margin / Revenue) * 100",
-        "Description": "Gross margin as percentage of revenue.",
-    },
-    {
-        "Metric": "Net Profit",
-        "Formula": "Gross Margin - Spend",
-        "Description": "Final profit after ad spend.",
-    },
-    {
-        "Metric": "Contribution Margin (%)",
-        "Formula": "Gross Margin (%) - TACoS (%)",
-        "Description": "Net contribution margin after ads.",
-    },
 ]
 
 
@@ -345,29 +268,9 @@ FLIPKART_ANNEXURE_DATA = [
         "Description": "Total ad spend as percentage of GST-adjusted revenue.",
     },
     {
-        "Metric": "COGS (Total)",
-        "Formula": "Units Sold * Price",
-        "Description": "Estimated total product cost.",
-    },
-    {
-        "Metric": "Gross Margin",
-        "Formula": "Revenue - COGS (Total)",
-        "Description": "Profit after product costs, before advertising.",
-    },
-    {
-        "Metric": "Gross Margin (%)",
-        "Formula": "(Gross Margin / Revenue) * 100",
-        "Description": "Profitability percentage before ad spend.",
-    },
-    {
-        "Metric": "Net Profit",
-        "Formula": "Gross Margin - Ad Spend",
-        "Description": "Profit after product and advertising costs.",
-    },
-    {
-        "Metric": "Contribution Margin (%)",
-        "Formula": "Gross Margin (%) - TACoS (%)",
-        "Description": "Final margin efficiency after ads.",
+        "Metric": "CVR",
+        "Formula": "Page Views / Units Sold",
+        "Description": "Flipkart conversion metric based on page views per unit sold.",
     },
 ]
 

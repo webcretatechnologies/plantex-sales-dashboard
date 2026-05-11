@@ -35,11 +35,11 @@ const AMAZON_LISTS = ['fileList', 'catFileList', 'spendFileList', 'priceFileList
 
 const FK_IDS = [
     'fkSearchTrafficFile', 'fkCategoryFile', 'fkPriceFile',
-    'fkPcaNewFile', 'fkPlaNewFile', 'fkSalesInvoiceFile', 'fkCouponFile'
+    'fkPlaNewFile', 'fkFbaStockFile', 'fkFlexStockFile'
 ];
 const FK_LISTS = [
     'fkSearchTrafficFileList', 'fkCategoryFileList', 'fkPriceFileList',
-    'fkPcaNewFileList', 'fkPlaNewFileList', 'fkSalesInvoiceFileList', 'fkCouponFileList'
+    'fkPlaNewFileList', 'fkFbaStockFileList', 'fkFlexStockFileList'
 ];
 
 const DEMO_TEMPLATE_MAP = {
@@ -52,10 +52,9 @@ const DEMO_TEMPLATE_MAP = {
     fkSearchTrafficFile: 'fk_search_traffic',
     fkCategoryFile: 'fk_category',
     fkPriceFile: 'fk_price',
-    fkPcaNewFile: 'fk_pca',
     fkPlaNewFile: 'fk_pla',
-    fkSalesInvoiceFile: 'fk_sales_invoice',
-    fkCouponFile: 'fk_coupon',
+    fkFbaStockFile: 'fk_fba_stock',
+    fkFlexStockFile: 'fk_flex_stock',
 };
 
 function initDemoTemplateButtons() {
@@ -128,14 +127,13 @@ function updateProcessButton() {
     { id: 'catFile', listId: 'catFileList' },
     { id: 'spendFile', listId: 'spendFileList' },
     { id: 'priceFile', listId: 'priceFileList' },
-    // Flipkart (7 file types)
+    // Flipkart
     { id: 'fkSearchTrafficFile', listId: 'fkSearchTrafficFileList' },
     { id: 'fkCategoryFile', listId: 'fkCategoryFileList' },
     { id: 'fkPriceFile', listId: 'fkPriceFileList' },
-    { id: 'fkPcaNewFile', listId: 'fkPcaNewFileList' },
     { id: 'fkPlaNewFile', listId: 'fkPlaNewFileList' },
-    { id: 'fkSalesInvoiceFile', listId: 'fkSalesInvoiceFileList' },
-    { id: 'fkCouponFile', listId: 'fkCouponFileList' },
+    { id: 'fkFbaStockFile', listId: 'fkFbaStockFileList' },
+    { id: 'fkFlexStockFile', listId: 'fkFlexStockFileList' },
     // Amazon stock files
     { id: 'fbaStockFile', listId: 'fbaStockFileList' },
     { id: 'flexStockFile', listId: 'flexStockFileList' },
@@ -252,16 +250,23 @@ async function loadDashboard() {
             }
 
         } else {
-            // Flipkart — 7 file types mapped to slim pipeline
+            // Flipkart file types mapped to slim pipeline
             const fkFileMap = [
                 { inputId: 'fkSearchTrafficFile', type: 'fk_search_traffic' },
                 { inputId: 'fkCategoryFile',      type: 'fk_category' },
                 { inputId: 'fkPriceFile',         type: 'fk_price' },
-                { inputId: 'fkPcaNewFile',        type: 'fk_pca' },
                 { inputId: 'fkPlaNewFile',        type: 'fk_pla' },
-                { inputId: 'fkSalesInvoiceFile',  type: 'fk_sales_invoice' },
-                { inputId: 'fkCouponFile',        type: 'fk_coupon' },
+                { inputId: 'fkFbaStockFile',      type: 'fk_fba_stock' },
+                { inputId: 'fkFlexStockFile',     type: 'fk_flex_stock' },
             ];
+
+            const fkFbaFiles = document.getElementById('fkFbaStockFile')?.files || [];
+            const fkFlexFiles = document.getElementById('fkFlexStockFile')?.files || [];
+            if (fkFbaFiles.length === 0 || fkFlexFiles.length === 0) {
+                alert("Please upload both Flipkart FBA Stock and Flipkart Flex Stock files.");
+                btn.disabled = false;
+                return;
+            }
 
             let totalFk = 0;
             fkFileMap.forEach(m => {

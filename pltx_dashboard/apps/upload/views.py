@@ -19,10 +19,9 @@ FK_FILE_TYPES = {
     "fk_search_traffic",
     "fk_category",
     "fk_price",
-    "fk_pca",
     "fk_pla",
-    "fk_sales_invoice",
-    "fk_coupon",
+    "fk_fba_stock",
+    "fk_flex_stock",
 }
 
 UPLOAD_TYPE_LABELS = {
@@ -35,10 +34,9 @@ UPLOAD_TYPE_LABELS = {
     "fk_search_traffic": "FK Search Traffic",
     "fk_category": "FK Category",
     "fk_price": "FK Price",
-    "fk_pca": "FK PCA",
     "fk_pla": "FK PLA",
-    "fk_sales_invoice": "FK Sales Report",
-    "fk_coupon": "FK Coupon Value",
+    "fk_fba_stock": "FK FBA Stock File",
+    "fk_flex_stock": "FK Flex Stock File",
 }
 
 
@@ -56,10 +54,9 @@ UPLOAD_SUBDIRS = {
     "fk_search_traffic": "search_traffic",
     "fk_category": "category",
     "fk_price": "price",
-    "fk_pca": "pca",
     "fk_pla": "pla",
-    "fk_sales_invoice": "sales_invoice",
-    "fk_coupon": "coupon",
+    "fk_fba_stock": "fba_stock",
+    "fk_flex_stock": "flex_stock",
 }
 
 

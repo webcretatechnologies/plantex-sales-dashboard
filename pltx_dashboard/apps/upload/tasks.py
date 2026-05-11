@@ -26,7 +26,7 @@ def _send_ws(user_id, message, status):
         logger.warning("[UploadTask] WebSocket send failed: %s", exc)
 
 
-NON_CONVERTIBLE_EXCEL_TYPES = {"fk_sales_invoice"}
+NON_CONVERTIBLE_EXCEL_TYPES = set()
 EXCEL_TO_CSV_MIN_SIZE_BYTES = int(
     os.getenv("EXCEL_TO_CSV_MIN_SIZE_MB", "5")
 ) * 1024 * 1024
@@ -82,7 +82,7 @@ def process_upload_file_task(
     file_type : str
         One of: 'sales', 'spend', 'category', 'price',
         'fk_search_traffic', 'fk_category', 'fk_price',
-        'fk_pca', 'fk_pla', 'fk_sales_invoice', 'fk_coupon'.
+        'fk_pla', 'fk_fba_stock', 'fk_flex_stock'.
     user_id : int
         ID of the logged-in user (for WebSocket notifications).
     data_owner_id : int
@@ -108,10 +108,7 @@ def process_upload_file_task(
         process_fk_search_traffic,
         process_fk_category,
         process_fk_price,
-        process_fk_pca,
         process_fk_pla,
-        process_fk_sales_invoice,
-        process_fk_coupon,
         generate_flipkart_dashboard_data,
     )
 
@@ -152,14 +149,20 @@ def process_upload_file_task(
                 process_fk_category(fh, data_owner)
             elif file_type == "fk_price":
                 process_fk_price(fh, data_owner)
-            elif file_type == "fk_pca":
-                process_fk_pca(fh, data_owner)
             elif file_type == "fk_pla":
                 process_fk_pla(fh, data_owner)
-            elif file_type == "fk_sales_invoice":
-                process_fk_sales_invoice(fh, data_owner)
-            elif file_type == "fk_coupon":
-                process_fk_coupon(fh, data_owner)
+            elif file_type == "fk_fba_stock":
+                process_fba_stock_file(
+                    fh,
+                    data_owner,
+                    id_columns=("ASIN", "FSN", "FSN ID", "Flipkart Serial Number"),
+                )
+            elif file_type == "fk_flex_stock":
+                process_flex_stock_file(
+                    fh,
+                    data_owner,
+                    id_columns=("ASIN", "FSN", "FSN ID", "Flipkart Serial Number"),
+                )
 
         # Clean up uploaded files after processing
         for path in files_to_cleanup:
@@ -171,6 +174,28 @@ def process_upload_file_task(
         if is_last:
             _send_ws(user_id, "Generating final dashboard data...", "processing")
             if is_flipkart:
+                from apps.dashboard.models import (
+                    FBAStockData,
+                    FlexStockData,
+                    FlipkartCategoryMap,
+                    FlipkartSearchTraffic,
+                    FlipkartPLA,
+                )
+
+                has_fk_category = FlipkartCategoryMap.objects.filter(user=data_owner).exists()
+                has_fk_traffic = FlipkartSearchTraffic.objects.filter(user=data_owner).exists()
+                has_fk_pla = FlipkartPLA.objects.filter(user=data_owner).exists()
+                if not (has_fk_category and has_fk_traffic and has_fk_pla):
+                    raise ValueError(
+                        "Flipkart requires Category, Search Traffic, and PLA reports."
+                    )
+
+                has_fba_stock = FBAStockData.objects.filter(user=data_owner).exists()
+                has_flex_stock = FlexStockData.objects.filter(user=data_owner).exists()
+                if not (has_fba_stock and has_flex_stock):
+                    raise ValueError(
+                        "Flipkart requires both FBA Stock and Flex Stock uploads."
+                    )
                 generate_flipkart_dashboard_data(data_owner)
             else:
                 generate_dashboard_data(data_owner)

@@ -12,8 +12,6 @@ def generate_kpis_orm(qs, fk_qs, spend_qs=None):
     pageviews = 0
     spend = 0.0
     active_asins = 0
-    cogs = 0.0
-    
     az_revenue = 0.0
     fk_revenue = 0.0
     az_orders = 0
@@ -65,15 +63,17 @@ def generate_kpis_orm(qs, fk_qs, spend_qs=None):
         spend += fk_spend
         active_asins += fk_qs.values("fsn").distinct().count()
 
+    has_amazon = bool(qs is not None and qs.exists())
+    has_flipkart = bool(fk_qs is not None and fk_qs.exists())
+
     # Derived metrics
     revenue_for_ads = revenue * 0.7  # Revenue * 0.7 for TACOS/ROAS
     roas = (revenue_for_ads / spend) if spend > 0 else 0
-    conversion = (orders / pageviews * 100) if pageviews > 0 else 0
+    if has_flipkart and not has_amazon:
+        conversion = (pageviews / units) if units > 0 else 0
+    else:
+        conversion = (orders / pageviews * 100) if pageviews > 0 else 0
     tacos = (spend / revenue_for_ads * 100) if revenue_for_ads > 0 else 0
-    gross_margin = revenue - cogs
-    gross_margin_pct = (gross_margin / revenue * 100) if revenue > 0 else 0
-    net_profit = gross_margin - spend
-    contribution_margin = round(gross_margin_pct - tacos, 1)
 
     return {
         # Core
@@ -95,12 +95,6 @@ def generate_kpis_orm(qs, fk_qs, spend_qs=None):
         "roas": round(roas, 2),
         "conversion": round(conversion, 2),
         "tacos": round(tacos, 2),
-        # Margins
-        "cogs": cogs,
-        "gross_margin": gross_margin,
-        "gross_margin_pct": round(gross_margin_pct, 2),
-        "net_profit": net_profit,
-        "contribution_margin": contribution_margin,
     }
 
 
