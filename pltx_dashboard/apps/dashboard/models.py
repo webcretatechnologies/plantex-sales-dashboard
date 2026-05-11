@@ -185,6 +185,7 @@ class FlipkartCategoryMap(models.Model):
     portfolio = models.CharField(max_length=100, null=True, blank=True)
     category = models.CharField(max_length=100, null=True, blank=True)
     subcategory = models.CharField(max_length=100, null=True, blank=True)
+    product_status = models.CharField(max_length=30, null=True, blank=True, db_index=True)
 
     class Meta:
         unique_together = ("user", "fsn")
@@ -226,10 +227,11 @@ class FlipkartPLA(models.Model):
     )
     campaign_id = models.CharField(max_length=100, db_index=True)
     fsn_id = models.CharField(max_length=100, db_index=True)
+    date = models.DateField(db_index=True, null=True, blank=True)
     ad_spend = models.FloatField(default=0.0)
 
     class Meta:
-        unique_together = ("user", "campaign_id", "fsn_id")
+        unique_together = ("user", "campaign_id", "fsn_id", "date")
 
 
 class FlipkartSalesInvoice(models.Model):

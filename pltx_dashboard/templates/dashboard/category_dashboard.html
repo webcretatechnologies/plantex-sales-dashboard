@@ -89,33 +89,8 @@
         {% endif %}
     </div>
 
-    <!-- Contribution -->
-    <div class="ceo-kpi-card" id="cat-kpi-contribution">
-        <div class="ceo-kpi-header">
-            <span class="ceo-kpi-label">Contribution</span>
-            <div class="ceo-kpi-icon purple"><span class="material-icons-round" style="font-size:16px">pie_chart</span>
-            </div>
-        </div>
-        <div class="ceo-kpi-value">{{ payload.kpis.contribution_margin|floatformat:1 }}%</div>
-        <div class="ceo-kpi-change {% if payload.kpis.contribution_margin_change >= 0 %}up{% else %}down{% endif %}">
-            {% if payload.kpis.contribution_margin_change >= 0 %}▲{% else %}▼{% endif %} {{ payload.kpis.contribution_margin_change|abs_val }}pp <span class="sub">vs prev. period</span>
-        </div>
-    </div>
-
-    <!-- Gross Margin -->
-    <div class="ceo-kpi-card" id="cat-kpi-gm">
-        <div class="ceo-kpi-header">
-            <span class="ceo-kpi-label">Gross Margin</span>
-            <div class="ceo-kpi-icon amber"><span class="material-icons-round"
-                    style="font-size:16px">account_balance_wallet</span></div>
-        </div>
-        <div class="ceo-kpi-value">{{ payload.kpis.gross_margin_pct|floatformat:1 }}%</div>
-        <div class="ceo-kpi-change {% if payload.kpis.gross_margin_change >= 0 %}up{% else %}down{% endif %}">
-            {% if payload.kpis.gross_margin_change >= 0 %}▲{% else %}▼{% endif %} {{ payload.kpis.gross_margin_change|abs_val }}pp <span class="sub">vs prev. period</span>
-        </div>
-    </div>
-
     <!-- Orders -->
+    {% if request.GET.platform != "Flipkart" %}
     <div class="ceo-kpi-card" id="cat-kpi-orders">
         <div class="ceo-kpi-header">
             <span class="ceo-kpi-label">Orders</span>
@@ -132,6 +107,31 @@
             <span><span style="color:#f59e0b;font-size:8px;">●</span> {{ payload.kpis.fk_orders|fmt_num }}</span>
         </div>
     </div>
+    {% endif %}
+
+    {% if request.GET.platform == "Flipkart" %}
+    <div class="ceo-kpi-card" id="cat-kpi-discontinue-sales-count">
+        <div class="ceo-kpi-header">
+            <span class="ceo-kpi-label">Total Revenue of Discontinue FSN</span>
+            <div class="ceo-kpi-icon amber"><span class="material-icons-round" style="font-size:16px">bar_chart</span></div>
+        </div>
+        <div class="ceo-kpi-value">{{ payload.kpis.discontinue_sales_revenue|fmt_rupee }}</div>
+        <div class="ceo-kpi-change flat">
+            <span class="sub">SKU Count: {{ payload.kpis.discontinued_sku_count|fmt_num }}</span>
+        </div>
+    </div>
+
+    <div class="ceo-kpi-card" id="cat-kpi-continue-sales-count">
+        <div class="ceo-kpi-header">
+            <span class="ceo-kpi-label">Total Revenue of Continue FSN</span>
+            <div class="ceo-kpi-icon blue"><span class="material-icons-round" style="font-size:16px">leaderboard</span></div>
+        </div>
+        <div class="ceo-kpi-value">{{ payload.kpis.continue_sales_revenue|fmt_rupee }}</div>
+        <div class="ceo-kpi-change flat">
+            <span class="sub">SKU Count: {{ payload.kpis.continue_sku_count|fmt_num }}</span>
+        </div>
+    </div>
+    {% endif %}
 
     <!-- Units Sold -->
     <div class="ceo-kpi-card" id="cat-kpi-units">
@@ -158,14 +158,14 @@
             <div class="ceo-kpi-icon amber"><span class="material-icons-round" style="font-size:16px">payments</span>
             </div>
         </div>
-        <div class="ceo-kpi-value">{{ payload.marketing.ad_spend|fmt_rupee }}</div>
+        <div class="ceo-kpi-value">₹{{ payload.marketing.ad_spend|fmt_num }}</div>
         <div class="ceo-kpi-change {% if payload.marketing.ad_spend_change < 0 %}down{% else %}up{% endif %}">
             {% if payload.marketing.ad_spend_change < 0 %}▼{% else %}▲{% endif %} {{ payload.marketing.ad_spend_change|abs_val }}% <span class="sub">vs last month</span>
         </div>
         <div
             style="display:flex; justify-content:space-between; margin-top:10px; font-size:10px; color:var(--muted); font-family:'JetBrains Mono', monospace; padding-top:8px; border-top:1px dashed var(--border-light);">
-            <span><span style="color:#3b82f6;font-size:8px;">●</span> {{ payload.kpis.az_spend|fmt_rupee }}</span>
-            <span><span style="color:#f59e0b;font-size:8px;">●</span> {{ payload.kpis.fk_spend|fmt_rupee }}</span>
+            <span><span style="color:#3b82f6;font-size:8px;">●</span> ₹{{ payload.kpis.az_spend|fmt_num }}</span>
+            <span><span style="color:#f59e0b;font-size:8px;">●</span> ₹{{ payload.kpis.fk_spend|fmt_num }}</span>
         </div>
     </div>
 
@@ -203,7 +203,7 @@
         </div>
         <div class="ceo-kpi-value">{{ payload.marketing.selling_sku_count|fmt_num }}</div>
         <div class="ceo-kpi-change flat">
-            <span class="sub">SKUs with at least 1 order</span>
+            <span class="sub">SKUs with at least 1 unit sold</span>
         </div>
     </div>
 
@@ -216,7 +216,7 @@
         </div>
         <div class="ceo-kpi-value">{{ payload.marketing.zero_sales_pageviews|fmt_num }}</div>
         <div class="ceo-kpi-change down">
-            <span class="sub">Pageviews with no conversion</span>
+            <span class="sub">Pageviews with zero unit sales</span>
         </div>
     </div>
 </div>

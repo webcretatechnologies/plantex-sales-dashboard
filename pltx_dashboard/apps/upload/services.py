@@ -16,10 +16,7 @@ from apps.dashboard.models import (
     FlipkartSearchTraffic,
     FlipkartCategoryMap,
     FlipkartPrice,
-    FlipkartPCA,
     FlipkartPLA,
-    FlipkartSalesInvoice,
-    FlipkartCoupon,
     FlipkartProcessedDashboardData,
 )
 from django.db import connection
@@ -64,6 +61,39 @@ def iter_file_chunks(file_obj, **kwargs):
             yield from pd.read_csv(file_obj, encoding="latin1", **read_kwargs)
     else:
         yield load_file_obj(file_obj, **kwargs)
+
+
+def _extract_fk_report_date_from_metadata(file_obj):
+    """
+    Extract report date from the first two metadata rows used by Flipkart CSVs:
+    Start Time,<timestamp>
+    End Time,<timestamp>
+    """
+    report_date = None
+    original_pos = file_obj.tell()
+    try:
+        file_obj.seek(0)
+        header_lines = []
+        for _ in range(2):
+            line = file_obj.readline()
+            if not line:
+                break
+            if isinstance(line, bytes):
+                line = line.decode("utf-8-sig", errors="ignore")
+            header_lines.append(line.strip())
+
+        for raw_line in header_lines:
+            if "," not in raw_line:
+                continue
+            key, val = raw_line.split(",", 1)
+            if key.strip().lower() in {"start time", "end time"}:
+                dt = pd.to_datetime(val.strip(), errors="coerce")
+                if not pd.isna(dt):
+                    report_date = dt.date()
+                    break
+    finally:
+        file_obj.seek(original_pos)
+    return report_date
 
 
 def _parse_numeric_report_date(value):
@@ -397,10 +427,10 @@ def process_sales_file(file_obj, date_str, user):
 # ---------------------------------------------------------------------------
 
 
-def process_fba_stock_file(file_obj, user):
+def process_fba_stock_file(file_obj, user, id_columns=("ASIN",)):
     """
-    Parse Amazon FBA Stock file.
-    Required columns: Date, FNSKU, ASIN, MSKU, Title, Disposition,
+    Parse FBA stock file (Amazon/Flipkart).
+    Required columns: Date, FNSKU, <product id>, MSKU, Title, Disposition,
     Starting Warehouse Balance, In Transit Between Warehouses, Receipts,
     Customer Shipments, Customer Returns, Vendor Returns,
     Warehouse Transfer In/Out, Found, Lost, Damaged, Disposed,
@@ -409,7 +439,6 @@ def process_fba_stock_file(file_obj, user):
     required_cols = [
         "Date",
         "FNSKU",
-        "ASIN",
         "MSKU",
         "Title",
         "Disposition",
@@ -440,7 +469,16 @@ def process_fba_stock_file(file_obj, user):
             if key and key not in col_lookup:
                 col_lookup[key] = c
 
+        id_col_key = None
+        for candidate in id_columns:
+            key = str(candidate).strip().lower()
+            if key in col_lookup:
+                id_col_key = key
+                break
+
         missing_cols = [c for c in required_cols if c.lower() not in col_lookup]
+        if id_col_key is None:
+            missing_cols.append("/".join(id_columns))
         if missing_cols:
             raise ValueError(
                 f"FBA Stock file missing required columns: {', '.join(missing_cols)}"
@@ -449,7 +487,7 @@ def process_fba_stock_file(file_obj, user):
         records = []
         for row in df.to_dict("records"):
             row_number += 1
-            asin = str(row.get(col_lookup["asin"], "")).strip()
+            asin = str(row.get(col_lookup[id_col_key], "")).strip()
             if not asin or asin.lower() == "nan":
                 continue
 
@@ -543,12 +581,12 @@ def process_fba_stock_file(file_obj, user):
 # ---------------------------------------------------------------------------
 
 
-def process_flex_stock_file(file_obj, user):
+def process_flex_stock_file(file_obj, user, id_columns=("ASIN",)):
     """
-    Parse Amazon Flex Stock file.
-    Required columns: Date, ASIN, Cluster, Qty.
+    Parse Flex stock file (Amazon/Flipkart).
+    Required columns: Date, <product id>, Cluster, Qty.
     """
-    required_cols = ["Date", "ASIN", "Cluster", "Qty"]
+    required_cols = ["Date", "Cluster", "Qty"]
     total_records = 0
     any_chunk = False
     row_number = 1
@@ -560,7 +598,16 @@ def process_flex_stock_file(file_obj, user):
             if key and key not in col_lookup:
                 col_lookup[key] = c
 
+        id_col_key = None
+        for candidate in id_columns:
+            key = str(candidate).strip().lower()
+            if key in col_lookup:
+                id_col_key = key
+                break
+
         missing_cols = [c for c in required_cols if c.lower() not in col_lookup]
+        if id_col_key is None:
+            missing_cols.append("/".join(id_columns))
         if missing_cols:
             raise ValueError(
                 f"Flex Stock file missing required columns: {', '.join(missing_cols)}"
@@ -569,7 +616,7 @@ def process_flex_stock_file(file_obj, user):
         records = []
         for row in df.to_dict("records"):
             row_number += 1
-            asin = str(row.get(col_lookup["asin"], "")).strip()
+            asin = str(row.get(col_lookup[id_col_key], "")).strip()
             if not asin or asin.lower() == "nan":
                 continue
 
@@ -762,13 +809,13 @@ def process_fk_search_traffic(file_obj, user):
     ]
     total_records = 0
     any_chunk = False
+    all_key_totals = {}
     for df in iter_file_chunks(file_obj):
         any_chunk = True
         missing = [c for c in required_cols if c not in df.columns]
         if missing:
             raise ValueError(f"FK Search Traffic missing columns: {', '.join(missing)}")
 
-        records = []
         for row in df.to_dict("records"):
             listing_id = str(row.get("Listing Id", "")).strip()
             if not listing_id or listing_id.lower() == "nan" or len(listing_id) < 19:
@@ -782,40 +829,67 @@ def process_fk_search_traffic(file_obj, user):
 
             sku = str(row.get("SKU Id", "") or "").strip().replace('"', "")
             sku = re.sub(r"(?i)^SKU:\s*", "", sku)
-            records.append(
-                FlipkartSearchTraffic(
-                    user=user,
-                    fsn=fsn,
-                    sku=sku,
-                    vertical=str(row.get("Vertical", "") or "").strip(),
-                    date=row_date,
-                    page_views=clean_number(row.get("Product Clicks", 0)),
-                    product_clicks=clean_number(row.get("Product Clicks", 0)),
-                    sales=clean_number(row.get("Sales", 0)),
-                    revenue=float(clean_currency(row.get("Revenue", 0))),
-                )
-            )
+            key = (fsn, row_date)
+            vertical = str(row.get("Vertical", "") or "").strip()
+            if key not in all_key_totals:
+                all_key_totals[key] = {
+                    "fsn": fsn,
+                    "date": row_date,
+                    "sku": sku,
+                    "vertical": vertical,
+                    "page_views": 0,
+                    "product_clicks": 0,
+                    "sales": 0,
+                    "revenue": 0.0,
+                }
+            else:
+                # Preserve first non-empty descriptive fields for consistency.
+                if not all_key_totals[key]["sku"] and sku:
+                    all_key_totals[key]["sku"] = sku
+                if not all_key_totals[key]["vertical"] and vertical:
+                    all_key_totals[key]["vertical"] = vertical
 
-        total_records += len(records)
-        if records:
-            for i in range(0, len(records), DB_BATCH_SIZE):
-                FlipkartSearchTraffic.objects.bulk_create(
-                    records[i : i + DB_BATCH_SIZE],
-                    **_get_upsert_kwargs(
-                        unique_fields=["user", "fsn", "date"],
-                        update_fields=[
-                            "sku",
-                            "vertical",
-                            "page_views",
-                            "product_clicks",
-                            "sales",
-                            "revenue",
-                        ],
-                    ),
-                )
+            clicks = clean_number(row.get("Product Clicks", 0))
+            all_key_totals[key]["page_views"] += clicks
+            all_key_totals[key]["product_clicks"] += clicks
+            all_key_totals[key]["sales"] += clean_number(row.get("Sales", 0))
+            all_key_totals[key]["revenue"] += float(clean_currency(row.get("Revenue", 0)))
 
     if not any_chunk:
         raise ValueError("FK Search Traffic file is empty.")
+
+    records = []
+    for payload in all_key_totals.values():
+        records.append(
+            FlipkartSearchTraffic(
+                user=user,
+                fsn=payload["fsn"],
+                sku=payload["sku"],
+                vertical=payload["vertical"],
+                date=payload["date"],
+                page_views=payload["page_views"],
+                product_clicks=payload["product_clicks"],
+                sales=payload["sales"],
+                revenue=payload["revenue"],
+            )
+        )
+    total_records = len(records)
+    if records:
+        for i in range(0, len(records), DB_BATCH_SIZE):
+            FlipkartSearchTraffic.objects.bulk_create(
+                records[i : i + DB_BATCH_SIZE],
+                **_get_upsert_kwargs(
+                    unique_fields=["user", "fsn", "date"],
+                    update_fields=[
+                        "sku",
+                        "vertical",
+                        "page_views",
+                        "product_clicks",
+                        "sales",
+                        "revenue",
+                    ],
+                ),
+            )
 
     print(f"[FK SearchTraffic] Processed {total_records} records.")
 
@@ -828,16 +902,31 @@ def process_fk_search_traffic(file_obj, user):
 def process_fk_category(file_obj, user):
     """
     Parse Flipkart Category Dashboard (.xlsx).
-    Columns: FSN ID, SKU, Portfolio, Cat, Subcat.
+    Supports both:
+    - FSN ID, SKU, Portfolio, Cat, Subcat
+    - FSN ID, SKU, Portfolio, Category, Sub Category, ... Product Status
     """
-    required_cols = ["FSN ID", "Portfolio", "Cat", "Subcat"]
     total_records = 0
     any_chunk = False
     for df in iter_file_chunks(file_obj):
         any_chunk = True
-        missing = [c for c in required_cols if c not in df.columns]
+        category_col = "Cat" if "Cat" in df.columns else "Category" if "Category" in df.columns else None
+        subcategory_col = (
+            "Subcat"
+            if "Subcat" in df.columns
+            else "Sub Category"
+            if "Sub Category" in df.columns
+            else None
+        )
+        product_status_col = "Product Status" if "Product Status" in df.columns else None
+
+        required_cols = ["FSN ID", "Portfolio", category_col, subcategory_col]
+        missing = [c for c in required_cols if not c]
         if missing:
-            raise ValueError(f"FK Category missing columns: {', '.join(missing)}")
+            raise ValueError(
+                "FK Category missing required columns: FSN ID, Portfolio, "
+                "Category/Cat, Sub Category/Subcat."
+            )
 
         records = []
         for row in df.to_dict("records"):
@@ -845,14 +934,27 @@ def process_fk_category(file_obj, user):
             if not fsn or fsn.lower() == "nan":
                 continue
 
+            raw_status = (
+                str(row.get(product_status_col, "") or "").strip()
+                if product_status_col
+                else ""
+            )
+            normalized_status = ""
+            status_lower = raw_status.lower()
+            if status_lower in ("continued", "continue"):
+                normalized_status = "Continued"
+            elif status_lower in ("discontinued", "discontinue"):
+                normalized_status = "Discontinued"
+
             records.append(
                 FlipkartCategoryMap(
                     user=user,
                     fsn=fsn,
                     sku=str(row.get("SKU", "") or "").strip(),
                     portfolio=str(row.get("Portfolio", "") or "").strip(),
-                    category=str(row.get("Cat", "") or "").strip(),
-                    subcategory=str(row.get("Subcat", "") or "").strip(),
+                    category=str(row.get(category_col, "") or "").strip(),
+                    subcategory=str(row.get(subcategory_col, "") or "").strip(),
+                    product_status=normalized_status,
                 )
             )
 
@@ -862,7 +964,13 @@ def process_fk_category(file_obj, user):
                 records,
                 **_get_upsert_kwargs(
                     unique_fields=["user", "fsn"],
-                    update_fields=["sku", "portfolio", "category", "subcategory"],
+                    update_fields=[
+                        "sku",
+                        "portfolio",
+                        "category",
+                        "subcategory",
+                        "product_status",
+                    ],
                 ),
             )
 
@@ -920,66 +1028,6 @@ def process_fk_price(file_obj, user):
 
 
 # ---------------------------------------------------------------------------
-# FK PCA Attribution Report
-# ---------------------------------------------------------------------------
-
-
-def process_fk_pca(file_obj, user):
-    """
-    Parse Flipkart PCA Attribution (.csv).
-    File has 2 metadata rows (Start Time, End Time) then the header row.
-    Columns: campaign_id, campaign_name, Date, fsn_id.
-    """
-    required_cols = ["campaign_id", "campaign_name", "Date", "fsn_id"]
-    total_records = 0
-    any_chunk = False
-    for df in iter_file_chunks(file_obj, skiprows=2):
-        any_chunk = True
-        missing = [c for c in required_cols if c not in df.columns]
-        if missing:
-            raise ValueError(f"FK PCA missing columns: {', '.join(missing)}")
-
-        records = []
-        for row in df.to_dict("records"):
-            campaign_id = str(row.get("campaign_id", "")).strip()
-            fsn_id = str(row.get("fsn_id", "")).strip().replace('"', "")
-            if not campaign_id or campaign_id.lower() == "nan":
-                continue
-            if not fsn_id or fsn_id.lower() == "nan":
-                continue
-
-            try:
-                row_date = pd.to_datetime(row.get("Date")).date()
-            except Exception:
-                row_date = None
-
-            records.append(
-                FlipkartPCA(
-                    user=user,
-                    campaign_id=campaign_id,
-                    campaign_name=str(row.get("campaign_name", "") or "").strip(),
-                    date=row_date,
-                    fsn_id=fsn_id,
-                )
-            )
-
-        total_records += len(records)
-        if records:
-            FlipkartPCA.objects.bulk_create(
-                records,
-                **_get_upsert_kwargs(
-                    unique_fields=["user", "campaign_id", "fsn_id", "date"],
-                    update_fields=["campaign_name"],
-                ),
-            )
-
-    if not any_chunk:
-        raise ValueError("FK PCA file is empty.")
-
-    print(f"[FK PCA] Processed {total_records} records.")
-
-
-# ---------------------------------------------------------------------------
 # FK PLA FSN Report
 # ---------------------------------------------------------------------------
 
@@ -993,163 +1041,53 @@ def process_fk_pla(file_obj, user):
     required_cols = ["Campaign ID", "Advertised FSN ID", "Ad Spend"]
     total_records = 0
     any_chunk = False
+    all_key_spend = {}
+    report_date = _extract_fk_report_date_from_metadata(file_obj)
+    if report_date is None:
+        raise ValueError("FK PLA metadata missing Start Time/End Time.")
+
     for df in iter_file_chunks(file_obj, skiprows=2):
         any_chunk = True
         missing = [c for c in required_cols if c not in df.columns]
         if missing:
             raise ValueError(f"FK PLA missing columns: {', '.join(missing)}")
 
-        records = []
         for row in df.to_dict("records"):
             campaign_id = str(row.get("Campaign ID", "")).strip()
             fsn_id = str(row.get("Advertised FSN ID", "")).strip().replace('"', "")
             if not fsn_id or fsn_id.lower() == "nan":
                 continue
 
-            records.append(
-                FlipkartPLA(
-                    user=user,
-                    campaign_id=campaign_id,
-                    fsn_id=fsn_id,
-                    ad_spend=float(clean_currency(row.get("Ad Spend", 0))),
-                )
-            )
-
-        total_records += len(records)
-        if records:
-            FlipkartPLA.objects.bulk_create(
-                records,
-                **_get_upsert_kwargs(
-                    unique_fields=["user", "campaign_id", "fsn_id"],
-                    update_fields=["ad_spend"],
-                ),
+            key = (campaign_id, fsn_id, report_date)
+            all_key_spend[key] = all_key_spend.get(key, 0.0) + float(
+                clean_currency(row.get("Ad Spend", 0))
             )
 
     if not any_chunk:
         raise ValueError("FK PLA file is empty.")
 
-    print(f"[FK PLA] Processed {total_records} records.")
-
-
-# ---------------------------------------------------------------------------
-# FK Sales Invoice (Sales Report file — both sheets)
-# ---------------------------------------------------------------------------
-
-
-def process_fk_sales_invoice(file_obj, user):
-    """
-    Parse Flipkart Sales Report (.xlsx).
-    - From 'Sales Report' sheet: get Order Item ID → FSN + Item Quantity mapping
-    - From 'Cash Back Report' sheet: get Taxable Value & Invoice Amount
-    - Join by Order Item ID to attach FSN to Cash Back rows.
-    """
-    xl = pd.ExcelFile(file_obj)
-
-    # --- Sales Report sheet: extract FSN + Item Quantity per Order Item ---
-    fsn_map = {}
-    if "Sales Report" in xl.sheet_names:
-        df_sales = pd.read_excel(xl, sheet_name="Sales Report")
-        for row in df_sales.to_dict("records"):
-            oid = str(row.get("Order Item ID", "")).strip().replace('"', "")
-            fsn = str(row.get("FSN", "")).strip().replace('"', "")
-            qty = clean_number(row.get("Item Quantity", 0))
-            if oid and oid.lower() != "nan" and fsn and fsn.lower() != "nan":
-                fsn_map[oid] = {"fsn": fsn, "qty": qty}
-
-    # --- Cash Back Report sheet: taxable value & invoice amount ---
     records = []
-    if "Cash Back Report" in xl.sheet_names:
-        df_cb = pd.read_excel(xl, sheet_name="Cash Back Report")
-
-        for row in df_cb.to_dict("records"):
-            order_id = str(row.get("Order ID", "")).strip()
-            order_item_id = str(row.get("Order Item ID", "")).strip()
-            if not order_id or order_id.lower() == "nan":
-                continue
-
-            # Look up FSN from the Sales Report sheet
-            info = fsn_map.get(order_item_id, {})
-            fsn = info.get("fsn", "")
-            qty = info.get("qty", 0)
-
-            records.append(
-                FlipkartSalesInvoice(
-                    user=user,
-                    order_id=order_id,
-                    order_item_id=order_item_id,
-                    fsn=fsn,
-                    item_quantity=qty,
-                    taxable_value=float(clean_currency(row.get("Taxable Value", 0))),
-                    invoice_amount=float(clean_currency(row.get("Invoice Amount", 0))),
-                )
+    for key, spend in all_key_spend.items():
+        records.append(
+            FlipkartPLA(
+                user=user,
+                campaign_id=key[0],
+                fsn_id=key[1],
+                date=key[2],
+                ad_spend=spend,
             )
-
+        )
+    total_records = len(records)
     if records:
-        batch_size = 5_000
-        for i in range(0, len(records), batch_size):
-            FlipkartSalesInvoice.objects.bulk_create(
-                records[i : i + batch_size],
-                **_get_upsert_kwargs(
-                    unique_fields=["user", "order_id", "order_item_id"],
-                    update_fields=[
-                        "fsn",
-                        "item_quantity",
-                        "taxable_value",
-                        "invoice_amount",
-                    ],
-                ),
-            )
+        FlipkartPLA.objects.bulk_create(
+            records,
+            **_get_upsert_kwargs(
+                unique_fields=["user", "campaign_id", "fsn_id", "date"],
+                update_fields=["ad_spend"],
+            ),
+        )
 
-    print(f"[FK SalesInvoice] Processed {len(records)} records.")
-
-
-# ---------------------------------------------------------------------------
-# FK Coupon Value Report
-# ---------------------------------------------------------------------------
-
-
-def process_fk_coupon(file_obj, user):
-    """
-    Parse Flipkart Coupon Value Report (.xlsx).
-    File has 2 header rows to skip.
-    Columns: Flipkart Serial Number → fsn, Coupon Value.
-    """
-    required_cols = ["Flipkart Serial Number", "Coupon Value"]
-    total_records = 0
-    any_chunk = False
-    for df in iter_file_chunks(file_obj, skiprows=2):
-        any_chunk = True
-        missing = [c for c in required_cols if c not in df.columns]
-        if missing:
-            raise ValueError(f"FK Coupon missing columns: {', '.join(missing)}")
-
-        records = []
-        for row in df.to_dict("records"):
-            fsn = str(row.get("Flipkart Serial Number", "")).strip().replace('"', "")
-            if not fsn or fsn.lower() == "nan":
-                continue
-
-            records.append(
-                FlipkartCoupon(
-                    user=user,
-                    fsn=fsn,
-                    coupon_value=float(clean_currency(row.get("Coupon Value", 0))),
-                )
-            )
-
-        total_records += len(records)
-        if records:
-            FlipkartCoupon.objects.bulk_create(
-                records,
-                **_get_upsert_kwargs(
-                    unique_fields=["user", "fsn"], update_fields=["coupon_value"]
-                ),
-            )
-
-    if not any_chunk:
-        raise ValueError("FK Coupon file is empty.")
-
-    print(f"[FK Coupon] Processed {total_records} records.")
+    print(f"[FK PLA] Processed {total_records} records.")
 
 
 # ===========================================================================
@@ -1159,16 +1097,13 @@ def process_fk_coupon(file_obj, user):
 
 def generate_flipkart_dashboard_data(user):
     """
-    Merges all 7 slim Flipkart tables at FSN level into
-    FlipkartProcessedDashboardData — the Flipkart equivalent of
-    ProcessedDashboardData.
-
-    Spend chain: PCA (fsn → campaign_id) → PLA (campaign_id + fsn → ad_spend)
-    Coupon validation: coupon_value × item_quantity ≈ invoice_amount
+    Merge Flipkart reports at FSN level into FlipkartProcessedDashboardData.
+    Source of truth for FSN mapping is the Category report.
+    Ad spend is mapped from PLA on FSN+date and merged to traffic on FSN+date.
+    Units sold are taken from Search Traffic 'Sales'.
     """
     FlipkartProcessedDashboardData.objects.filter(user=user).delete()
 
-    # 1) Base: Search Traffic (FSN + date)
     traffic_qs = FlipkartSearchTraffic.objects.filter(user=user).values()
     if not traffic_qs:
         print("[FK Dashboard] No search traffic data — skipping.")
@@ -1176,159 +1111,81 @@ def generate_flipkart_dashboard_data(user):
 
     df_traffic = pd.DataFrame(list(traffic_qs))
     df_traffic = df_traffic[
-        [
-            "fsn",
-            "sku",
-            "vertical",
-            "date",
-            "page_views",
-            "product_clicks",
-            "sales",
-            "revenue",
-        ]
+        ["fsn", "sku", "vertical", "date", "page_views", "product_clicks", "sales", "revenue"]
     ]
+    df_traffic["fsn"] = df_traffic["fsn"].astype(str).str.strip()
+    df_traffic = df_traffic[df_traffic["fsn"].ne("")]
+    if not df_traffic.empty:
+        df_traffic["date"] = pd.to_datetime(df_traffic["date"], errors="coerce").dt.date
+        df_traffic = df_traffic.dropna(subset=["date"])
+        # Keep one FSN+Date row by summing metrics to avoid overwrite-related loss.
+        df_traffic = (
+            df_traffic.groupby(["fsn", "date"], as_index=False)
+            .agg(
+                sku=("sku", "first"),
+                vertical=("vertical", "first"),
+                page_views=("page_views", "sum"),
+                product_clicks=("product_clicks", "sum"),
+                sales=("sales", "sum"),
+                revenue=("revenue", "sum"),
+            )
+        )
 
-    # 2) Category mapping
     cat_qs = FlipkartCategoryMap.objects.filter(user=user).values()
     df_cat = pd.DataFrame(list(cat_qs)) if cat_qs else pd.DataFrame()
     if not df_cat.empty:
         df_cat = df_cat[["fsn", "portfolio", "category", "subcategory"]]
+        df_cat["fsn"] = df_cat["fsn"].astype(str).str.strip()
+        df_cat = df_cat[df_cat["fsn"].ne("")]
+        category_fsns = set(df_cat["fsn"].unique())
+        if category_fsns:
+            df_traffic = df_traffic[df_traffic["fsn"].isin(category_fsns)]
 
-    # 3) Price
     price_qs = FlipkartPrice.objects.filter(user=user).values()
     df_price = pd.DataFrame(list(price_qs)) if price_qs else pd.DataFrame()
     if not df_price.empty:
         df_price = df_price[["fsn", "price"]]
+        df_price["fsn"] = df_price["fsn"].astype(str).str.strip()
 
-    # 4) Spend: PCA (campaign_id + fsn + date) + PLA (campaign_id + fsn → ad_spend)
-    # Allocate PLA spend across dates to avoid multiplying full spend on every traffic day.
-    pca_qs = FlipkartPCA.objects.filter(user=user).values()
     pla_qs = FlipkartPLA.objects.filter(user=user).values()
-
     df_spend = pd.DataFrame(columns=["fsn", "date", "total_spend"])
-    if pca_qs and pla_qs:
-        df_pca = pd.DataFrame(list(pca_qs))[["campaign_id", "fsn_id", "date"]]
-        df_pla = pd.DataFrame(list(pla_qs))[["campaign_id", "fsn_id", "ad_spend"]]
-        traffic_dates_by_fsn = df_traffic[["fsn", "date"]].drop_duplicates()
-
-        if not df_pca.empty and not df_pla.empty:
-            df_pca = df_pca.dropna(subset=["fsn_id"])
-            df_pca["fsn_id"] = df_pca["fsn_id"].astype(str).str.strip()
-            df_pca_dates = df_pca[df_pca["date"].notna()].drop_duplicates(
-                subset=["campaign_id", "fsn_id", "date"]
-            )
-            pair_day_counts = (
-                df_pca_dates.groupby(["campaign_id", "fsn_id"])
-                .size()
-                .reset_index(name="day_count")
-            )
-
-            df_pla = df_pla.dropna(subset=["fsn_id"])
-            df_pla["fsn_id"] = df_pla["fsn_id"].astype(str).str.strip()
-            df_pla["ad_spend"] = pd.to_numeric(df_pla["ad_spend"], errors="coerce").fillna(0.0)
-            df_pla_pairs = (
-                df_pla.groupby(["campaign_id", "fsn_id"], as_index=False)["ad_spend"].sum()
+    if pla_qs:
+        df_pla = pd.DataFrame(list(pla_qs))[["fsn_id", "date", "ad_spend"]]
+        df_pla = df_pla.dropna(subset=["fsn_id", "date"])
+        df_pla["fsn"] = df_pla["fsn_id"].astype(str).str.strip()
+        df_pla = df_pla[df_pla["fsn"].ne("")]
+        df_pla["date"] = pd.to_datetime(df_pla["date"], errors="coerce").dt.date
+        df_pla = df_pla.dropna(subset=["date"])
+        df_pla["ad_spend"] = (
+            pd.to_numeric(df_pla["ad_spend"], errors="coerce").fillna(0.0)
+        )
+        if not df_pla.empty:
+            df_spend = (
+                df_pla.groupby(["fsn", "date"], as_index=False)["ad_spend"]
+                .sum()
+                .rename(columns={"ad_spend": "total_spend"})
             )
 
-            spend_parts = []
+    if not df_spend.empty:
+        df = pd.merge(df_traffic, df_spend, on=["fsn", "date"], how="outer")
+    else:
+        df = df_traffic.copy()
+        df["total_spend"] = 0.0
 
-            pla_with_counts = pd.merge(
-                df_pla_pairs, pair_day_counts, on=["campaign_id", "fsn_id"], how="left"
-            )
-            dated_pairs = pla_with_counts[pla_with_counts["day_count"].fillna(0) > 0]
-            if not dated_pairs.empty and not df_pca_dates.empty:
-                df_dated = pd.merge(
-                    df_pca_dates,
-                    dated_pairs[["campaign_id", "fsn_id", "ad_spend", "day_count"]],
-                    on=["campaign_id", "fsn_id"],
-                    how="inner",
-                )
-                if not df_dated.empty:
-                    df_dated["total_spend"] = df_dated["ad_spend"] / df_dated["day_count"]
-                    spend_parts.append(
-                        df_dated[["fsn_id", "date", "total_spend"]].rename(
-                            columns={"fsn_id": "fsn"}
-                        )
-                    )
-
-            # Fallback: if PCA has no date rows for a PLA pair, spread spend across
-            # available traffic dates for that FSN to preserve total spend correctly.
-            undated_pairs = pla_with_counts[pla_with_counts["day_count"].fillna(0) <= 0]
-            if not undated_pairs.empty and not traffic_dates_by_fsn.empty:
-                fsn_day_counts = (
-                    traffic_dates_by_fsn.groupby("fsn")
-                    .size()
-                    .reset_index(name="fsn_day_count")
-                )
-                fallback_pairs = undated_pairs.rename(columns={"fsn_id": "fsn"})
-                fallback_pairs = pd.merge(
-                    fallback_pairs, fsn_day_counts, on="fsn", how="left"
-                )
-                fallback_pairs = fallback_pairs[
-                    fallback_pairs["fsn_day_count"].fillna(0) > 0
-                ]
-                if not fallback_pairs.empty:
-                    fallback_pairs["per_day_spend"] = (
-                        fallback_pairs["ad_spend"] / fallback_pairs["fsn_day_count"]
-                    )
-                    df_fallback = pd.merge(
-                        fallback_pairs[["campaign_id", "fsn", "per_day_spend"]],
-                        traffic_dates_by_fsn,
-                        on="fsn",
-                        how="inner",
-                    )
-                    if not df_fallback.empty:
-                        spend_parts.append(
-                            df_fallback.groupby(["fsn", "date"], as_index=False)[
-                                "per_day_spend"
-                            ]
-                            .sum()
-                            .rename(columns={"per_day_spend": "total_spend"})
-                        )
-
-            if spend_parts:
-                df_spend = (
-                    pd.concat(spend_parts, ignore_index=True)
-                    .groupby(["fsn", "date"], as_index=False)["total_spend"]
-                    .sum()
-                )
-
-    # 5) Sales Invoice (aggregated per FSN)
-    inv_qs = FlipkartSalesInvoice.objects.filter(user=user).values()
-    df_inv = pd.DataFrame(
-        columns=["fsn", "taxable_value", "invoice_amount", "item_quantity"]
-    )
-    if inv_qs:
-        df_inv_raw = pd.DataFrame(list(inv_qs))
-        if not df_inv_raw.empty and "fsn" in df_inv_raw.columns:
-            df_inv_raw = df_inv_raw[
-                df_inv_raw["fsn"].notna() & (df_inv_raw["fsn"] != "")
-            ]
-            if not df_inv_raw.empty:
-                df_inv = (
-                    df_inv_raw.groupby("fsn")
-                    .agg(
-                        {
-                            "taxable_value": "sum",
-                            "invoice_amount": "sum",
-                            "item_quantity": "sum",
-                        }
-                    )
-                    .reset_index()
-                )
-
-    # 6) Coupon
-    coupon_qs = FlipkartCoupon.objects.filter(user=user).values()
-    df_coupon = pd.DataFrame(columns=["fsn", "coupon_value"])
-    if coupon_qs:
-        df_coupon = pd.DataFrame(list(coupon_qs))
-        if not df_coupon.empty:
-            df_coupon = df_coupon[["fsn", "coupon_value"]]
-
-    # --- Merge everything onto traffic base ---
-    df = df_traffic.copy()
+    # Fill metric columns for spend-only rows (no traffic on that date/FSN).
+    for metric_col in ("page_views", "product_clicks", "sales", "revenue"):
+        if metric_col in df.columns:
+            df[metric_col] = pd.to_numeric(df[metric_col], errors="coerce").fillna(0)
+    for text_col in ("sku", "vertical"):
+        if text_col in df.columns:
+            df[text_col] = df[text_col].fillna("")
+    if "total_spend" in df.columns:
+        df["total_spend"] = pd.to_numeric(df["total_spend"], errors="coerce").fillna(0.0)
 
     if not df_cat.empty:
+        category_fsns = set(df_cat["fsn"].unique())
+        if category_fsns:
+            df = df[df["fsn"].isin(category_fsns)]
         df = pd.merge(df, df_cat, on="fsn", how="left")
     else:
         df["portfolio"] = ""
@@ -1340,47 +1197,16 @@ def generate_flipkart_dashboard_data(user):
     else:
         df["price"] = 0.0
 
-    if not df_spend.empty:
-        df = pd.merge(df, df_spend, on=["fsn", "date"], how="left")
-    else:
-        df["total_spend"] = 0.0
-
-    if not df_inv.empty:
-        df = pd.merge(df, df_inv, on="fsn", how="left")
-    else:
-        df["taxable_value"] = 0.0
-        df["invoice_amount"] = 0.0
-        df["item_quantity"] = 0
-
-    if not df_coupon.empty:
-        df = pd.merge(df, df_coupon, on="fsn", how="left")
-    else:
-        df["coupon_value"] = 0.0
-
-    # Fill NaN
     fill = {
         "portfolio": "",
         "category": "",
         "subcategory": "",
         "price": 0.0,
         "total_spend": 0.0,
-        "taxable_value": 0.0,
-        "invoice_amount": 0.0,
-        "item_quantity": 0,
-        "coupon_value": 0.0,
     }
     for col, val in fill.items():
         if col in df.columns:
             df[col] = df[col].fillna(val)
-
-    # Coupon validation: coupon_value × item_quantity ≈ invoice_amount
-    df["coupon_total"] = df["coupon_value"] * df["item_quantity"]
-    df["coupon_error"] = False
-    mask = (df["coupon_total"] > 0) & (df["invoice_amount"] > 0)
-    df.loc[mask, "coupon_error"] = ~(
-        (df.loc[mask, "coupon_total"] - df.loc[mask, "invoice_amount"]).abs()
-        < 1.0  # tolerance of ₹1
-    )
 
     records = []
     total_processed = 0
@@ -1405,10 +1231,10 @@ def generate_flipkart_dashboard_data(user):
                 spend_sp=0.0,
                 spend_sb=0.0,
                 spend_sd=0.0,
-                taxable_value=float(getattr(row, "taxable_value", 0)),
-                invoice_amount=float(getattr(row, "invoice_amount", 0)),
-                coupon_total=float(getattr(row, "coupon_total", 0)),
-                coupon_error=bool(getattr(row, "coupon_error", False)),
+                taxable_value=0.0,
+                invoice_amount=0.0,
+                coupon_total=0.0,
+                coupon_error=False,
             )
         )
         if len(records) >= batch_size:

@@ -387,7 +387,6 @@ def upload_view(request):
 def _demo_specs(today):
     day_ddmmyyyy = today.strftime("%d-%m-%Y")
     day_ymd = today.strftime("%Y-%m-%d")
-    now_iso = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     return {
         # Upload Data (Amazon)
         "upload_sales": {
@@ -496,8 +495,26 @@ def _demo_specs(today):
         "fk_category": {
             "kind": "csv",
             "filename": "fk_category_demo.csv",
-            "columns": ["FSN ID", "SKU", "Portfolio", "Cat", "Subcat"],
-            "rows": [["DEMOFSN00000001", "FK-SKU-1", "Home", "Storage", "Bins"]],
+            "columns": [
+                "FSN ID",
+                "SKU",
+                "Portfolio",
+                "Category",
+                "Sub Category",
+                "Vertical",
+                "Product Status",
+            ],
+            "rows": [
+                [
+                    "DEMOFSN00000001",
+                    "FK-SKU-1",
+                    "Home",
+                    "Storage",
+                    "Bins",
+                    "Home Furnishing",
+                    "Continue",
+                ]
+            ],
         },
         "fk_price": {
             "kind": "csv",
@@ -505,40 +522,70 @@ def _demo_specs(today):
             "columns": ["Flipkart Serial Number", "Deal"],
             "rows": [["DEMOFSN00000001", 1349]],
         },
-        "fk_pca": {
-            "kind": "csv_with_metadata",
-            "filename": "fk_pca_demo.csv",
-            "metadata_rows": [[f"Start Time,{now_iso}"], [f"End Time,{now_iso}"]],
-            "columns": ["campaign_id", "campaign_name", "Date", "fsn_id"],
-            "rows": [["CMP-1001", "Summer Promo", day_ymd, "DEMOFSN00000001"]],
-        },
         "fk_pla": {
             "kind": "csv_with_metadata",
             "filename": "fk_pla_demo.csv",
-            "metadata_rows": [[f"Start Time,{now_iso}"], [f"End Time,{now_iso}"]],
+            "metadata_rows": [["Start Time,2026-01-01 00:00:00"], ["End Time,2026-01-01 23:59:59"]],
             "columns": ["Campaign ID", "Advertised FSN ID", "Ad Spend"],
             "rows": [["CMP-1001", "DEMOFSN00000001", 842.75]],
         },
-        "fk_coupon": {
-            "kind": "csv_with_metadata",
-            "filename": "fk_coupon_demo.csv",
-            "metadata_rows": [[f"Start Time,{now_iso}"], [f"End Time,{now_iso}"]],
-            "columns": ["Flipkart Serial Number", "Coupon Value"],
-            "rows": [["DEMOFSN00000001", 75]],
+        "fk_fba_stock": {
+            "kind": "csv",
+            "filename": "fk_fba_stock_demo.csv",
+            "columns": [
+                "Date",
+                "FNSKU",
+                "FSN",
+                "MSKU",
+                "Title",
+                "Disposition",
+                "Starting Warehouse Balance",
+                "In Transit Between Warehouses",
+                "Receipts",
+                "Customer Shipments",
+                "Customer Returns",
+                "Vendor Returns",
+                "Warehouse Transfer In/Out",
+                "Found",
+                "Lost",
+                "Damaged",
+                "Disposed",
+                "Other Events",
+                "Ending Warehouse Balance",
+                "Unknown Events",
+                "Location",
+            ],
+            "rows": [
+                [
+                    day_ymd,
+                    "X000DEMOFNSKUFK",
+                    "DEMOFSN00000001",
+                    "FK-SKU-1",
+                    "Demo FK Product",
+                    "SELLABLE",
+                    80,
+                    5,
+                    4,
+                    2,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    87,
+                    0,
+                    "BLR1",
+                ]
+            ],
         },
-        "fk_sales_invoice": {
-            "kind": "xlsx_multi",
-            "filename": "fk_sales_invoice_demo.xlsx",
-            "sheets": {
-                "Sales Report": {
-                    "columns": ["Order Item ID", "FSN", "Item Quantity"],
-                    "rows": [["OI-10001", "DEMOFSN00000001", 2]],
-                },
-                "Cash Back Report": {
-                    "columns": ["Order ID", "Order Item ID", "Taxable Value", "Invoice Amount"],
-                    "rows": [["O-10001", "OI-10001", 1499, 1574]],
-                },
-            },
+        "fk_flex_stock": {
+            "kind": "csv",
+            "filename": "fk_flex_stock_demo.csv",
+            "columns": ["Date", "FSN", "Cluster", "Qty"],
+            "rows": [[day_ymd, "DEMOFSN00000001", "BANGALORE", 24]],
         },
         # Replenishment
         "repl_sales": {

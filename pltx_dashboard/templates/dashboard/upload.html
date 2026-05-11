@@ -549,7 +549,7 @@
                 <label class="modern-dropzone" for="fkCategoryFile">
                     <div class="material-icons-round drop-icon">table_chart</div>
                     <div class="drop-text">Drag & drop Category Dashboard file here</div>
-                    <div class="drop-subtext">FSN ID / Portfolio / Cat / Subcat (.xlsx)</div>
+                    <div class="drop-subtext">FSN ID / Portfolio / Category / Sub Category / Product Status (.xlsx/.csv)</div>
                     <input type="file" id="fkCategoryFile" accept=".csv,.xlsx,.xls" multiple style="display:none">
                 </label>
                 <div id="fkCategoryFileList" class="file-list"></div>
@@ -570,21 +570,6 @@
                 <div id="fkPriceFileList" class="file-list"></div>
             </div>
 
-            <!-- FK PCA Card -->
-            <div class="upload-card flipkart-card">
-                <div class="upload-card-title">
-                    <span class="material-icons-round">ads_click</span>
-                    PCA Report
-                </div>
-                <label class="modern-dropzone" for="fkPcaNewFile">
-                    <div class="material-icons-round drop-icon">cloud_upload</div>
-                    <div class="drop-text">Drag & drop PCA Attribution Report here</div>
-                    <div class="drop-subtext">campaign_id / fsn_id / Date (.csv)</div>
-                    <input type="file" id="fkPcaNewFile" accept=".csv,.xlsx,.xls" multiple style="display:none">
-                </label>
-                <div id="fkPcaNewFileList" class="file-list"></div>
-            </div>
-
             <!-- FK PLA Card -->
             <div class="upload-card flipkart-card">
                 <div class="upload-card-title">
@@ -600,34 +585,34 @@
                 <div id="fkPlaNewFileList" class="file-list"></div>
             </div>
 
-            <!-- FK Sales Report Card -->
+            <!-- FK FBA Stock Card -->
             <div class="upload-card flipkart-card">
                 <div class="upload-card-title">
-                    <span class="material-icons-round">receipt_long</span>
-                    Sales Report
+                    <span class="material-icons-round">inventory</span>
+                    FBA Stock File
                 </div>
-                <label class="modern-dropzone" for="fkSalesInvoiceFile">
+                <label class="modern-dropzone" for="fkFbaStockFile">
                     <div class="material-icons-round drop-icon">cloud_upload</div>
-                    <div class="drop-text">Drag & drop Flipkart Sales Report here</div>
-                    <div class="drop-subtext">Sales Report + Cash Back sheet / Taxable Value / Invoice (.xlsx)</div>
-                    <input type="file" id="fkSalesInvoiceFile" accept=".csv,.xlsx,.xls" multiple style="display:none">
+                    <div class="drop-text">Drag & drop Flipkart FBA Stock file here</div>
+                    <div class="drop-subtext">Required with Flex Stock for Inventory Health</div>
+                    <input type="file" id="fkFbaStockFile" accept=".csv,.xlsx,.xls" multiple style="display:none">
                 </label>
-                <div id="fkSalesInvoiceFileList" class="file-list"></div>
+                <div id="fkFbaStockFileList" class="file-list"></div>
             </div>
 
-            <!-- FK Coupon Card -->
+            <!-- FK Flex Stock Card -->
             <div class="upload-card flipkart-card">
                 <div class="upload-card-title">
-                    <span class="material-icons-round">local_offer</span>
-                    Coupon Value Report
+                    <span class="material-icons-round">local_shipping</span>
+                    Flex Stock File
                 </div>
-                <label class="modern-dropzone" for="fkCouponFile">
+                <label class="modern-dropzone" for="fkFlexStockFile">
                     <div class="material-icons-round drop-icon">cloud_upload</div>
-                    <div class="drop-text">Drag & drop Coupon Value Report here</div>
-                    <div class="drop-subtext">FSN / Coupon Value (.xlsx)</div>
-                    <input type="file" id="fkCouponFile" accept=".csv,.xlsx,.xls" multiple style="display:none">
+                    <div class="drop-text">Drag & drop Flipkart Flex Stock file here</div>
+                    <div class="drop-subtext">Required with FBA Stock for Inventory Health</div>
+                    <input type="file" id="fkFlexStockFile" accept=".csv,.xlsx,.xls" multiple style="display:none">
                 </label>
-                <div id="fkCouponFileList" class="file-list"></div>
+                <div id="fkFlexStockFileList" class="file-list"></div>
             </div>
         </div>
     </div>
@@ -685,5 +670,5 @@
 {% endblock %}
 
 {% block dashboard_scripts %}
-<script src="/static/js/upload.js?v=6"></script>
+<script src="/static/js/upload.js?v=7"></script>
 {% endblock %}

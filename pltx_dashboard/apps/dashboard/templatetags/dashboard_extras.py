@@ -22,6 +22,18 @@ def fmt_rupee(value):
 
 
 @register.filter
+def fmt_rupee_exact(value):
+    """Exact rupee format with Indian commas and 2 decimals."""
+    try:
+        n = float(value)
+    except (ValueError, TypeError):
+        return "₹0.00"
+    sign = "-" if n < 0 else ""
+    n = abs(n)
+    return f"{sign}₹{n:,.2f}"
+
+
+@register.filter
 def fmt_num(value):
     try:
         n = float(value)
