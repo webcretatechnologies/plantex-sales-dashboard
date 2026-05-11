@@ -1200,27 +1200,98 @@ def generate_flipkart_dashboard_data(user):
     if not df_price.empty:
         df_price = df_price[["fsn", "price"]]
 
-    # 4) Spend: PCA (fsn → campaign_id) + PLA (campaign_id + fsn → ad_spend)
+    # 4) Spend: PCA (campaign_id + fsn + date) + PLA (campaign_id + fsn → ad_spend)
+    # Allocate PLA spend across dates to avoid multiplying full spend on every traffic day.
     pca_qs = FlipkartPCA.objects.filter(user=user).values()
     pla_qs = FlipkartPLA.objects.filter(user=user).values()
 
-    df_spend = pd.DataFrame(columns=["fsn", "total_spend"])
+    df_spend = pd.DataFrame(columns=["fsn", "date", "total_spend"])
     if pca_qs and pla_qs:
-        df_pca = pd.DataFrame(list(pca_qs))[["campaign_id", "fsn_id"]]
+        df_pca = pd.DataFrame(list(pca_qs))[["campaign_id", "fsn_id", "date"]]
         df_pla = pd.DataFrame(list(pla_qs))[["campaign_id", "fsn_id", "ad_spend"]]
+        traffic_dates_by_fsn = df_traffic[["fsn", "date"]].drop_duplicates()
 
-        # Join PCA with PLA on campaign_id + fsn_id
-        df_spend_raw = pd.merge(
-            df_pca, df_pla, on=["campaign_id", "fsn_id"], how="inner"
-        )
-        if not df_spend_raw.empty:
-            # Aggregate spend per FSN
-            df_spend = (
-                df_spend_raw.groupby("fsn_id")["ad_spend"]
-                .sum()
-                .reset_index()
-                .rename(columns={"fsn_id": "fsn", "ad_spend": "total_spend"})
+        if not df_pca.empty and not df_pla.empty:
+            df_pca = df_pca.dropna(subset=["fsn_id"])
+            df_pca["fsn_id"] = df_pca["fsn_id"].astype(str).str.strip()
+            df_pca_dates = df_pca[df_pca["date"].notna()].drop_duplicates(
+                subset=["campaign_id", "fsn_id", "date"]
             )
+            pair_day_counts = (
+                df_pca_dates.groupby(["campaign_id", "fsn_id"])
+                .size()
+                .reset_index(name="day_count")
+            )
+
+            df_pla = df_pla.dropna(subset=["fsn_id"])
+            df_pla["fsn_id"] = df_pla["fsn_id"].astype(str).str.strip()
+            df_pla["ad_spend"] = pd.to_numeric(df_pla["ad_spend"], errors="coerce").fillna(0.0)
+            df_pla_pairs = (
+                df_pla.groupby(["campaign_id", "fsn_id"], as_index=False)["ad_spend"].sum()
+            )
+
+            spend_parts = []
+
+            pla_with_counts = pd.merge(
+                df_pla_pairs, pair_day_counts, on=["campaign_id", "fsn_id"], how="left"
+            )
+            dated_pairs = pla_with_counts[pla_with_counts["day_count"].fillna(0) > 0]
+            if not dated_pairs.empty and not df_pca_dates.empty:
+                df_dated = pd.merge(
+                    df_pca_dates,
+                    dated_pairs[["campaign_id", "fsn_id", "ad_spend", "day_count"]],
+                    on=["campaign_id", "fsn_id"],
+                    how="inner",
+                )
+                if not df_dated.empty:
+                    df_dated["total_spend"] = df_dated["ad_spend"] / df_dated["day_count"]
+                    spend_parts.append(
+                        df_dated[["fsn_id", "date", "total_spend"]].rename(
+                            columns={"fsn_id": "fsn"}
+                        )
+                    )
+
+            # Fallback: if PCA has no date rows for a PLA pair, spread spend across
+            # available traffic dates for that FSN to preserve total spend correctly.
+            undated_pairs = pla_with_counts[pla_with_counts["day_count"].fillna(0) <= 0]
+            if not undated_pairs.empty and not traffic_dates_by_fsn.empty:
+                fsn_day_counts = (
+                    traffic_dates_by_fsn.groupby("fsn")
+                    .size()
+                    .reset_index(name="fsn_day_count")
+                )
+                fallback_pairs = undated_pairs.rename(columns={"fsn_id": "fsn"})
+                fallback_pairs = pd.merge(
+                    fallback_pairs, fsn_day_counts, on="fsn", how="left"
+                )
+                fallback_pairs = fallback_pairs[
+                    fallback_pairs["fsn_day_count"].fillna(0) > 0
+                ]
+                if not fallback_pairs.empty:
+                    fallback_pairs["per_day_spend"] = (
+                        fallback_pairs["ad_spend"] / fallback_pairs["fsn_day_count"]
+                    )
+                    df_fallback = pd.merge(
+                        fallback_pairs[["campaign_id", "fsn", "per_day_spend"]],
+                        traffic_dates_by_fsn,
+                        on="fsn",
+                        how="inner",
+                    )
+                    if not df_fallback.empty:
+                        spend_parts.append(
+                            df_fallback.groupby(["fsn", "date"], as_index=False)[
+                                "per_day_spend"
+                            ]
+                            .sum()
+                            .rename(columns={"per_day_spend": "total_spend"})
+                        )
+
+            if spend_parts:
+                df_spend = (
+                    pd.concat(spend_parts, ignore_index=True)
+                    .groupby(["fsn", "date"], as_index=False)["total_spend"]
+                    .sum()
+                )
 
     # 5) Sales Invoice (aggregated per FSN)
     inv_qs = FlipkartSalesInvoice.objects.filter(user=user).values()
@@ -1270,7 +1341,7 @@ def generate_flipkart_dashboard_data(user):
         df["price"] = 0.0
 
     if not df_spend.empty:
-        df = pd.merge(df, df_spend, on="fsn", how="left")
+        df = pd.merge(df, df_spend, on=["fsn", "date"], how="left")
     else:
         df["total_spend"] = 0.0
 
