@@ -18,7 +18,7 @@ from apps.dashboard.models import (
 )
 from apps.dashboard.utils import DashboardEncoder
 
-DASHBOARD_PAYLOAD_CACHE_VERSION = 10
+DASHBOARD_PAYLOAD_CACHE_VERSION = 12
 
 
 def _build_payload_json(payload):

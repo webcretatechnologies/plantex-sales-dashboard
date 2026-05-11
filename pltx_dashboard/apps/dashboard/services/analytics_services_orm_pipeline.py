@@ -91,7 +91,7 @@ def get_revenue_for_period(q, fk_q, start, end):
         agg = q.filter(date__gte=start, date__lte=end).aggregate(t=Sum("revenue"))
         rev += float(agg["t"] or 0)
     if fk_q is not None:
-        agg = fk_q.filter(date__gte=start, date__lte=end).aggregate(t=Sum("taxable_value"))
+        agg = fk_q.filter(date__gte=start, date__lte=end).aggregate(t=Sum("revenue"))
         rev += float(agg["t"] or 0)
     return rev
 
@@ -348,7 +348,15 @@ def run_orm_computation(
     latest_dates = [d for d in (max_qs, max_fk) if d]
     data_anchor_date = max(latest_dates) if latest_dates else datetime.date.today()
 
-    growth_ref_date = timezone.localdate()
+    date_range_val = str(filters.get("date_range") or "").strip()
+    has_explicit_growth_period = bool(
+        date_range_val
+        or _parse_ymd_date(filters.get("start_date"))
+        or _parse_ymd_date(filters.get("end_date"))
+    )
+    # With no explicit date filter, anchor MOM/YOY to the latest available data date
+    # so stale uploads don't silently produce zeroed growth.
+    growth_ref_date = timezone.localdate() if has_explicit_growth_period else data_anchor_date
     cm_start, cm_end = resolve_growth_period(filters, growth_ref_date)
     pm_start = safe_shift_month(cm_start, -1)
     pm_end = safe_shift_month(cm_end, -1)
@@ -365,12 +373,22 @@ def run_orm_computation(
     ppm_rev = get_revenue_for_period(qs, fk_qs, ppm_start, ppm_end)
     yoy_cm_rev = get_revenue_for_period(qs, fk_qs, yoy_cm_start, yoy_cm_end)
     yoy_pm_rev = get_revenue_for_period(qs, fk_qs, yoy_pm_start, yoy_pm_end)
+    cm_az_rev = get_revenue_for_period(qs, None, cm_start, cm_end)
+    pm_az_rev = get_revenue_for_period(qs, None, pm_start, pm_end)
+    yoy_cm_az_rev = get_revenue_for_period(qs, None, yoy_cm_start, yoy_cm_end)
+    cm_fk_rev = get_revenue_for_period(None, fk_qs, cm_start, cm_end)
+    pm_fk_rev = get_revenue_for_period(None, fk_qs, pm_start, pm_end)
+    yoy_cm_fk_rev = get_revenue_for_period(None, fk_qs, yoy_cm_start, yoy_cm_end)
 
     cm_spend = get_spend_for_period(qs, fk_qs, cm_start, cm_end)
     pm_spend = get_spend_for_period(qs, fk_qs, pm_start, pm_end)
 
     kpis["mom_growth"] = _safe_growth(cm_rev, pm_rev)
     kpis["yoy_growth"] = _safe_growth(cm_rev, yoy_cm_rev)
+    kpis["az_mom_growth"] = _safe_growth(cm_az_rev, pm_az_rev)
+    kpis["fk_mom_growth"] = _safe_growth(cm_fk_rev, pm_fk_rev)
+    kpis["az_yoy_growth"] = _safe_growth(cm_az_rev, yoy_cm_az_rev)
+    kpis["fk_yoy_growth"] = _safe_growth(cm_fk_rev, yoy_cm_fk_rev)
     kpis["prev_mom"] = _safe_growth(pm_rev, ppm_rev)
     kpis["prev_yoy"] = _safe_growth(pm_rev, yoy_pm_rev)
     kpis["mom_period_current_start"] = cm_start
@@ -833,7 +851,7 @@ def run_orm_computation(
         for x in qs.filter(date__gte=cm_start, date__lte=cm_end).values('asin').annotate(r=Sum('revenue')):
             cm_sku_rev[x['asin']] = float(x['r'] or 0)
     if fk_qs is not None:
-        for x in fk_qs.filter(date__gte=cm_start, date__lte=cm_end).values('fsn').annotate(r=Sum('taxable_value')):
+        for x in fk_qs.filter(date__gte=cm_start, date__lte=cm_end).values('fsn').annotate(r=Sum('revenue')):
             cm_sku_rev[x['fsn']] = cm_sku_rev.get(x['fsn'], 0) + float(x['r'] or 0)
             
     pm_sku_rev = {}
@@ -841,7 +859,7 @@ def run_orm_computation(
         for x in qs.filter(date__gte=pm_start, date__lte=pm_end).values('asin').annotate(r=Sum('revenue')):
             pm_sku_rev[x['asin']] = float(x['r'] or 0)
     if fk_qs is not None:
-        for x in fk_qs.filter(date__gte=pm_start, date__lte=pm_end).values('fsn').annotate(r=Sum('taxable_value')):
+        for x in fk_qs.filter(date__gte=pm_start, date__lte=pm_end).values('fsn').annotate(r=Sum('revenue')):
             pm_sku_rev[x['fsn']] = pm_sku_rev.get(x['fsn'], 0) + float(x['r'] or 0)
 
     top_prods, under_prods = [], []

@@ -60,6 +60,13 @@
         <div class="ceo-kpi-change {% if payload.kpis.mom_growth >= 0 %}up{% else %}down{% endif %}">
             Prev month: {{ payload.kpis.prev_mom|floatformat:1 }}% <span class="sub">MOM</span>
         </div>
+        {% if not request.GET.platform %}
+        <div
+            style="display:flex; justify-content:space-between; margin-top:10px; font-size:10px; color:var(--muted); font-family:'JetBrains Mono', monospace; padding-top:8px; border-top:1px dashed var(--border-light);">
+            <span><span style="color:#3b82f6;font-size:8px;">●</span> {% if payload.kpis.az_mom_growth >= 0 %}▲{% else %}▼{% endif %} {{ payload.kpis.az_mom_growth|abs_val|floatformat:1 }}%</span>
+            <span><span style="color:#f59e0b;font-size:8px;">●</span> {% if payload.kpis.fk_mom_growth >= 0 %}▲{% else %}▼{% endif %} {{ payload.kpis.fk_mom_growth|abs_val|floatformat:1 }}%</span>
+        </div>
+        {% endif %}
     </div>
 
     <!-- YOY Growth -->
@@ -73,6 +80,13 @@
         <div class="ceo-kpi-change {% if payload.kpis.yoy_growth >= 0 %}up{% else %}down{% endif %}">
             Same month last year: {{ payload.kpis.prev_yoy|floatformat:1 }}% <span class="sub">YOY</span>
         </div>
+        {% if not request.GET.platform %}
+        <div
+            style="display:flex; justify-content:space-between; margin-top:10px; font-size:10px; color:var(--muted); font-family:'JetBrains Mono', monospace; padding-top:8px; border-top:1px dashed var(--border-light);">
+            <span><span style="color:#3b82f6;font-size:8px;">●</span> {% if payload.kpis.az_yoy_growth >= 0 %}▲{% else %}▼{% endif %} {{ payload.kpis.az_yoy_growth|abs_val|floatformat:1 }}%</span>
+            <span><span style="color:#f59e0b;font-size:8px;">●</span> {% if payload.kpis.fk_yoy_growth >= 0 %}▲{% else %}▼{% endif %} {{ payload.kpis.fk_yoy_growth|abs_val|floatformat:1 }}%</span>
+        </div>
+        {% endif %}
     </div>
 
     <!-- Contribution -->

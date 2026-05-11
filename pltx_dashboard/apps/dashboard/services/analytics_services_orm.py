@@ -46,7 +46,7 @@ def generate_kpis_orm(qs, fk_qs, spend_qs=None):
 
     if fk_qs is not None:
         agg_fk = fk_qs.aggregate(
-            t_rev=Sum("taxable_value"),
+            t_rev=Sum("revenue"),
             t_ord=Sum("orders"),
             t_uni=Sum("units"),
             t_pv=Sum("pageviews"),
@@ -137,7 +137,7 @@ def generate_charts_data_orm(qs, fk_qs, table_data=None):
         fk_trend = (
             fk_qs.values("date")
             .annotate(
-                revenue=Sum("taxable_value"),
+                revenue=Sum("revenue"),
                 total_spend=Sum("total_spend"),
                 pageviews=Sum("pageviews"),
                 orders=Sum("orders"),
@@ -233,4 +233,3 @@ def generate_charts_data_orm(qs, fk_qs, table_data=None):
             "legend": ad_legend,
         },
     }
-

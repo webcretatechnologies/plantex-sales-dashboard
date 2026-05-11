@@ -39,7 +39,7 @@ def generate_bi_data_orm(qs, fk_qs):
 
     if fk_qs is not None:
         agg_fk = fk_qs.values("fsn", "category", "portfolio").annotate(
-            revenue=Sum("taxable_value"),
+            revenue=Sum("revenue"),
             total_spend=Sum("total_spend"),
             orders=Sum("orders"),
             pageviews=Sum("pageviews"),
@@ -81,5 +81,4 @@ def generate_bi_data_orm(qs, fk_qs):
                 }
 
     return sorted(az_asins.values(), key=lambda x: x["revenue"], reverse=True)
-
 

@@ -215,6 +215,8 @@ async function loadDashboard() {
             status.textContent = '✅ All files processed successfully!';
             if (platform === 'amazon') {
                 setTimeout(() => { window.location.href = '/dashboard/business/'; }, 500);
+            } else if (platform === 'flipkart') {
+                setTimeout(() => { window.location.href = '/dashboard/business/?platform=Flipkart'; }, 500);
             }
         } else if (data.status === 'error') {
             btn.disabled = false;
@@ -331,6 +333,8 @@ async function loadDashboard() {
             status.textContent = '✅ All files processed successfully!';
             if (platform === 'amazon') {
                 setTimeout(() => { window.location.href = '/dashboard/business/'; }, 500);
+            } else if (platform === 'flipkart') {
+                setTimeout(() => { window.location.href = '/dashboard/business/?platform=Flipkart'; }, 500);
             }
         }
 
