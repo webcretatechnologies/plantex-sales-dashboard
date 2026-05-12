@@ -150,47 +150,64 @@ function updateProcessButton() {
 });
 
 // ---------------------------------------------------------------------------
-// Poll a Celery task until it resolves (max 6 minutes, with backoff)
+// Poll a Celery task until it resolves (configurable timeout, with backoff)
 // ---------------------------------------------------------------------------
 function pollTaskStatus(taskId) {
     return new Promise((resolve, reject) => {
-        let attempts = 0;
-        const MAX_ATTEMPTS = 240; // 240 × 1.5s = 6 minutes hard limit
+        const MAX_TIMEOUT_MS = Number(window.UPLOAD_TASK_TIMEOUT_MS) > 0
+            ? Number(window.UPLOAD_TASK_TIMEOUT_MS)
+            : 30 * 60 * 1000; // fallback: 30 minutes
+        const startedAt = Date.now();
         let delay = 1500;
+        let transientErrors = 0;
 
         const doCheck = async () => {
-            if (attempts >= MAX_ATTEMPTS) {
-                reject(new Error('Processing timed out after 6 minutes. The task may still be running in the background — please check back later.'));
+            const elapsed = Date.now() - startedAt;
+            if (elapsed >= MAX_TIMEOUT_MS) {
+                const minutes = Math.round(MAX_TIMEOUT_MS / 60000);
+                reject(new Error(`Processing timed out after ${minutes} minutes. The task may still be running in the background - please check back later.`));
                 return;
             }
-            attempts++;
+
             try {
                 const resp = await fetch(`/api/upload/status/${taskId}/`, {
                     credentials: 'same-origin',
                 });
 
                 if (!resp.ok) {
+                    if (resp.status >= 500) {
+                        delay = Math.min(delay * 1.2, 5000);
+                        setTimeout(doCheck, delay);
+                        return;
+                    }
                     reject(new Error(`Server error: HTTP ${resp.status}`));
                     return;
                 }
 
                 const data = await resp.json();
+                transientErrors = 0;
 
                 if (data.status === 'success') {
                     resolve(data);
                 } else if (data.status === 'error') {
                     reject(new Error(data.message || 'Processing failed'));
                 } else {
-                    // Still processing — schedule next check with slight back-off (max 4s)
+                    // Still processing - schedule next check with slight backoff (max 4s)
                     delay = Math.min(delay * 1.05, 4000);
                     setTimeout(doCheck, delay);
                 }
             } catch (err) {
-                reject(err);
+                transientErrors += 1;
+                if (transientErrors >= 5) {
+                    reject(new Error(`Network error while checking task status: ${err.message || err}`));
+                    return;
+                }
+                delay = Math.min(delay * 1.2, 5000);
+                setTimeout(doCheck, delay);
             }
         };
 
-        setTimeout(doCheck, delay);
+        doCheck();
     });
 }
 
