@@ -902,9 +902,15 @@ def process_fk_search_traffic(file_obj, user):
 def process_fk_category(file_obj, user):
     """
     Parse Flipkart Category Dashboard (.xlsx).
-    Supports both:
-    - FSN ID, SKU, Portfolio, Cat, Subcat
-    - FSN ID, SKU, Portfolio, Category, Sub Category, ... Product Status
+    Expected columns:
+    - FSN ID
+    - asin (optional; ignored)
+    - SKU
+    - Portfolio
+    - Category
+    - Sub Category
+    - Vertical (optional; ignored)
+    - Product Status (optional)
     """
     total_records = 0
     any_chunk = False
@@ -923,22 +929,26 @@ def process_fk_category(file_obj, user):
                     return col_lookup[normalized]
             return None
 
-        fsn_col = resolve_col("FSN ID", "FSN")
-        portfolio_col = resolve_col("Portfolio")
-        category_col = resolve_col("Cat", "Category")
-        subcategory_col = resolve_col("Subcat", "Sub Category", "Subcategory")
-        product_status_col = resolve_col("Product Status")
+        fsn_col = resolve_col("FSN ID")
+        _asin_col = resolve_col("asin", "ASIN")
         sku_col = resolve_col("SKU")
+        portfolio_col = resolve_col("Portfolio")
+        category_col = resolve_col("Category")
+        subcategory_col = resolve_col("Sub Category", "Subcategory")
+        _vertical_col = resolve_col("Vertical")
+        product_status_col = resolve_col("Product Status")
 
         missing = []
         if not fsn_col:
             missing.append("FSN ID")
+        if not sku_col:
+            missing.append("SKU")
         if not portfolio_col:
             missing.append("Portfolio")
         if not category_col:
-            missing.append("Category/Cat")
+            missing.append("Category")
         if not subcategory_col:
-            missing.append("Sub Category/Subcat")
+            missing.append("Sub Category")
         if missing:
             raise ValueError(f"FK Category missing columns: {', '.join(missing)}")
 
