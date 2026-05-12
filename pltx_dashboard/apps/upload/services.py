@@ -20,6 +20,7 @@ from apps.dashboard.models import (
     FlipkartProcessedDashboardData,
 )
 from django.db import connection
+from django.db.models import Sum
 
 
 def _get_upsert_kwargs(unique_fields, update_fields):
@@ -662,125 +663,192 @@ def process_flex_stock_file(file_obj, user, id_columns=("ASIN",)):
 # ---------------------------------------------------------------------------
 
 
-def generate_dashboard_data(user):
+def generate_dashboard_data(user, progress_callback=None):
     """
-    Merges all independent tables for the given user and dumps them into
+    Merges all independent Amazon tables for the given user and dumps them into
     ProcessedDashboardData to quickly serve the frontend.
+
+    This implementation avoids loading giant DataFrames in memory, which keeps
+    large historical uploads faster and more stable.
     """
+
+    def _notify(message):
+        if progress_callback:
+            try:
+                progress_callback(message)
+            except Exception:
+                pass
+
+    def _safe_float(value):
+        try:
+            return float(value or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _safe_int(value):
+        try:
+            return int(value or 0)
+        except (TypeError, ValueError):
+            return clean_number(value)
+
+    def _invalidate_dashboard_cache():
+        from django.core.cache import cache
+
+        data_version = cache.get(f"dashboard_data_version_{user.id}", 0)
+        cache.set(f"dashboard_data_version_{user.id}", data_version + 1, timeout=None)
+
+        for amz in (True, False):
+            for flp in (True, False):
+                cache.delete(f"dashboard_filters_{user.id}_{amz}_{flp}")
+
+    _notify("Refreshing dashboard aggregates...")
     ProcessedDashboardData.objects.filter(user=user).delete()
 
-    sales_qs = SalesData.objects.filter(user=user).values()
-    spend_qs = SpendData.objects.filter(user=user).values()
-    cat_qs = CategoryMapping.objects.filter(user=user).values()
-    price_qs = PriceData.objects.filter(user=user).values()
-
-    if not sales_qs and not spend_qs:
+    has_sales = SalesData.objects.filter(user=user).exists()
+    has_spend = SpendData.objects.filter(user=user).exists()
+    if not has_sales and not has_spend:
+        _invalidate_dashboard_cache()
         return
 
-    df_sales = pd.DataFrame(list(sales_qs))
-    if not df_sales.empty:
-        df_sales = df_sales[["date", "asin", "pageviews", "units", "orders", "revenue"]]
-    else:
-        df_sales = pd.DataFrame(
-            columns=["date", "asin", "pageviews", "units", "orders", "revenue"]
+    _notify("Loading category and price mappings...")
+    category_by_asin = {}
+    for row in CategoryMapping.objects.filter(user=user).values(
+        "asin", "portfolio", "category", "subcategory"
+    ).iterator(chunk_size=DB_BATCH_SIZE):
+        asin = str(row.get("asin") or "").strip()
+        if not asin:
+            continue
+        category_by_asin[asin] = (
+            str(row.get("portfolio") or ""),
+            str(row.get("category") or ""),
+            str(row.get("subcategory") or ""),
         )
 
-    df_spend = pd.DataFrame(list(spend_qs))
-    if not df_spend.empty:
-        df_spend = (
-            df_spend.groupby(["date", "asin", "ad_type"])["spend"]
-            .sum()
-            .unstack("ad_type")
-            .reset_index()
-            .fillna(0)
+    price_by_asin = {}
+    for row in PriceData.objects.filter(user=user).values("asin", "price").iterator(
+        chunk_size=DB_BATCH_SIZE
+    ):
+        asin = str(row.get("asin") or "").strip()
+        if not asin:
+            continue
+        price_by_asin[asin] = _safe_float(row.get("price"))
+
+    _notify("Aggregating ad spend...")
+    spend_by_key = {}
+    spend_rows = (
+        SpendData.objects.filter(user=user)
+        .values("date", "asin", "ad_type")
+        .annotate(spend_total=Sum("spend"))
+        .iterator(chunk_size=DB_BATCH_SIZE)
+    )
+    for row in spend_rows:
+        date = row.get("date")
+        asin = str(row.get("asin") or "").strip()
+        if not date or not asin:
+            continue
+
+        key = (date, asin)
+        bucket = spend_by_key.setdefault(
+            key, {"spend_sp": 0.0, "spend_sb": 0.0, "spend_sd": 0.0}
         )
-        col_map = {
-            c: f"spend_{str(c).lower()}"
-            for c in df_spend.columns
-            if c not in ("date", "asin")
-        }
-        df_spend.rename(columns=col_map, inplace=True)
-    else:
-        df_spend = pd.DataFrame(columns=["date", "asin"])
+        spend_total = _safe_float(row.get("spend_total"))
+        ad_type = str(row.get("ad_type") or "").strip().upper()
+        if ad_type == "SP":
+            bucket["spend_sp"] += spend_total
+        elif ad_type == "SB":
+            bucket["spend_sb"] += spend_total
+        elif ad_type == "SD":
+            bucket["spend_sd"] += spend_total
 
-    df_cat = pd.DataFrame(list(cat_qs))
-    if df_cat.empty:
-        df_cat = pd.DataFrame(columns=["asin", "portfolio", "category", "subcategory"])
-    else:
-        df_cat = df_cat[["asin", "portfolio", "category", "subcategory"]]
-
-    df_price = pd.DataFrame(list(price_qs))
-    if df_price.empty:
-        df_price = pd.DataFrame(columns=["asin", "price"])
-    else:
-        df_price = df_price[["asin", "price"]]
-
-    df_merged = pd.merge(df_sales, df_spend, on=["date", "asin"], how="outer")
-    df_merged = pd.merge(df_merged, df_cat, on="asin", how="left")
-    df_merged = pd.merge(df_merged, df_price, on="asin", how="left")
-
-    fill_values = {
-        "portfolio": "",
-        "category": "",
-        "subcategory": "",
-        "price": 0.0,
-        "pageviews": 0,
-        "units": 0,
-        "orders": 0,
-        "revenue": 0.0,
-        "spend_sp": 0.0,
-        "spend_sb": 0.0,
-        "spend_sd": 0.0,
-    }
-    for col, fill_val in fill_values.items():
-        if col in df_merged.columns:
-            df_merged[col] = df_merged[col].fillna(fill_val)
-
+    _notify("Building processed dashboard rows...")
     records = []
-    batch_size = 10_000
-    
-    for row in df_merged.itertuples(index=False):
-        spend_sp = float(getattr(row, "spend_sp", 0))
-        spend_sb = float(getattr(row, "spend_sb", 0))
-        spend_sd = float(getattr(row, "spend_sd", 0))
+    total_rows = 0
+
+    sales_rows = SalesData.objects.filter(user=user).values(
+        "date", "asin", "pageviews", "units", "orders", "revenue"
+    ).iterator(chunk_size=DB_BATCH_SIZE)
+
+    for row in sales_rows:
+        date = row.get("date")
+        asin = str(row.get("asin") or "").strip()
+        if not date or not asin:
+            continue
+
+        spend_payload = spend_by_key.pop((date, asin), None)
+        spend_sp = _safe_float(spend_payload.get("spend_sp")) if spend_payload else 0.0
+        spend_sb = _safe_float(spend_payload.get("spend_sb")) if spend_payload else 0.0
+        spend_sd = _safe_float(spend_payload.get("spend_sd")) if spend_payload else 0.0
         total_spend = spend_sp + spend_sb + spend_sd
+
+        portfolio, category, subcategory = category_by_asin.get(asin, ("", "", ""))
+        price = _safe_float(price_by_asin.get(asin, 0.0))
 
         records.append(
             ProcessedDashboardData(
                 user=user,
-                date=getattr(row, "date"),
-                asin=getattr(row, "asin"),
-                portfolio=str(getattr(row, "portfolio", "")) or "",
-                category=str(getattr(row, "category", "")) or "",
-                subcategory=str(getattr(row, "subcategory", "")) or "",
-                price=float(getattr(row, "price", 0)),
-                pageviews=clean_number(str(getattr(row, "pageviews", 0))),
-                units=clean_number(str(getattr(row, "units", 0))),
-                orders=clean_number(str(getattr(row, "orders", 0))),
-                revenue=float(getattr(row, "revenue", 0)),
+                date=date,
+                asin=asin,
+                portfolio=portfolio,
+                category=category,
+                subcategory=subcategory,
+                price=price,
+                pageviews=_safe_int(row.get("pageviews")),
+                units=_safe_int(row.get("units")),
+                orders=_safe_int(row.get("orders")),
+                revenue=_safe_float(row.get("revenue")),
                 spend_sp=spend_sp,
                 spend_sb=spend_sb,
                 spend_sd=spend_sd,
                 total_spend=total_spend,
             )
         )
-        
-        if len(records) >= batch_size:
+        total_rows += 1
+
+        if len(records) >= DB_BATCH_SIZE:
             ProcessedDashboardData.objects.bulk_create(records, ignore_conflicts=True)
             records = []
-            
+
+    # Keep spend-only rows (outer-join behavior).
+    for (date, asin), spend_payload in spend_by_key.items():
+        if not date or not asin:
+            continue
+        spend_sp = _safe_float(spend_payload.get("spend_sp"))
+        spend_sb = _safe_float(spend_payload.get("spend_sb"))
+        spend_sd = _safe_float(spend_payload.get("spend_sd"))
+        total_spend = spend_sp + spend_sb + spend_sd
+        portfolio, category, subcategory = category_by_asin.get(asin, ("", "", ""))
+        price = _safe_float(price_by_asin.get(asin, 0.0))
+
+        records.append(
+            ProcessedDashboardData(
+                user=user,
+                date=date,
+                asin=asin,
+                portfolio=portfolio,
+                category=category,
+                subcategory=subcategory,
+                price=price,
+                pageviews=0,
+                units=0,
+                orders=0,
+                revenue=0.0,
+                spend_sp=spend_sp,
+                spend_sb=spend_sb,
+                spend_sd=spend_sd,
+                total_spend=total_spend,
+            )
+        )
+        total_rows += 1
+
+        if len(records) >= DB_BATCH_SIZE:
+            ProcessedDashboardData.objects.bulk_create(records, ignore_conflicts=True)
+            records = []
+
     if records:
         ProcessedDashboardData.objects.bulk_create(records, ignore_conflicts=True)
-    
-    from django.core.cache import cache
-    
-    # Increment dashboard data version for caching
-    data_version = cache.get(f"dashboard_data_version_{user.id}", 0)
-    cache.set(f"dashboard_data_version_{user.id}", data_version + 1, timeout=None)
-    
-    for amz in (True, False):
-        for flp in (True, False):
-            cache.delete(f"dashboard_filters_{user.id}_{amz}_{flp}")
+
+    _notify(f"Processed {total_rows} dashboard rows.")
+    _invalidate_dashboard_cache()
 
 
 # ===========================================================================

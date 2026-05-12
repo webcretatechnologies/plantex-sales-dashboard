@@ -5,6 +5,7 @@ from copy import deepcopy
 from io import BytesIO, StringIO
 
 import pandas as pd
+from django.conf import settings
 from django.http import FileResponse, JsonResponse
 from django.shortcuts import render, redirect
 
@@ -371,6 +372,10 @@ def upload_view(request):
         "uploaded_by"
     )[:100]
 
+    upload_task_timeout_seconds = int(
+        getattr(settings, "UPLOAD_TASK_TIMEOUT_SECONDS", 1800)
+    )
+
     return render(
         request,
         "dashboard/upload.html",
@@ -380,6 +385,7 @@ def upload_view(request):
             "upload_logs": upload_logs,
             "payload_json": "null",
             "selected_filters_json": "{}",
+            "upload_task_timeout_ms": max(upload_task_timeout_seconds, 60) * 1000,
         },
     )
 

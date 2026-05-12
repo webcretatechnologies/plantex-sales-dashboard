@@ -173,6 +173,10 @@ def process_upload_file_task(
 
         if is_last:
             _send_ws(user_id, "Generating final dashboard data...", "processing")
+
+            def _dashboard_progress(message):
+                _send_ws(user_id, message, "processing")
+
             if is_flipkart:
                 from apps.dashboard.models import (
                     FBAStockData,
@@ -200,7 +204,9 @@ def process_upload_file_task(
                     )
                 generate_flipkart_dashboard_data(data_owner)
             else:
-                generate_dashboard_data(data_owner)
+                generate_dashboard_data(
+                    data_owner, progress_callback=_dashboard_progress
+                )
             _send_ws(user_id, "All files processed successfully!", "complete")
         else:
             _send_ws(user_id, f"{file_type} processed successfully.", "partial")
