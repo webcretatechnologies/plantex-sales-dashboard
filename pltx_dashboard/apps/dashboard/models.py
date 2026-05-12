@@ -204,21 +204,6 @@ class FlipkartPrice(models.Model):
         unique_together = ("user", "fsn")
 
 
-class FlipkartPCA(models.Model):
-    """PCA Attribution — maps FSN → campaign_id (for spend join)."""
-
-    user = models.ForeignKey(
-        "accounts.Users", on_delete=models.CASCADE, related_name="fk_pca_reports"
-    )
-    campaign_id = models.CharField(max_length=100, db_index=True)
-    campaign_name = models.CharField(max_length=255, null=True, blank=True)
-    date = models.DateField(db_index=True, null=True, blank=True)
-    fsn_id = models.CharField(max_length=100, db_index=True)
-
-    class Meta:
-        unique_together = ("user", "campaign_id", "fsn_id", "date")
-
-
 class FlipkartPLA(models.Model):
     """PLA FSN Report — campaign_id + FSN → Ad Spend."""
 
@@ -232,36 +217,6 @@ class FlipkartPLA(models.Model):
 
     class Meta:
         unique_together = ("user", "campaign_id", "fsn_id", "date")
-
-
-class FlipkartSalesInvoice(models.Model):
-    """Cash Back Report sheet — taxable value & invoice amount per order item."""
-
-    user = models.ForeignKey(
-        "accounts.Users", on_delete=models.CASCADE, related_name="fk_sales_invoices"
-    )
-    order_id = models.CharField(max_length=100, db_index=True)
-    order_item_id = models.CharField(max_length=100, db_index=True)
-    fsn = models.CharField(max_length=100, db_index=True, null=True, blank=True)
-    item_quantity = models.IntegerField(default=0)
-    taxable_value = models.FloatField(default=0.0)
-    invoice_amount = models.FloatField(default=0.0)
-
-    class Meta:
-        unique_together = ("user", "order_id", "order_item_id")
-
-
-class FlipkartCoupon(models.Model):
-    """Coupon Value Report — coupon value per FSN."""
-
-    user = models.ForeignKey(
-        "accounts.Users", on_delete=models.CASCADE, related_name="fk_coupon_data"
-    )
-    fsn = models.CharField(max_length=50, db_index=True)
-    coupon_value = models.FloatField(default=0.0)
-
-    class Meta:
-        unique_together = ("user", "fsn")
 
 
 class FlipkartProcessedDashboardData(models.Model):
@@ -291,11 +246,6 @@ class FlipkartProcessedDashboardData(models.Model):
     )  # not split for Flipkart; all in total_spend
     spend_sb = models.FloatField(default=0.0)
     spend_sd = models.FloatField(default=0.0)
-
-    taxable_value = models.FloatField(default=0.0)
-    invoice_amount = models.FloatField(default=0.0)
-    coupon_total = models.FloatField(default=0.0)
-    coupon_error = models.BooleanField(default=False)
 
     class Meta:
         unique_together = ("user", "date", "fsn")
