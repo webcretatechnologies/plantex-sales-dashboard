@@ -260,30 +260,24 @@ async function loadDashboard() {
                 { inputId: 'fkFlexStockFile',     type: 'fk_flex_stock' },
             ];
 
-            const fkFbaFiles = document.getElementById('fkFbaStockFile')?.files || [];
-            const fkFlexFiles = document.getElementById('fkFlexStockFile')?.files || [];
-            if (fkFbaFiles.length === 0 || fkFlexFiles.length === 0) {
-                alert("Please upload both Flipkart FBA Stock and Flipkart Flex Stock files.");
+            const missingFlipkartInputs = fkFileMap.filter(m => {
+                const el = document.getElementById(m.inputId);
+                return !el || !el.files || el.files.length === 0;
+            });
+            if (missingFlipkartInputs.length > 0) {
+                alert("Please upload all Flipkart required files: Search Traffic, Category, PLA, Price, FBA Stock, and Flex Stock.");
                 btn.disabled = false;
                 return;
             }
 
-            let totalFk = 0;
             fkFileMap.forEach(m => {
                 let el = document.getElementById(m.inputId);
                 if (el) {
                     for (let i = 0; i < el.files.length; i++) {
                         fileQueue.push({ file: el.files[i], type: m.type });
-                        totalFk++;
                     }
                 }
             });
-
-            if (totalFk === 0) {
-                alert("Please upload at least one Flipkart report!");
-                btn.disabled = false;
-                return;
-            }
         }
 
         let totalFiles = fileQueue.length;

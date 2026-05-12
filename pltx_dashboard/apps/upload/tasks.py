@@ -180,14 +180,16 @@ def process_upload_file_task(
                     FlipkartCategoryMap,
                     FlipkartSearchTraffic,
                     FlipkartPLA,
+                    FlipkartPrice,
                 )
 
                 has_fk_category = FlipkartCategoryMap.objects.filter(user=data_owner).exists()
                 has_fk_traffic = FlipkartSearchTraffic.objects.filter(user=data_owner).exists()
                 has_fk_pla = FlipkartPLA.objects.filter(user=data_owner).exists()
-                if not (has_fk_category and has_fk_traffic and has_fk_pla):
+                has_fk_price = FlipkartPrice.objects.filter(user=data_owner).exists()
+                if not (has_fk_category and has_fk_traffic and has_fk_pla and has_fk_price):
                     raise ValueError(
-                        "Flipkart requires Category, Search Traffic, and PLA reports."
+                        "Flipkart requires Search Traffic, Category, PLA, and Price reports."
                     )
 
                 has_fba_stock = FBAStockData.objects.filter(user=data_owner).exists()

@@ -910,27 +910,41 @@ def process_fk_category(file_obj, user):
     any_chunk = False
     for df in iter_file_chunks(file_obj):
         any_chunk = True
-        category_col = "Cat" if "Cat" in df.columns else "Category" if "Category" in df.columns else None
-        subcategory_col = (
-            "Subcat"
-            if "Subcat" in df.columns
-            else "Sub Category"
-            if "Sub Category" in df.columns
-            else None
-        )
-        product_status_col = "Product Status" if "Product Status" in df.columns else None
+        col_lookup = {}
+        for original_col in df.columns:
+            normalized = re.sub(r"[^a-z0-9]+", "", str(original_col).strip().lower())
+            if normalized and normalized not in col_lookup:
+                col_lookup[normalized] = original_col
 
-        required_cols = ["FSN ID", "Portfolio", category_col, subcategory_col]
-        missing = [c for c in required_cols if not c]
+        def resolve_col(*aliases):
+            for alias in aliases:
+                normalized = re.sub(r"[^a-z0-9]+", "", alias.strip().lower())
+                if normalized in col_lookup:
+                    return col_lookup[normalized]
+            return None
+
+        fsn_col = resolve_col("FSN ID", "FSN")
+        portfolio_col = resolve_col("Portfolio")
+        category_col = resolve_col("Cat", "Category")
+        subcategory_col = resolve_col("Subcat", "Sub Category", "Subcategory")
+        product_status_col = resolve_col("Product Status")
+        sku_col = resolve_col("SKU")
+
+        missing = []
+        if not fsn_col:
+            missing.append("FSN ID")
+        if not portfolio_col:
+            missing.append("Portfolio")
+        if not category_col:
+            missing.append("Category/Cat")
+        if not subcategory_col:
+            missing.append("Sub Category/Subcat")
         if missing:
-            raise ValueError(
-                "FK Category missing required columns: FSN ID, Portfolio, "
-                "Category/Cat, Sub Category/Subcat."
-            )
+            raise ValueError(f"FK Category missing columns: {', '.join(missing)}")
 
         records = []
         for row in df.to_dict("records"):
-            fsn = str(row.get("FSN ID", "")).strip()
+            fsn = str(row.get(fsn_col, "")).strip()
             if not fsn or fsn.lower() == "nan":
                 continue
 
@@ -950,8 +964,8 @@ def process_fk_category(file_obj, user):
                 FlipkartCategoryMap(
                     user=user,
                     fsn=fsn,
-                    sku=str(row.get("SKU", "") or "").strip(),
-                    portfolio=str(row.get("Portfolio", "") or "").strip(),
+                    sku=str(row.get(sku_col, "") or "").strip() if sku_col else "",
+                    portfolio=str(row.get(portfolio_col, "") or "").strip(),
                     category=str(row.get(category_col, "") or "").strip(),
                     subcategory=str(row.get(subcategory_col, "") or "").strip(),
                     product_status=normalized_status,
@@ -1231,10 +1245,6 @@ def generate_flipkart_dashboard_data(user):
                 spend_sp=0.0,
                 spend_sb=0.0,
                 spend_sd=0.0,
-                taxable_value=0.0,
-                invoice_amount=0.0,
-                coupon_total=0.0,
-                coupon_error=False,
             )
         )
         if len(records) >= batch_size:
