@@ -585,34 +585,19 @@
                 <div id="fkPlaNewFileList" class="file-list"></div>
             </div>
 
-            <!-- FK FBA Stock Card -->
+            <!-- FK Inventory File Card -->
             <div class="upload-card flipkart-card">
                 <div class="upload-card-title">
                     <span class="material-icons-round">inventory</span>
-                    FBA Stock File
+                    FK Inventory File
                 </div>
-                <label class="modern-dropzone" for="fkFbaStockFile">
+                <label class="modern-dropzone" for="fkInventoryFile">
                     <div class="material-icons-round drop-icon">cloud_upload</div>
-                    <div class="drop-text">Drag & drop Flipkart FBA Stock file here</div>
-                    <div class="drop-subtext">Required with Flex Stock for Inventory Health</div>
-                    <input type="file" id="fkFbaStockFile" accept=".csv,.xlsx,.xls" multiple style="display:none">
+                    <div class="drop-text">Drag & drop FK Inventory file here (FK.xlsx)</div>
+                    <div class="drop-subtext">Required columns: PRODUCTS STATUS / PRODUCTS TYPE / SKU / FSN / Qty</div>
+                    <input type="file" id="fkInventoryFile" accept=".csv,.xlsx,.xls" multiple style="display:none">
                 </label>
-                <div id="fkFbaStockFileList" class="file-list"></div>
-            </div>
-
-            <!-- FK Flex Stock Card -->
-            <div class="upload-card flipkart-card">
-                <div class="upload-card-title">
-                    <span class="material-icons-round">local_shipping</span>
-                    Flex Stock File
-                </div>
-                <label class="modern-dropzone" for="fkFlexStockFile">
-                    <div class="material-icons-round drop-icon">cloud_upload</div>
-                    <div class="drop-text">Drag & drop Flipkart Flex Stock file here</div>
-                    <div class="drop-subtext">Required with FBA Stock for Inventory Health</div>
-                    <input type="file" id="fkFlexStockFile" accept=".csv,.xlsx,.xls" multiple style="display:none">
-                </label>
-                <div id="fkFlexStockFileList" class="file-list"></div>
+                <div id="fkInventoryFileList" class="file-list"></div>
             </div>
         </div>
     </div>

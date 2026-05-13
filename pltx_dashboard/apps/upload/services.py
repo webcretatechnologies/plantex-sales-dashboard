@@ -17,6 +17,7 @@ from apps.dashboard.models import (
     FlipkartCategoryMap,
     FlipkartPrice,
     FlipkartPLA,
+    FlipkartInventoryStock,
     FlipkartProcessedDashboardData,
 )
 from django.db import connection
@@ -656,6 +657,74 @@ def process_flex_stock_file(file_obj, user, id_columns=("ASIN",)):
 
     print(f"[FlexStockData] Processed {total_records} records.")
 
+
+# ---------------------------------------------------------------------------
+# FK Inventory Stock (FK.xlsx)
+# ---------------------------------------------------------------------------
+
+
+def process_fk_inventory_file(file_obj, user):
+    """
+    Parse FK Inventory file (FK.xlsx).
+    Required columns: PRODUCTS STATUS, PRODUCTS TYPE, SKU, FSN, Qty.
+    """
+    required_cols = ["FSN", "Qty"]
+    any_chunk = False
+    for df in iter_file_chunks(file_obj):
+        any_chunk = True
+        col_lookup = {}
+        for c in df.columns:
+            key = str(c).replace("\ufeff", "").strip().lower()
+            if key and key not in col_lookup:
+                col_lookup[key] = c
+
+        missing_cols = [c for c in required_cols if c.lower() not in col_lookup]
+        if missing_cols:
+            raise ValueError(
+                f"FK Inventory file missing required columns: {', '.join(missing_cols)}"
+            )
+
+        records = []
+        for row in df.to_dict("records"):
+            fsn = str(row.get(col_lookup.get("fsn", "FSN"), "")).strip()
+            if not fsn or fsn.lower() == "nan":
+                continue
+
+            sku = str(row.get(col_lookup.get("sku", "SKU"), "") or "").strip()
+            product_status = str(
+                row.get(col_lookup.get("products status", "PRODUCTS STATUS"), "") or ""
+            ).strip()
+            product_type = str(
+                row.get(col_lookup.get("products type", "PRODUCTS TYPE"), "") or ""
+            ).strip()
+            qty = clean_number(row.get(col_lookup.get("qty", "Qty"), 0))
+
+            records.append(
+                FlipkartInventoryStock(
+                    user=user,
+                    fsn=fsn,
+                    sku=sku if sku.lower() != "nan" else "",
+                    product_status=product_status if product_status.lower() != "nan" else "",
+                    product_type=product_type if product_type.lower() != "nan" else "",
+                    qty=qty,
+                )
+            )
+
+        if records:
+            for i in range(0, len(records), DB_BATCH_SIZE):
+                FlipkartInventoryStock.objects.bulk_create(
+                    records[i : i + DB_BATCH_SIZE],
+                    **_get_upsert_kwargs(
+                        unique_fields=["user", "fsn"],
+                        update_fields=["sku", "product_status", "product_type", "qty"],
+                    ),
+                )
+
+    if not any_chunk:
+        raise ValueError("FK Inventory file is empty.")
+
+    total = FlipkartInventoryStock.objects.filter(user=user).count()
+    print(f"[FlipkartInventoryStock] Processed. Total records for user: {total}")
 
 
 # ---------------------------------------------------------------------------

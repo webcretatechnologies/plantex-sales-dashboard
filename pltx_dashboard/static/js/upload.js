@@ -35,11 +35,11 @@ const AMAZON_LISTS = ['fileList', 'catFileList', 'spendFileList', 'priceFileList
 
 const FK_IDS = [
     'fkSearchTrafficFile', 'fkCategoryFile', 'fkPriceFile',
-    'fkPlaNewFile', 'fkFbaStockFile', 'fkFlexStockFile'
+    'fkPlaNewFile', 'fkInventoryFile'
 ];
 const FK_LISTS = [
     'fkSearchTrafficFileList', 'fkCategoryFileList', 'fkPriceFileList',
-    'fkPlaNewFileList', 'fkFbaStockFileList', 'fkFlexStockFileList'
+    'fkPlaNewFileList', 'fkInventoryFileList'
 ];
 
 const DEMO_TEMPLATE_MAP = {
@@ -53,8 +53,7 @@ const DEMO_TEMPLATE_MAP = {
     fkCategoryFile: 'fk_category',
     fkPriceFile: 'fk_price',
     fkPlaNewFile: 'fk_pla',
-    fkFbaStockFile: 'fk_fba_stock',
-    fkFlexStockFile: 'fk_flex_stock',
+    fkInventoryFile: 'fk_inventory',
 };
 
 function initDemoTemplateButtons() {
@@ -132,8 +131,7 @@ function updateProcessButton() {
     { id: 'fkCategoryFile', listId: 'fkCategoryFileList' },
     { id: 'fkPriceFile', listId: 'fkPriceFileList' },
     { id: 'fkPlaNewFile', listId: 'fkPlaNewFileList' },
-    { id: 'fkFbaStockFile', listId: 'fkFbaStockFileList' },
-    { id: 'fkFlexStockFile', listId: 'fkFlexStockFileList' },
+    { id: 'fkInventoryFile', listId: 'fkInventoryFileList' },
     // Amazon stock files
     { id: 'fbaStockFile', listId: 'fbaStockFileList' },
     { id: 'flexStockFile', listId: 'flexStockFileList' },
@@ -273,8 +271,7 @@ async function loadDashboard() {
                 { inputId: 'fkCategoryFile',      type: 'fk_category' },
                 { inputId: 'fkPriceFile',         type: 'fk_price' },
                 { inputId: 'fkPlaNewFile',        type: 'fk_pla' },
-                { inputId: 'fkFbaStockFile',      type: 'fk_fba_stock' },
-                { inputId: 'fkFlexStockFile',     type: 'fk_flex_stock' },
+                { inputId: 'fkInventoryFile',     type: 'fk_inventory' },
             ];
 
             const missingFlipkartInputs = fkFileMap.filter(m => {
@@ -282,7 +279,7 @@ async function loadDashboard() {
                 return !el || !el.files || el.files.length === 0;
             });
             if (missingFlipkartInputs.length > 0) {
-                alert("Please upload all Flipkart required files: Search Traffic, Category, PLA, Price, FBA Stock, and Flex Stock.");
+                alert("Please upload all Flipkart required files: Search Traffic, Category, PLA, Price, and FK Inventory.");
                 btn.disabled = false;
                 return;
             }
