@@ -1,9 +1,10 @@
 import os
 import logging
 import csv
-
+from datetime import datetime
 from openpyxl import load_workbook
 from celery import shared_task
+from celery.exceptions import SoftTimeLimitExceeded
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 
@@ -118,6 +119,7 @@ def process_upload_file_task(
     try:
         data_owner = Users.objects.get(pk=data_owner_id)
         files_to_cleanup = [file_path]
+        sales_date_obj = None
         upload_log = None
         if upload_log_id:
             upload_log = UploadLog.objects.filter(pk=upload_log_id).first()
@@ -125,6 +127,9 @@ def process_upload_file_task(
                 upload_log.status = UploadLog.STATUS_PROCESSING
                 upload_log.message = "Processing started."
                 upload_log.save(update_fields=["status", "message", "updated_at"])
+        
+        def _dashboard_progress(message):
+            _send_ws(user_id, message, "processing")
 
         processing_path = _convert_excel_to_csv_if_possible(file_path, file_type)
         if processing_path != file_path:
@@ -140,6 +145,7 @@ def process_upload_file_task(
                 process_spend_file(fh, data_owner)
             elif file_type == "sales":
                 process_sales_file(fh, date_str, data_owner)
+                sales_date_obj = datetime.strptime(date_str, "%d-%m-%Y").date()
             elif file_type == "fba_stock":
                 process_fba_stock_file(fh, data_owner)
             elif file_type == "flex_stock":
@@ -173,6 +179,21 @@ def process_upload_file_task(
                 os.remove(path)
             except OSError:
                 pass
+
+        # Fast path for high-volume sales uploads:
+        # Rebuild only the affected day instead of full user history.
+        if file_type == "sales" and sales_date_obj and not is_flipkart:
+            _send_ws(
+                user_id,
+                f"Refreshing dashboard for {sales_date_obj.isoformat()}...",
+                "processing",
+            )
+            generate_dashboard_data(
+                data_owner,
+                progress_callback=_dashboard_progress,
+                only_dates=[sales_date_obj],
+            )
+
 
         if is_last:
             _send_ws(user_id, "Generating final dashboard data...", "processing")
@@ -208,6 +229,9 @@ def process_upload_file_task(
                         "Flipkart requires either an FK Inventory file (FK.xlsx) or both FBA Stock and Flex Stock uploads."
                     )
                 generate_flipkart_dashboard_data(data_owner)
+            elif file_type == "sales" and sales_date_obj:
+                # Sales already refreshed incrementally above.
+                pass
             else:
                 generate_dashboard_data(
                     data_owner, progress_callback=_dashboard_progress
@@ -226,6 +250,27 @@ def process_upload_file_task(
             "file_type": file_type,
             "is_last": is_last,
         }
+    except SoftTimeLimitExceeded:
+        message = "Upload processing timed out. Please retry in smaller batches."
+        logger.exception("[UploadTask] Soft time limit exceeded for %s", file_type)
+        _send_ws(user_id, message, "error")
+
+        if upload_log_id:
+            try:
+                upload_log = UploadLog.objects.filter(pk=upload_log_id).first()
+                if upload_log:
+                    upload_log.status = UploadLog.STATUS_ERROR
+                    upload_log.message = message
+                    upload_log.save(update_fields=["status", "message", "updated_at"])
+            except Exception:
+                logger.exception("[UploadTask] Failed updating timeout status.")
+
+        return {
+            "status": "error",
+            "file_type": file_type,
+            "message": message,
+        }
+
 
     except Exception as exc:
         logger.exception("[UploadTask] Error processing %s: %s", file_type, exc)

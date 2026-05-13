@@ -140,15 +140,21 @@ class FileUploadView(APIView):
 
         # Dispatch Celery task
         try:
-            task = process_upload_file_task.delay(
-                file_path=file_path,
-                file_type=file_type,
-                user_id=user.id,
-                data_owner_id=data_owner.id,
-                upload_log_id=upload_log.id,
-                date_str=date_str,
-                is_last=is_last,
-                is_flipkart=is_flipkart,
+            timeout = max(getattr(settings, "UPLOAD_TASK_TIMEOUT_SECONDS", 1800), 60)
+            soft_timeout = max(timeout - 30, 60)
+            task = process_upload_file_task.apply_async(
+                kwargs={
+                    "file_path": file_path,
+                    "file_type": file_type,
+                    "user_id": user.id,
+                    "data_owner_id": data_owner.id,
+                    "upload_log_id": upload_log.id,
+                    "date_str": date_str,
+                    "is_last": is_last,
+                    "is_flipkart": is_flipkart,
+                },
+                time_limit=timeout,
+                soft_time_limit=soft_timeout,
             )
         except Exception as exc:
             try:
