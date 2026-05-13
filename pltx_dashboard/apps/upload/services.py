@@ -770,11 +770,31 @@ def generate_dashboard_data(user, progress_callback=None):
             for flp in (True, False):
                 cache.delete(f"dashboard_filters_{user.id}_{amz}_{flp}")
 
-    _notify("Refreshing dashboard aggregates...")
-    ProcessedDashboardData.objects.filter(user=user).delete()
+    target_dates = set()
+    if only_dates:
+        for value in only_dates:
+            if isinstance(value, datetime.datetime):
+                target_dates.add(value.date())
+            elif isinstance(value, datetime.date):
+                target_dates.add(value)
 
-    has_sales = SalesData.objects.filter(user=user).exists()
-    has_spend = SpendData.objects.filter(user=user).exists()
+    if target_dates:
+        _notify("Refreshing dashboard aggregates for selected dates...")
+    else:
+        _notify("Refreshing dashboard aggregates...")
+
+    processed_qs = ProcessedDashboardData.objects.filter(user=user)
+    sales_qs = SalesData.objects.filter(user=user)
+    spend_qs = SpendData.objects.filter(user=user)
+    if target_dates:
+        processed_qs = processed_qs.filter(date__in=target_dates)
+        sales_qs = sales_qs.filter(date__in=target_dates)
+        spend_qs = spend_qs.filter(date__in=target_dates)
+
+    processed_qs.delete()
+
+    has_sales = sales_qs.exists()
+    has_spend = spend_qs.exists()
     if not has_sales and not has_spend:
         _invalidate_dashboard_cache()
         return
@@ -805,8 +825,7 @@ def generate_dashboard_data(user, progress_callback=None):
     _notify("Aggregating ad spend...")
     spend_by_key = {}
     spend_rows = (
-        SpendData.objects.filter(user=user)
-        .values("date", "asin", "ad_type")
+        spend_qs.values("date", "asin", "ad_type")
         .annotate(spend_total=Sum("spend"))
         .iterator(chunk_size=DB_BATCH_SIZE)
     )
@@ -833,7 +852,7 @@ def generate_dashboard_data(user, progress_callback=None):
     records = []
     total_rows = 0
 
-    sales_rows = SalesData.objects.filter(user=user).values(
+    sales_rows = sales_qs.values(
         "date", "asin", "pageviews", "units", "orders", "revenue"
     ).iterator(chunk_size=DB_BATCH_SIZE)
 
