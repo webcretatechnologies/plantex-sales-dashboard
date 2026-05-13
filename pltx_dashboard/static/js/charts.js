@@ -140,6 +140,13 @@ function _invVisibleRows(tbody) {
     });
 }
 
+/** Return ALL non-empty rows regardless of visibility (for download). */
+function _invAllRows(tbody) {
+    return Array.from(tbody.querySelectorAll('tr')).filter(function (row) {
+        return !row.querySelector('.empty');
+    });
+}
+
 function initInventoryHealthModals() {
     var modals = document.querySelectorAll('.inventory-health-modal');
     modals.forEach(function (modal) {
@@ -154,26 +161,15 @@ function initInventoryHealthModals() {
             return !row.querySelector('.empty');
         });
 
+
         var searchInput = modal.querySelector('.inv-health-search');
-        if (searchInput) {
-            searchInput.addEventListener('input', function (e) {
-                var q = String(e.target.value || '').toLowerCase().trim();
-                allRows.forEach(function (row) {
-                    if (!q) {
-                        row.style.display = '';
-                        return;
-                    }
-                    var match = _invCellText(row).toLowerCase().indexOf(q) !== -1;
-                    row.style.display = match ? '' : 'none';
-                });
-            });
-        }
+
 
         modal.querySelectorAll('.inv-health-download').forEach(function (btn) {
             btn.addEventListener('click', function () {
                 var format = btn.getAttribute('data-format');
                 var headers = Array.from(table.querySelectorAll('thead th')).map(_invCellText);
-                var rows = _invVisibleRows(tbody).map(function (row) {
+                var rows = _invAllRows(tbody).map(function (row) {
                     return Array.from(row.querySelectorAll('td')).map(_invCellText);
                 });
                 var stamp = new Date().toISOString().slice(0, 10);
@@ -198,6 +194,33 @@ function initInventoryHealthModals() {
                 }
             });
         });
+
+        // Limit modal display to first 100 rows; rest stay in DOM for download
+        var INV_MODAL_DISPLAY_LIMIT = 100;
+        if (allRows.length > INV_MODAL_DISPLAY_LIMIT) {
+            allRows.forEach(function (row, idx) {
+                if (idx >= INV_MODAL_DISPLAY_LIMIT) row.style.display = 'none';
+            });
+        }
+
+        // Override search to also respect display limit
+        if (searchInput) {
+            searchInput.addEventListener('input', function (e) {
+                var q = String(e.target.value || '').toLowerCase().trim();
+                if (!q) {
+                    // Reset: show first 100 only
+                    allRows.forEach(function (row, idx) {
+                        row.style.display = idx < INV_MODAL_DISPLAY_LIMIT ? '' : 'none';
+                    });
+                } else {
+                    // Search: show all matching (no limit)
+                    allRows.forEach(function (row) {
+                        var match = _invCellText(row).toLowerCase().indexOf(q) !== -1;
+                        row.style.display = match ? '' : 'none';
+                    });
+                }
+            });
+        }
     });
 }
 

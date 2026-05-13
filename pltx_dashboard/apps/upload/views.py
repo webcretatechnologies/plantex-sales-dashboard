@@ -22,6 +22,7 @@ FK_FILE_TYPES = {
     "fk_pla",
     "fk_fba_stock",
     "fk_flex_stock",
+    "fk_inventory",
 }
 
 UPLOAD_TYPE_LABELS = {
@@ -37,6 +38,7 @@ UPLOAD_TYPE_LABELS = {
     "fk_pla": "FK PLA",
     "fk_fba_stock": "FK FBA Stock File",
     "fk_flex_stock": "FK Flex Stock File",
+    "fk_inventory": "FK Inventory File",
 }
 
 
@@ -57,6 +59,7 @@ UPLOAD_SUBDIRS = {
     "fk_pla": "pla",
     "fk_fba_stock": "fba_stock",
     "fk_flex_stock": "flex_stock",
+    "fk_inventory": "inventory",
 }
 
 

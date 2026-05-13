@@ -104,6 +104,7 @@ def process_upload_file_task(
         process_sales_file,
         process_fba_stock_file,
         process_flex_stock_file,
+        process_fk_inventory_file,
         generate_dashboard_data,
         process_fk_search_traffic,
         process_fk_category,
@@ -163,6 +164,8 @@ def process_upload_file_task(
                     data_owner,
                     id_columns=("ASIN", "FSN", "FSN ID", "Flipkart Serial Number"),
                 )
+            elif file_type == "fk_inventory":
+                process_fk_inventory_file(fh, data_owner)
 
         # Clean up uploaded files after processing
         for path in files_to_cleanup:
@@ -198,9 +201,11 @@ def process_upload_file_task(
 
                 has_fba_stock = FBAStockData.objects.filter(user=data_owner).exists()
                 has_flex_stock = FlexStockData.objects.filter(user=data_owner).exists()
-                if not (has_fba_stock and has_flex_stock):
+                from apps.dashboard.models import FlipkartInventoryStock
+                has_fk_inventory = FlipkartInventoryStock.objects.filter(user=data_owner).exists()
+                if not has_fk_inventory and not (has_fba_stock and has_flex_stock):
                     raise ValueError(
-                        "Flipkart requires both FBA Stock and Flex Stock uploads."
+                        "Flipkart requires either an FK Inventory file (FK.xlsx) or both FBA Stock and Flex Stock uploads."
                     )
                 generate_flipkart_dashboard_data(data_owner)
             else:

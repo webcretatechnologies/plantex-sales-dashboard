@@ -593,6 +593,12 @@ def _demo_specs(today):
             "columns": ["Date", "FSN", "Cluster", "Qty"],
             "rows": [[day_ymd, "DEMOFSN00000001", "BANGALORE", 24]],
         },
+        "fk_inventory": {
+            "kind": "xlsx",
+            "filename": "fk_inventory_demo.xlsx",
+            "columns": ["PRODUCTS STATUS", "PRODUCTS TYPE", "SKU", "FSN", "Qty"],
+            "rows": [["Continued", "Storage", "FK-SKU-1", "DEMOFSN00000001", 42]],
+        },
         # Replenishment
         "repl_sales": {
             "kind": "csv",

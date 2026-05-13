@@ -219,6 +219,26 @@ class FlipkartPLA(models.Model):
         unique_together = ("user", "campaign_id", "fsn_id", "date")
 
 
+class FlipkartInventoryStock(models.Model):
+    """FK Inventory file — FSN-level current stock snapshot (FK.xlsx)."""
+
+    user = models.ForeignKey(
+        "accounts.Users", on_delete=models.CASCADE, related_name="fk_inventory_stock"
+    )
+    fsn = models.CharField(max_length=50, db_index=True)
+    sku = models.CharField(max_length=200, null=True, blank=True)
+    product_status = models.CharField(max_length=50, null=True, blank=True)
+    product_type = models.CharField(max_length=200, null=True, blank=True)
+    qty = models.IntegerField(default=0)
+
+    class Meta:
+        unique_together = ("user", "fsn")
+        verbose_name = "Flipkart Inventory Stock"
+
+    def __str__(self):
+        return f"FK Inventory: {self.fsn} ({self.qty})"
+
+
 class FlipkartProcessedDashboardData(models.Model):
     """Final merged Flipkart data — analogous to ProcessedDashboardData."""
 
