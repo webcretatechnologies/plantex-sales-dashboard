@@ -1,11 +1,15 @@
 import csv
 import datetime
 import json
+import hashlib
+import time
 from copy import deepcopy
 from io import BytesIO, StringIO
 
 import pandas as pd
 from django.conf import settings
+from django.core.cache import cache
+from django.db.models import F
 from django.http import FileResponse, JsonResponse
 from django.shortcuts import render, redirect
 
@@ -13,13 +17,44 @@ from apps.accounts.decorators import require_feature, _first_allowed_dashboard_f
 from apps.accounts.models import Feature
 from apps.accounts.utils import get_logged_in_user
 from apps.dashboard.models import (
+    SalesData,
     SpendData,
     ProcessedDashboardData,
     FlipkartProcessedDashboardData,
+    FlipkartSearchTraffic,
+    FlipkartPLA,
 )
+from apps.dashboard.services.filters import (
+    apply_dashboard_entity_filters,
+    build_filters_from_querydict,
+    cache_filter_string,
+    normalize_payload_filters,
+    selected_filter_payload,
+)
+from apps.dashboard.services.materialized_cache import (
+    get_materialized_summary,
+    store_materialized_summary,
+)
+from apps.dashboard.services.cache_config import DASHBOARD_PAYLOAD_CACHE_VERSION
 from apps.dashboard.utils import DashboardEncoder
 
-DASHBOARD_PAYLOAD_CACHE_VERSION = 12
+DASHBOARD_FEATURE_BY_VIEW = {
+    "business": "business_dashboard",
+    "ceo": "ceo_dashboard",
+    "category": "category_dashboard",
+}
+
+DASHBOARD_SECTION_TEMPLATE_MAP = {
+    ("business", "overview"): "dashboard/sections/business/overview.html",
+    ("business", "visuals"): "dashboard/sections/business/visuals.html",
+    ("business", "details"): "dashboard/sections/business/details.html",
+    ("ceo", "overview"): "dashboard/sections/ceo/overview.html",
+    ("ceo", "visuals"): "dashboard/sections/ceo/visuals.html",
+    ("ceo", "details"): "dashboard/sections/ceo/details.html",
+    ("category", "overview"): "dashboard/sections/category/overview.html",
+    ("category", "visuals"): "dashboard/sections/category/visuals.html",
+    ("category", "details"): "dashboard/sections/category/details.html",
+}
 
 
 def _build_payload_json(payload):
@@ -36,6 +71,31 @@ def _build_template_payload(payload):
     Keep template payload separate from cached payload mutation.
     """
     return deepcopy(payload) if isinstance(payload, dict) else payload
+
+
+def _get_dashboard_refresh_status(data_owner_id):
+    status = cache.get(f"dashboard_refresh_status_{data_owner_id}")
+    if not isinstance(status, dict):
+        return {"state": "idle", "message": ""}
+    state = str(status.get("state") or "idle").lower()
+    if state not in {"idle", "processing", "success", "error"}:
+        state = "idle"
+    message = str(status.get("message") or "")
+    # Prevent stale terminal banners from persisting across page refreshes.
+    # Keep only recent success/error updates visible.
+    if state in {"success", "error"}:
+        ts = status.get("updated_at_ts")
+        now = time.time()
+        # Backward compatibility: older cache entries without timestamp are stale.
+        is_stale = (not isinstance(ts, (int, float))) or ((now - float(ts)) > 45)
+        if is_stale:
+            cache.set(
+                f"dashboard_refresh_status_{data_owner_id}",
+                {"state": "idle", "message": "", "updated_at_ts": now},
+                timeout=300,
+            )
+            return {"state": "idle", "message": ""}
+    return {"state": state, "message": message}
 
 
 def _payload_needs_refresh(payload):
@@ -89,7 +149,46 @@ def dashboard_view(request):
     return redirect(route)
 
 
-def get_dashboard_context(request):
+def _ensure_processed_tables_if_missing(data_owner):
+    """
+    Self-heal when processed dashboard tables are empty but raw upload tables exist.
+    This guards against edge cases where upload completion succeeded but the final
+    processed-table build was skipped/interrupted.
+    """
+    refresh_status = _get_dashboard_refresh_status(data_owner.id)
+    if refresh_status.get("state") == "processing":
+        return
+
+    has_amz_processed = ProcessedDashboardData.objects.filter(user=data_owner).exists()
+    has_fk_processed = FlipkartProcessedDashboardData.objects.filter(user=data_owner).exists()
+
+    if has_amz_processed or has_fk_processed:
+        return
+
+    has_amz_raw = (
+        SalesData.objects.filter(user=data_owner).exists()
+        or SpendData.objects.filter(user=data_owner).exists()
+    )
+    has_fk_raw = (
+        FlipkartSearchTraffic.objects.filter(user=data_owner).exists()
+        or FlipkartPLA.objects.filter(user=data_owner).exists()
+    )
+
+    if not has_amz_raw and not has_fk_raw:
+        return
+
+    from apps.upload.dashboard_builders import (
+        generate_dashboard_data,
+        generate_flipkart_dashboard_data,
+    )
+
+    if has_amz_raw:
+        generate_dashboard_data(data_owner)
+    if has_fk_raw:
+        generate_flipkart_dashboard_data(data_owner)
+
+
+def get_dashboard_context(request, include_payload=True, cache_view_type=None):
     user = get_logged_in_user(request)
     if not user:
         return None
@@ -103,30 +202,27 @@ def get_dashboard_context(request):
             [f.code_name for f in user.role.features.all()] if user.role else []
         )
 
-    # Define which fields should be treated as lists (multi-selects)
-    list_fields = ["category", "asin", "fsn", "portfolio", "subcategory"]
+    filters = build_filters_from_querydict(request.GET)
+    selected_filters = selected_filter_payload(filters)
 
-    # Build filters from QueryDict:
-    # Logic: For lists, take all non-empty values. For single values, take the standard request.GET.get()
-    # (which picks the last value if duplicates exist, and preserves "" for "All" options).
-    filters = {}
-    for k in request.GET.keys():
-        if k in list_fields:
-            # Filter out empty strings for lists to keep them clean
-            filters[k] = [v for v in request.GET.getlist(k) if v]
-        else:
-            # Single value: standard Django GET behavior (takes the last one)
-            # This is critical for allowing "All" choices (empty strings) to work
-            filters[k] = request.GET.get(k, "")
-
-    # selected_filters is used by templates to pre-select multi-select controls (always lists)
-    selected_filters = {
-        "categories": filters.get("category", []),
-        "asins": filters.get("asin", []),
-        "fsns": filters.get("fsn", []),
-    }
+    if not include_payload:
+        refresh_status = _get_dashboard_refresh_status(data_owner.id)
+        return {
+            "logged_user": user,
+            "user_features": user_features,
+            "payload": None,
+            "payload_json": "null",
+            "filters": filters,
+            "selected_filters": selected_filters,
+            "selected_filters_json": json.dumps(selected_filters),
+            "dashboard_refresh_status": refresh_status,
+            "dashboard_refresh_status_json": json.dumps(refresh_status),
+        }
 
     # Build the queryset with DB-level entity filters
+    qs = ProcessedDashboardData.objects.filter(user=data_owner)
+    fk_qs = FlipkartProcessedDashboardData.objects.filter(user=data_owner)
+    _ensure_processed_tables_if_missing(data_owner)
     qs = ProcessedDashboardData.objects.filter(user=data_owner)
     fk_qs = FlipkartProcessedDashboardData.objects.filter(user=data_owner)
 
@@ -148,61 +244,10 @@ def get_dashboard_context(request):
         qs if show_amazon else qs.none(), fk_qs if show_flipkart else fk_qs.none(), data_owner.id, show_amazon, show_flipkart
     )
 
-    # Apply category filter at DB level
-    category = filters.get("category")
-    if category:
-        if isinstance(category, (list, tuple)):
-            qs = qs.filter(category__in=category)
-            fk_qs = fk_qs.filter(category__in=category)
-        else:
-            qs = qs.filter(category=category)
-            fk_qs = fk_qs.filter(category=category)
-
-    # Apply ASIN filter at DB level
-    asin_filter = filters.get("asin")
-    if asin_filter:
-        if isinstance(asin_filter, (list, tuple)):
-            qs = qs.filter(asin__in=asin_filter)
-        else:
-            qs = qs.filter(asin=asin_filter)
-
-    # Apply FSN filter at DB level
-    fsn_filter = filters.get("fsn")
-    if fsn_filter:
-        if isinstance(fsn_filter, (list, tuple)):
-            fk_qs = fk_qs.filter(fsn__in=fsn_filter)
-        else:
-            fk_qs = fk_qs.filter(fsn=fsn_filter)
-
-    # If user selected an ASIN but no FSN, then empty the Flipkart query
-    if asin_filter and not fsn_filter:
-        fk_qs = fk_qs.none()
-    # If user selected an FSN but no ASIN, then empty the Amazon query
-    elif fsn_filter and not asin_filter:
-        qs = qs.none()
-
-    # Apply portfolio filter at DB level
-    portfolio = filters.get("portfolio")
-    if portfolio:
-        qs = qs.filter(portfolio=portfolio)
-        fk_qs = fk_qs.filter(portfolio=portfolio)
-
-    # Apply subcategory filter at DB level
-    subcategory = filters.get("subcategory")
-    if subcategory:
-        if isinstance(subcategory, (list, tuple)):
-            qs = qs.filter(subcategory__in=subcategory)
-            fk_qs = fk_qs.filter(subcategory__in=subcategory)
-        else:
-            qs = qs.filter(subcategory=subcategory)
-            fk_qs = fk_qs.filter(subcategory=subcategory)
-
-    if not show_amazon:
-        qs = qs.none()
-    if not show_flipkart:
-        fk_qs = fk_qs.none()
+    qs, fk_qs = apply_dashboard_entity_filters(qs, fk_qs, filters)
 
     if not qs.exists() and not fk_qs.exists():
+        refresh_status = _get_dashboard_refresh_status(data_owner.id)
         return {
             "logged_user": user,
             "user_features": user_features,
@@ -211,60 +256,45 @@ def get_dashboard_context(request):
             "filters": filters,
             "selected_filters": selected_filters,
             "selected_filters_json": json.dumps(selected_filters),
+            "dashboard_refresh_status": refresh_status,
+            "dashboard_refresh_status_json": json.dumps(refresh_status),
         }
 
     # Apply same entity filters to spend data at DB level
     spend_qs = SpendData.objects.filter(user=data_owner)
+    asin_filter = filters.get("asin")
     if asin_filter:
         if isinstance(asin_filter, (list, tuple)):
             spend_qs = spend_qs.filter(asin__in=asin_filter)
         else:
             spend_qs = spend_qs.filter(asin=asin_filter)
 
-    # Use a versioned cache key to allow instantaneous clearing on upload
-    from django.core.cache import cache
     from apps.dashboard.services.analytics_services_orm_pipeline import run_orm_computation
-    import hashlib
-    
-    # Normalize only the filters that affect payload calculations so
-    # transient query params don't cause unnecessary cache misses.
-    cache_filter_fields = [
-        "date_range",
-        "start_date",
-        "end_date",
-        "compare_start_date",
-        "compare_end_date",
-        "platform",
-        "category",
-        "asin",
-        "fsn",
-        "portfolio",
-        "subcategory",
-    ]
-    cache_filters = {}
-    for field in cache_filter_fields:
-        val = filters.get(field)
-        if isinstance(val, (list, tuple)):
-            cache_filters[field] = sorted({str(v) for v in val if str(v).strip()})
-        elif val is None:
-            cache_filters[field] = ""
-        else:
-            cache_filters[field] = str(val)
 
-    # Generate unique hash for normalized filters
-    filter_key_str = json.dumps(cache_filters, sort_keys=True)
+    # Normalize filters once; reuse in memory cache + materialized summary table.
+    filter_key_str = cache_filter_string(filters)
     cache_hash = hashlib.md5(filter_key_str.encode("utf-8")).hexdigest()
-    
-    # Get current data version for this user
     data_version = cache.get(f"dashboard_data_version_{data_owner.id}", 0)
+    view_type = cache_view_type or request.resolver_match.url_name or "shared"
+
     cache_key = (
         f"dashboard_payload_v{DASHBOARD_PAYLOAD_CACHE_VERSION}_"
-        f"{data_owner.id}_{data_version}_{cache_hash}"
+        f"{data_owner.id}_{view_type}_{data_version}_{cache_hash}"
     )
-    
+
     payload = cache.get(cache_key)
     if payload and _payload_needs_refresh(payload):
         payload = None
+
+    if not payload:
+        payload = get_materialized_summary(
+            user_id=data_owner.id,
+            view_type=view_type,
+            data_version=data_version,
+            filter_hash=cache_hash,
+        )
+        if payload and _payload_needs_refresh(payload):
+            payload = None
 
     if not payload:
         payload = run_orm_computation(
@@ -275,6 +305,21 @@ def get_dashboard_context(request):
             data_owner,
             cached_filter_metadata=cached_filter_metadata,
         )
+        try:
+            store_materialized_summary(
+                user_id=data_owner.id,
+                view_type=view_type,
+                data_version=data_version,
+                filter_hash=cache_hash,
+                normalized_filters=json.dumps(
+                    normalize_payload_filters(filters), sort_keys=True
+                ),
+                payload=payload,
+            )
+        except Exception:
+            # Materialized summaries are a performance layer; do not fail requests.
+            pass
+
         cache.set(cache_key, payload, timeout=3600 * 24)  # Cache for 24 hours
 
     template_payload = _build_template_payload(payload)
@@ -287,6 +332,10 @@ def get_dashboard_context(request):
         "filters": filters,
         "selected_filters": selected_filters,
         "selected_filters_json": json.dumps(selected_filters),
+        "dashboard_refresh_status": _get_dashboard_refresh_status(data_owner.id),
+        "dashboard_refresh_status_json": json.dumps(
+            _get_dashboard_refresh_status(data_owner.id)
+        ),
     }
 
 
@@ -326,7 +375,11 @@ def _inject_htmx(request, ctx):
 @require_feature("business_dashboard")
 @no_cache_for_htmx
 def business_dashboard_view(request):
-    ctx = get_dashboard_context(request)
+    ctx = get_dashboard_context(
+        request,
+        include_payload=False,
+        cache_view_type="business-dashboard",
+    )
     if ctx is None:
         return redirect("account-login")
     return render(
@@ -337,7 +390,11 @@ def business_dashboard_view(request):
 @require_feature("ceo_dashboard")
 @no_cache_for_htmx
 def ceo_dashboard_view(request):
-    ctx = get_dashboard_context(request)
+    ctx = get_dashboard_context(
+        request,
+        include_payload=False,
+        cache_view_type="ceo-dashboard",
+    )
     if ctx is None:
         return redirect("account-login")
     return render(request, "dashboard/ceo_dashboard.html", _inject_htmx(request, ctx))
@@ -346,12 +403,53 @@ def ceo_dashboard_view(request):
 @require_feature("category_dashboard")
 @no_cache_for_htmx
 def category_dashboard_view(request):
-    ctx = get_dashboard_context(request)
+    ctx = get_dashboard_context(
+        request,
+        include_payload=False,
+        cache_view_type="category-dashboard",
+    )
     if ctx is None:
         return redirect("account-login")
     return render(
         request, "dashboard/category_dashboard.html", _inject_htmx(request, ctx)
     )
+
+
+def _user_has_feature(user, feature_code):
+    if user.is_main_user:
+        return True
+    return bool(
+        user.role and user.role.features.filter(code_name=feature_code).exists()
+    )
+
+
+@no_cache_for_htmx
+def dashboard_section_view(request, view_name, section):
+    user = get_logged_in_user(request)
+    if not user:
+        return JsonResponse({"error": "Not authenticated"}, status=401)
+
+    feature_code = DASHBOARD_FEATURE_BY_VIEW.get(view_name)
+    if not feature_code:
+        return JsonResponse({"error": "Invalid dashboard view."}, status=404)
+    if not _user_has_feature(user, feature_code):
+        return JsonResponse({"error": "Permission denied."}, status=403)
+
+    template_name = DASHBOARD_SECTION_TEMPLATE_MAP.get((view_name, section))
+    if not template_name:
+        return JsonResponse({"error": "Invalid section."}, status=404)
+
+    ctx = get_dashboard_context(
+        request,
+        include_payload=True,
+        cache_view_type=f"{view_name}-dashboard",
+    )
+    if ctx is None:
+        return JsonResponse({"error": "Not authenticated"}, status=401)
+
+    ctx["dashboard_section_view_type"] = view_name
+    ctx["section_template"] = template_name
+    return render(request, "dashboard/sections/section_wrapper.html", ctx)
 
 
 @require_feature("upload_data")
@@ -385,9 +483,196 @@ def upload_view(request):
             "upload_logs": upload_logs,
             "payload_json": "null",
             "selected_filters_json": "{}",
+            "dashboard_refresh_status_json": '{"state":"idle","message":""}',
             "upload_task_timeout_ms": max(upload_task_timeout_seconds, 60) * 1000,
         },
     )
+
+
+def dashboard_refresh_status(request):
+    user = get_logged_in_user(request)
+    if not user:
+        return JsonResponse({"error": "Not authenticated"}, status=401)
+    data_owner = user.created_by if user.created_by else user
+    return JsonResponse(_get_dashboard_refresh_status(data_owner.id))
+
+
+def _parse_positive_int(value, default, minimum=1, maximum=200):
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    if parsed < minimum:
+        return minimum
+    if parsed > maximum:
+        return maximum
+    return parsed
+
+
+def _distinct_option_values_qs(qs, field_name):
+    return (
+        qs.annotate(option_value=F(field_name))
+        .values("option_value")
+        .distinct()
+    )
+
+
+def _search_paginated_single_source(base_qs, field_name, q, offset, page_size):
+    values_qs = _distinct_option_values_qs(base_qs, field_name)
+    if not q:
+        ordered = values_qs.order_by("option_value")
+        total = ordered.count()
+        rows = list(ordered[offset : offset + page_size])
+        return total, [str(r["option_value"]).strip() for r in rows if r["option_value"]]
+
+    starts_qs = values_qs.filter(**{f"{field_name}__istartswith": q}).order_by(
+        "option_value"
+    )
+    contains_qs = (
+        values_qs.filter(**{f"{field_name}__icontains": q})
+        .exclude(**{f"{field_name}__istartswith": q})
+        .order_by("option_value")
+    )
+    starts_total = starts_qs.count()
+    contains_total = contains_qs.count()
+    total = starts_total + contains_total
+
+    if offset < starts_total:
+        rows = list(starts_qs[offset : offset + page_size])
+        remaining = page_size - len(rows)
+        if remaining > 0:
+            rows.extend(list(contains_qs[:remaining]))
+    else:
+        contains_offset = offset - starts_total
+        rows = list(contains_qs[contains_offset : contains_offset + page_size])
+
+    return total, [str(r["option_value"]).strip() for r in rows if r["option_value"]]
+
+
+def _search_paginated_dual_source(az_qs, fk_qs, field_name, q, offset, page_size):
+    az_values = _distinct_option_values_qs(az_qs, field_name)
+    fk_values = _distinct_option_values_qs(fk_qs, field_name)
+    if not q:
+        merged_qs = az_values.union(fk_values).order_by("option_value")
+        total = merged_qs.count()
+        rows = list(merged_qs[offset : offset + page_size])
+        return total, [str(r["option_value"]).strip() for r in rows if r["option_value"]]
+
+    az_starts = az_values.filter(**{f"{field_name}__istartswith": q})
+    fk_starts = fk_values.filter(**{f"{field_name}__istartswith": q})
+    starts_qs = az_starts.union(fk_starts).order_by("option_value")
+
+    az_contains = az_values.filter(**{f"{field_name}__icontains": q}).exclude(
+        **{f"{field_name}__istartswith": q}
+    )
+    fk_contains = fk_values.filter(**{f"{field_name}__icontains": q}).exclude(
+        **{f"{field_name}__istartswith": q}
+    )
+    contains_qs = az_contains.union(fk_contains).order_by("option_value")
+
+    starts_total = starts_qs.count()
+    contains_total = contains_qs.count()
+    total = starts_total + contains_total
+
+    if offset < starts_total:
+        rows = list(starts_qs[offset : offset + page_size])
+        remaining = page_size - len(rows)
+        if remaining > 0:
+            rows.extend(list(contains_qs[:remaining]))
+    else:
+        contains_offset = offset - starts_total
+        rows = list(contains_qs[contains_offset : contains_offset + page_size])
+
+    return total, [str(r["option_value"]).strip() for r in rows if r["option_value"]]
+
+
+def filter_dropdown_options(request):
+    """
+    Paginated + search-backed filter option endpoint.
+    Uses the currently applied dashboard filters (except the requested field)
+    so dropdown options remain context-aware.
+    """
+    user = get_logged_in_user(request)
+    if not user:
+        return JsonResponse({"error": "Not authenticated"}, status=401)
+    if not user.is_main_user:
+        if not user.role:
+            return JsonResponse({"error": "Permission denied."}, status=403)
+        has_dashboard_feature = user.role.features.filter(
+            code_name__in={"business_dashboard", "ceo_dashboard", "category_dashboard"}
+        ).exists()
+        if not has_dashboard_feature:
+            return JsonResponse({"error": "Permission denied."}, status=403)
+
+    data_owner = user.created_by if user.created_by else user
+    field = (request.GET.get("field") or "").strip().lower()
+    if field not in {"category", "asin", "fsn", "portfolio", "subcategory"}:
+        return JsonResponse({"error": "Invalid field."}, status=400)
+
+    q = (request.GET.get("q") or "").strip()
+    page = _parse_positive_int(request.GET.get("page"), default=1, minimum=1, maximum=10_000)
+    page_size = _parse_positive_int(
+        request.GET.get("page_size"), default=50, minimum=10, maximum=100
+    )
+    offset = (page - 1) * page_size
+
+    filters = build_filters_from_querydict(request.GET)
+    filters.pop("field", None)
+    filters.pop("q", None)
+    filters.pop("page", None)
+    filters.pop("page_size", None)
+    # Don't self-filter the requested dropdown field.
+    filters.pop(field, None)
+
+    data_version = cache.get(f"dashboard_data_version_{data_owner.id}", 0)
+    dropdown_cache_hash = hashlib.md5(
+        cache_filter_string(filters).encode("utf-8")
+    ).hexdigest()
+    dropdown_cache_key = (
+        f"dashboard_filter_options_v2_{data_owner.id}_{data_version}_{field}_"
+        f"{hashlib.md5(q.lower().encode('utf-8')).hexdigest()}_{page}_{page_size}_{dropdown_cache_hash}"
+    )
+    cached_payload = cache.get(dropdown_cache_key)
+    if cached_payload:
+        return JsonResponse(cached_payload)
+
+    qs = ProcessedDashboardData.objects.filter(user=data_owner)
+    fk_qs = FlipkartProcessedDashboardData.objects.filter(user=data_owner)
+    qs, fk_qs = apply_dashboard_entity_filters(qs, fk_qs, filters)
+
+    results = []
+    total = 0
+
+    if field == "asin":
+        asin_qs = qs.exclude(asin__isnull=True).exclude(asin="")
+        total, results = _search_paginated_single_source(
+            asin_qs, "asin", q, offset, page_size
+        )
+    elif field == "fsn":
+        fsn_qs = fk_qs.exclude(fsn__isnull=True).exclude(fsn="")
+        total, results = _search_paginated_single_source(
+            fsn_qs, "fsn", q, offset, page_size
+        )
+    else:
+        az_qs = qs.exclude(**{f"{field}__isnull": True}).exclude(**{f"{field}": ""})
+        fk_field_qs = fk_qs.exclude(**{f"{field}__isnull": True}).exclude(
+            **{f"{field}": ""}
+        )
+        total, results = _search_paginated_dual_source(
+            az_qs, fk_field_qs, field, q, offset, page_size
+        )
+    payload = {
+        "field": field,
+        "results": [{"value": value, "label": value} for value in results],
+        "pagination": {
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "has_next": offset + page_size < total,
+        },
+    }
+    cache.set(dropdown_cache_key, payload, timeout=300)
+    return JsonResponse(payload)
 
 
 def _demo_specs(today):
@@ -540,50 +825,26 @@ def _demo_specs(today):
             "filename": "fk_fba_stock_demo.csv",
             "columns": [
                 "Date",
-                "FNSKU",
-                "FSN",
-                "MSKU",
+                "Warehouse Id",
+                "SKU",
                 "Title",
-                "Disposition",
-                "Starting Warehouse Balance",
-                "In Transit Between Warehouses",
-                "Receipts",
-                "Customer Shipments",
-                "Customer Returns",
-                "Vendor Returns",
-                "Warehouse Transfer In/Out",
-                "Found",
-                "Lost",
-                "Damaged",
-                "Disposed",
-                "Other Events",
-                "Ending Warehouse Balance",
-                "Unknown Events",
-                "Location",
+                "Listing Id",
+                "FSN",
+                "Brand",
+                "Flipkart Selling Price",
+                "Live on Website",
             ],
             "rows": [
                 [
                     day_ymd,
-                    "X000DEMOFNSKUFK",
-                    "DEMOFSN00000001",
+                    "blr_main_wh",
                     "FK-SKU-1",
                     "Demo FK Product",
-                    "SELLABLE",
-                    80,
-                    5,
-                    4,
-                    2,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
+                    "LSTDEMOFSN00000001XYZ",
+                    "DEMOFSN00000001",
+                    "Plantex",
+                    1349,
                     87,
-                    0,
-                    "BLR1",
                 ]
             ],
         },
@@ -786,14 +1047,7 @@ def download_calculated_data(request, file_format):
     if not user:
         return redirect("account-login")
 
-    # Collect filters from query params (same as dashboard views)
-    filters = {}
-    for k in request.GET.keys():
-        vals = request.GET.getlist(k)
-        if len(vals) == 1:
-            filters[k] = vals[0]
-        else:
-            filters[k] = vals
+    filters = build_filters_from_querydict(request.GET)
 
     # Optional export override:
     # If dashboard platform filter is "All", frontend can pass export_platform=Amazon|Flipkart

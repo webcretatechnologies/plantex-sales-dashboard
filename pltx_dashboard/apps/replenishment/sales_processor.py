@@ -1,6 +1,11 @@
 import os
 import pandas as pd
 
+try:
+    from .utils import read_tabular_file
+except ImportError:  # pragma: no cover - fallback for standalone script execution
+    from utils import read_tabular_file
+
 
 def process_sales_report(sales_file, pin_file, output_file):
     output_dir = os.path.dirname(output_file)
@@ -13,8 +18,8 @@ def process_sales_report(sales_file, pin_file, output_file):
 
     print("Loading datasets...")
     # Load the datasets, treating postal codes as strings
-    df_sales = pd.read_csv(sales_file, dtype={"Shipment To Postal Code": str})
-    df_pin = pd.read_csv(pin_file, dtype={"PIN CODE": str})
+    df_sales = read_tabular_file(sales_file, dtype={"Shipment To Postal Code": str})
+    df_pin = read_tabular_file(pin_file, dtype={"PIN CODE": str})
 
     # Strip and uppercase column names for robustness
     df_sales.columns = df_sales.columns.astype(str).str.strip().str.upper()

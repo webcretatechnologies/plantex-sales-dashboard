@@ -438,8 +438,8 @@
                 </div>
                 <label class="modern-dropzone" for="csvInput">
                     <div class="material-icons-round drop-icon">cloud_upload</div>
-                    <div class="drop-text">Drag & drop your daily CSV files here</div>
-                    <div class="drop-subtext">Supported format: DD-MM-YYYY.csv · Select multiple dates at once</div>
+                    <div class="drop-text">Drag & drop your daily Sales file here</div>
+                    <div class="drop-subtext">Supported format: DD-MM-YYYY in filename · CSV or Excel accepted</div>
                     <input type="file" id="csvInput" accept=".csv,.xlsx,.xls" multiple style="display:none">
                 </label>
                 <div id="fileList" class="file-list"></div>
@@ -534,7 +534,7 @@
                 <label class="modern-dropzone" for="fkSearchTrafficFile">
                     <div class="material-icons-round drop-icon">cloud_upload</div>
                     <div class="drop-text">Drag & drop Search Traffic Report here</div>
-                    <div class="drop-subtext">Listing Id / SKU / Vertical / Impressions / Sales (.xlsx)</div>
+                    <div class="drop-subtext">Listing Id / SKU / Vertical / Impressions / Sales (CSV/Excel)</div>
                     <input type="file" id="fkSearchTrafficFile" accept=".csv,.xlsx,.xls" multiple style="display:none">
                 </label>
                 <div id="fkSearchTrafficFileList" class="file-list"></div>
@@ -564,7 +564,7 @@
                 <label class="modern-dropzone" for="fkPriceFile">
                     <div class="material-icons-round drop-icon">payments</div>
                     <div class="drop-text">Drag & drop FK Price file here</div>
-                    <div class="drop-subtext">Flipkart Serial Number / Deal (.xlsx)</div>
+                    <div class="drop-subtext">Flipkart Serial Number / Deal (CSV/Excel)</div>
                     <input type="file" id="fkPriceFile" accept=".csv,.xlsx,.xls" multiple style="display:none">
                 </label>
                 <div id="fkPriceFileList" class="file-list"></div>
@@ -579,10 +579,25 @@
                 <label class="modern-dropzone" for="fkPlaNewFile">
                     <div class="material-icons-round drop-icon">cloud_upload</div>
                     <div class="drop-text">Drag & drop PLA FSN Report here</div>
-                    <div class="drop-subtext">Campaign ID / FSN ID / Ad Spend (.csv)</div>
+                    <div class="drop-subtext">Campaign ID / FSN ID / Ad Spend (CSV/Excel)</div>
                     <input type="file" id="fkPlaNewFile" accept=".csv,.xlsx,.xls" multiple style="display:none">
                 </label>
                 <div id="fkPlaNewFileList" class="file-list"></div>
+            </div>
+
+            <!-- FK FBA Stock Card -->
+            <div class="upload-card flipkart-card">
+                <div class="upload-card-title">
+                    <span class="material-icons-round">warehouse</span>
+                    FK FBA Stock File
+                </div>
+                <label class="modern-dropzone" for="fkFbaStockFile">
+                    <div class="material-icons-round drop-icon">inventory</div>
+                    <div class="drop-text">Drag & drop FK FBA stock file here</div>
+                    <div class="drop-subtext">Required columns: Date (DD-MM-YYYY), FSN, Live on Website</div>
+                    <input type="file" id="fkFbaStockFile" accept=".csv,.xlsx,.xls" multiple style="display:none">
+                </label>
+                <div id="fkFbaStockFileList" class="file-list"></div>
             </div>
 
             <!-- FK Inventory File Card -->
@@ -593,7 +608,7 @@
                 </div>
                 <label class="modern-dropzone" for="fkInventoryFile">
                     <div class="material-icons-round drop-icon">cloud_upload</div>
-                    <div class="drop-text">Drag & drop FK Inventory file here (FK.xlsx)</div>
+                    <div class="drop-text">Drag & drop FK Inventory file here</div>
                     <div class="drop-subtext">Required columns: PRODUCTS STATUS / PRODUCTS TYPE / SKU / FSN / Qty</div>
                     <input type="file" id="fkInventoryFile" accept=".csv,.xlsx,.xls" multiple style="display:none">
                 </label>
@@ -658,5 +673,5 @@
 <script>
 window.UPLOAD_TASK_TIMEOUT_MS = {{ upload_task_timeout_ms|default:1800000 }};
 </script>
-<script src="/static/js/upload.js?v=8"></script>
+<script src="/static/js/upload.js?v=13"></script>
 {% endblock %}

@@ -21,9 +21,19 @@
 <span id="page-user-role" class="user-role" hx-swap-oob="true">{% block user_role %}Business Head{% endblock %}</span>
 
 <!-- OOB swap for stock upload warning banner -->
-<div id="stockUploadBanner" hx-swap-oob="true" style="margin: 12px 22px 0; background: #dc2626; color: #ffffff; border: 1px solid #b91c1c; border-radius: 10px; padding: 10px 14px; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; {% if show_stock_upload_banner %}display:flex;{% else %}display:none;{% endif %}">
-    <span class="material-icons-round" style="font-size: 18px;">warning</span>
-    <span>Please upload today's stock files to get inventory health.</span>
+<div id="stockUploadBanner" hx-swap-oob="true"
+    class="stock-upload-banner {% if show_stock_upload_banner %}is-visible{% else %}is-hidden{% endif %}">
+    <div class="stock-upload-banner-icon">
+        <span class="material-icons-round">inventory_2</span>
+    </div>
+    <div class="stock-upload-banner-content">
+        <div class="stock-upload-banner-title">Inventory Health Needs Today’s Stock Upload</div>
+        <div class="stock-upload-banner-text">Please upload today's Amazon and Flipkart stock files to get accurate inventory health.</div>
+    </div>
+    <a href="{% url 'dashboard-upload' %}" class="stock-upload-banner-cta">
+        <span class="material-icons-round">upload_file</span>
+        Upload Now
+    </a>
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════════════════════
@@ -89,14 +99,8 @@
             <select class="filter-select-top" id="platformSelect" name="platform"
                 onchange="syncFilterVisibility(); htmx.trigger('#dashboardFilterForm', 'submit')">
                 <option value="">All</option>
-                {% if payload.filters.platforms %}
-                {% for p in payload.filters.platforms %}
-                <option value="{{ p }}" {% if request.GET.platform == p %}selected{% endif %}>{{ p }}</option>
-                {% endfor %}
-                {% else %}
                 <option value="Amazon" {% if request.GET.platform == "Amazon" %}selected{% endif %}>Amazon</option>
                 <option value="Flipkart" {% if request.GET.platform == "Flipkart" %}selected{% endif %}>Flipkart</option>
-                {% endif %}
             </select>
         </div>
 
@@ -107,8 +111,8 @@
             </span>
             <select id="categorySelect" name="category" class="filter-select-top" multiple
                 onchange="htmx.trigger('#dashboardFilterForm', 'submit')">
-                {% for c in payload.filters.categories %}
-                <option value="{{ c }}" {% if selected_filters.categories and c in selected_filters.categories %}selected{% endif %}>{{ c }}</option>
+                {% for c in selected_filters.categories %}
+                <option value="{{ c }}" selected>{{ c }}</option>
                 {% endfor %}
             </select>
         </div>
@@ -119,8 +123,8 @@
             </span>
             <select id="asinSelect" name="asin" class="filter-select-top" multiple
                 onchange="htmx.trigger('#dashboardFilterForm', 'submit')">
-                {% for a in payload.filters.asins %}
-                <option value="{{ a }}" {% if selected_filters.asins and a in selected_filters.asins %}selected{% endif %}>{{ a }}</option>
+                {% for a in selected_filters.asins %}
+                <option value="{{ a }}" selected>{{ a }}</option>
                 {% endfor %}
             </select>
         </div>
@@ -131,8 +135,8 @@
             </span>
             <select id="fsnSelect" name="fsn" class="filter-select-top" multiple
                 onchange="htmx.trigger('#dashboardFilterForm', 'submit')">
-                {% for f in payload.filters.fsns %}
-                <option value="{{ f }}" {% if selected_filters.fsns and f in selected_filters.fsns %}selected{% endif %}>{{ f }}</option>
+                {% for f in selected_filters.fsns %}
+                <option value="{{ f }}" selected>{{ f }}</option>
                 {% endfor %}
             </select>
         </div>

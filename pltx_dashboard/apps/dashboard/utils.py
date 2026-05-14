@@ -1,4 +1,6 @@
 import json
+import math
+
 import numpy as np
 import pandas as pd
 
@@ -25,10 +27,13 @@ def clean_currency(x):
     Cleans string representation of currency (e.g. '₹44,275.00', '$100.00') into float.
     Removes commas and currency symbols.
     """
+    if isinstance(x, float) and math.isnan(x):
+        return 0.0
     if isinstance(x, str):
         x = x.replace("₹", "").replace("$", "").replace(",", "").strip()
     try:
-        return float(x)
+        val = float(x)
+        return 0.0 if math.isnan(val) else val
     except (ValueError, TypeError):
         return 0.0
 
@@ -37,10 +42,13 @@ def clean_number(x):
     """
     Cleans string representation of numbers (e.g. '2,559') into integer.
     """
+    if isinstance(x, float) and math.isnan(x):
+        return 0
     if isinstance(x, str):
         x = x.replace(",", "").strip()
     try:
-        return int(float(x))  # float() handles cases like '10.0'
+        val = float(x)  # float() handles cases like '10.0'
+        return 0 if math.isnan(val) else int(val)
     except (ValueError, TypeError):
         return 0
 

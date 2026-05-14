@@ -1,0 +1,349 @@
+{% load dashboard_extras %}
+            <!-- ════════════ FULL CATEGORY PERFORMANCE TABLE ════════════ -->
+            <div class="ceo-card" id="biz-full-category-perf" style="margin-top: 24px;">
+                <div class="ceo-card-header"
+                    style="display: flex; justify-content: space-between; align-items: center;">
+                    <span class="ceo-card-title">Category Performance</span>
+                    <div style="position: relative; width: 250px;">
+                        <span class="material-icons-round"
+                            style="position: absolute; left: 10px; top: 50%; transform: translateY(-50%); font-size: 18px; color: var(--muted);">search</span>
+                        <input type="text" id="bizCatSearchInput" placeholder="Search categories..."
+                            style="width: 100%; padding: 8px 12px 8px 36px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; outline: none; transition: border-color 0.2s;"
+                            onfocus="this.style.borderColor='var(--accent)'"
+                            onblur="this.style.borderColor='var(--border)'">
+                    </div>
+                </div>
+                <div class="ceo-card-body no-pad">
+                    <table class="ceo-table" id="bizCategoryPerformanceTable">
+                        <thead>
+                            <tr>
+                                <th>Category</th>
+                                <th class="num">Revenue</th>
+                                <th class="num">Growth</th>
+                                <th class="num">Contribution</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for cat in payload.category_performance %}
+                            <tr>
+                                <td style="font-weight:600;">{{ cat.category }}</td>
+                                <td class="num">{{ cat.revenue|fmt_rupee }}</td>
+                                <td class="num {% if cat.growth >= 0 %}growth-up{% else %}growth-down{% endif %}">
+                                    {% if cat.growth >= 0 %}▲{% else %}▼{% endif %} {{ cat.growth|abs_val }}%
+                                </td>
+                                <td class="num">{{ cat.contribution }}%</td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="4" class="empty"
+                                    style="text-align: center; padding: 20px; color: var(--muted);">No data available
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                    <div class="pagination-container"
+                        style="display: flex; justify-content: flex-end; padding: 12px 18px; gap: 6px;"
+                        id="bizCatPagination"></div>
+                </div>
+            </div>
+
+            <script>
+                (function () {
+                    function initBizPaginatedTable(tableId, searchId, paginationId, rowsPerPage = 10) {
+                        const table = document.getElementById(tableId);
+                        if (!table) return;
+                        const tbody = table.querySelector('tbody');
+                        if (!tbody) return;
+                        let rows = Array.from(tbody.querySelectorAll('tr'));
+                        if (rows.length === 0 || (rows.length === 1 && rows[0].querySelector('.empty'))) return;
+
+                        const searchInput = document.getElementById(searchId);
+                        const paginationControls = document.getElementById(paginationId);
+                        let currentPage = 1;
+                        let filteredRows = [...rows];
+
+                        function renderTable() {
+                            const start = (currentPage - 1) * rowsPerPage;
+                            const end = start + rowsPerPage;
+
+                            rows.forEach(r => r.style.display = 'none');
+                            filteredRows.slice(start, end).forEach(r => r.style.display = '');
+
+                            renderPagination();
+                        }
+
+                        function renderPagination() {
+                            if (!paginationControls) return;
+                            const totalPages = Math.ceil(filteredRows.length / rowsPerPage);
+                            paginationControls.innerHTML = '';
+                            if (totalPages <= 1) return;
+
+                            for (let i = 1; i <= totalPages; i++) {
+                                const btn = document.createElement('button');
+                                btn.className = `btn-page ${i === currentPage ? 'active' : ''}`;
+                                btn.innerText = i;
+                                btn.onclick = () => { currentPage = i; renderTable(); };
+                                paginationControls.appendChild(btn);
+                            }
+                        }
+
+                        if (searchInput) {
+                            searchInput.oninput = (e) => {
+                                const query = e.target.value.toLowerCase();
+                                filteredRows = rows.filter(r => r.innerText.toLowerCase().includes(query));
+                                currentPage = 1;
+                                renderTable();
+                            };
+                        }
+
+                        renderTable();
+                    }
+
+                    window.bizPaginationInit = function () {
+                        initBizPaginatedTable('bizCategoryPerformanceTable', 'bizCatSearchInput', 'bizCatPagination', 10);
+                    };
+
+                    if (document.readyState === 'loading') {
+                        document.addEventListener('DOMContentLoaded', window.bizPaginationInit);
+                    } else {
+                        window.bizPaginationInit();
+                    }
+
+                    document.body.removeEventListener('htmx:afterSettle', window.bizPaginationInit);
+                    document.body.addEventListener('htmx:afterSettle', window.bizPaginationInit);
+                })();
+            </script>
+
+            <!-- ════════════ VIEW ALL MODALS ════════════ -->
+
+            <!-- Category Growth Modal -->
+            <div class="tbl-overlay" id="catGrowthModal">
+                <div class="tbl-overlay-inner">
+                    <div class="tbl-overlay-header">
+                        <span class="tbl-overlay-title">All Categories by Growth</span>
+                        <button class="tbl-overlay-close" onclick="closeModal('catGrowthModal')">&#10005; Close</button>
+                    </div>
+                    <div class="tbl-overlay-scroll">
+                        <table class="ceo-table" style="min-width:500px;">
+                            <thead>
+                                <tr>
+                                    <th>Category</th>
+                                    <th class="num">Revenue</th>
+                                    <th class="num">Growth</th>
+                                    <th class="num">Contribution</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for cat in payload.category_performance %}
+                                <tr>
+                                    <td style="font-weight:600;">{{ cat.category }}</td>
+                                    <td class="num">{{ cat.revenue|fmt_rupee }}</td>
+                                    <td class="num {% if cat.growth >= 0 %}growth-up{% else %}growth-down{% endif %}">
+                                        {% if cat.growth >= 0 %}&#9650;{% else %}&#9660;{% endif %} {{ cat.growth|abs_val }}%
+                                    </td>
+                                    <td class="num">{{ cat.contribution }}%</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Top Revenue Contributors Modal -->
+            <div class="tbl-overlay" id="winningModal">
+                <div class="tbl-overlay-inner">
+                    <div class="tbl-overlay-header">
+                        <span class="tbl-overlay-title">Top Revenue Contributors</span>
+                        <button class="tbl-overlay-close" onclick="closeModal('winningModal')">&#10005; Close</button>
+                    </div>
+                    <div class="tbl-overlay-scroll">
+                        <table class="ceo-table" style="min-width:600px;">
+                            <thead>
+                                <tr>
+                                    <th>SKU</th>
+                                    <th class="num">Revenue</th>
+                                    <th class="num">Growth</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for prod in payload.cat_all_top_products %}
+                                <tr>
+                                    <td>
+                                        <div class="ceo-sku-cell">
+                                            <div class="ceo-sku-thumb">&#128230;</div><span>{{ prod.sku }}</span>
+                                        </div>
+                                    </td>
+                                    <td class="num">{{ prod.revenue|fmt_rupee }}</td>
+                                    <td class="num growth-up">&#9650; {{ prod.growth }}%</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+
+
+            <!-- Inventory Health Breakdown Modal -->
+            <div class="tbl-overlay inventory-health-modal" id="bizInventoryHealthModal">
+                <div class="tbl-overlay-inner" style="max-width: 1000px;">
+                    <div class="tbl-overlay-header">
+                        <div>
+                            <span class="tbl-overlay-title">Inventory Health Breakdown (DOC)</span>
+                            <div style="font-size: 11px; color: var(--muted); margin-top: 4px;">
+                                DOC = Stock Qty / Same-Day Sales.
+                                OOS: Stock=0. Low Stock: DOC≤15. In Stock: 15&lt;DOC≤60. Overstock: DOC&gt;60.
+                            </div>
+                            {% if payload.inventory.details_truncated %}
+                            <div style="font-size: 11px; color: var(--muted); margin-top: 4px;">
+                                Showing latest {{ payload.inventory.details_shown|fmt_num }} of {{ payload.inventory.details_total|fmt_num }} rows.
+                            </div>
+                            {% endif %}
+                            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px;">
+                                <input
+                                    type="text"
+                                    class="inv-health-search"
+                                    placeholder="Search date, SKU, category, status..."
+                                    style="min-width:260px;padding:7px 10px;border:1px solid var(--border);border-radius:8px;font-size:12px;"
+                                >
+                                <button type="button" class="ceo-view-all-btn inv-health-download" data-format="csv">Download CSV</button>
+                                <button type="button" class="ceo-view-all-btn inv-health-download" data-format="excel">Download Excel</button>
+                            </div>
+                        </div>
+                        <button class="tbl-overlay-close" onclick="closeModal('bizInventoryHealthModal')">✕
+                            Close</button>
+                    </div>
+                    <div class="tbl-overlay-scroll">
+                        <table class="ceo-table inv-health-table" style="min-width: 800px;">
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th>SKU</th>
+                                    <th>Category</th>
+                                    <th class="num">Stock Qty</th>
+                                    <th class="num">Sale Qty</th>
+                                    <th class="num">DOC (Days)</th>
+                                    <th class="num">Revenue</th>
+                                    <th>Status</th>
+                                    <th>Calculation</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for item in payload.inventory.details %}
+                                <tr>
+                                    <td>{{ item.date|date:"d M Y" }}</td>
+                                    <td>
+                                        <div class="ceo-sku-cell">
+                                            <div class="ceo-sku-thumb">📦</div>
+                                            <span>{{ item.sku }}</span>
+                                        </div>
+                                    </td>
+                                    <td>{{ item.category }}</td>
+                                    <td class="num">{{ item.stock_qty|fmt_num }}</td>
+                                    <td class="num">{{ item.sale_qty|fmt_num }}</td>
+                                    <td class="num" style="font-weight:600;">{{ item.doc }}</td>
+                                    <td class="num">{{ item.revenue|fmt_rupee }}</td>
+                                    <td>
+                                        <span class="ceo-inv-value {{ item.status_class }}"
+                                            style="padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600;">
+                                            {{ item.status }}
+                                        </span>
+                                    </td>
+                                    <td
+                                        style="font-size: 11px; color: var(--muted); font-family: 'JetBrains Mono', monospace;">
+                                        {{ item.reason|safe }}
+                                    </td>
+                                </tr>
+                                {% empty %}
+                                <tr>
+                                    <td colspan="9" class="empty">No inventory data available</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Declining Products (MOM) — Full View Modal -->
+            <div class="tbl-overlay" id="bizDecliningModal">
+                <div class="tbl-overlay-inner">
+                    <div class="tbl-overlay-header">
+                        <span class="tbl-overlay-title">Declining Products (MOM) — Full View</span>
+                        <button class="tbl-overlay-close" onclick="closeModal('bizDecliningModal')">✕ Close</button>
+                    </div>
+                    <div class="tbl-overlay-scroll">
+                        <table class="ceo-table" style="min-width:600px;">
+                            <thead>
+                                <tr>
+                                    <th>SKU</th>
+                                    <th class="num">MOM Drop %</th>
+                                    <th class="num">Impact (₹)</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for prod in payload.cat_all_under_products %}
+                                <tr>
+                                    <td>
+                                        <div class="ceo-sku-cell">
+                                            <div class="ceo-sku-thumb">📦</div><span>{{ prod.sku }}</span>
+                                        </div>
+                                    </td>
+                                    <td class="num growth-down">▼ {{ prod.drop_pct|abs_val }}%</td>
+                                    <td class="num" style="color:var(--danger);">-{{ prod.impact|fmt_rupee }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Priority Calculation Details Modal -->
+            <div class="tbl-overlay" id="bizPriorityDetailsModal">
+                <div class="tbl-overlay-inner" style="max-width: 900px;">
+                    <div class="tbl-overlay-header">
+                        <div>
+                            <span class="tbl-overlay-title">Priority Calculation Logic</span>
+                            <div style="font-size: 11px; color: var(--muted); margin-top: 4px;">
+                                System-generated priorities based on business performance thresholds.
+                            </div>
+                        </div>
+                        <button class="tbl-overlay-close" onclick="closeModal('bizPriorityDetailsModal')">✕
+                            Close</button>
+                    </div>
+                    <div class="tbl-overlay-scroll">
+                        <table class="ceo-table">
+                            <thead>
+                                <tr>
+                                    <th>Rank</th>
+                                    <th>Priority Task</th>
+                                    <th>Level</th>
+                                    <th>Calculation Logic</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for task in payload.priorities %}
+                                <tr>
+                                    <td style="font-weight: 600; color: var(--muted);">#{{ task.rank }}</td>
+                                    <td>
+                                        <div style="font-weight: 600;">{{ task.title }}</div>
+                                        <div style="font-size: 11px; color: var(--muted);">{{ task.subtitle }}</div>
+                                    </td>
+                                    <td>
+                                        <span class="ceo-priority-badge {% if task.priority == 'High' %}high{% elif task.priority == 'Medium' %}medium{% else %}low{% endif %}">{{ task.priority }}</span>
+                                    </td>
+                                    <td
+                                        style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--accent);">
+                                        {{ task.calculation }}
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>

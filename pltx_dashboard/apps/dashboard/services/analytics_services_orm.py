@@ -1,5 +1,12 @@
 from django.db.models import Sum
 
+from apps.dashboard.services.metrics import (
+    amazon_cvr,
+    flipkart_cvr,
+    roas as calculate_roas,
+    tacos as calculate_tacos,
+)
+
 
 def generate_kpis_orm(qs, fk_qs, spend_qs=None):
     """
@@ -67,13 +74,12 @@ def generate_kpis_orm(qs, fk_qs, spend_qs=None):
     has_flipkart = bool(fk_qs is not None and fk_qs.exists())
 
     # Derived metrics
-    revenue_for_ads = revenue * 0.7  # Revenue * 0.7 for TACOS/ROAS
-    roas = (revenue_for_ads / spend) if spend > 0 else 0
+    roas = calculate_roas(revenue, spend)
     if has_flipkart and not has_amazon:
-        conversion = (pageviews / units) if units > 0 else 0
+        conversion = flipkart_cvr(units, pageviews)
     else:
-        conversion = (orders / pageviews * 100) if pageviews > 0 else 0
-    tacos = (spend / revenue_for_ads * 100) if revenue_for_ads > 0 else 0
+        conversion = amazon_cvr(orders, pageviews)
+    tacos = calculate_tacos(revenue, spend)
 
     return {
         # Core

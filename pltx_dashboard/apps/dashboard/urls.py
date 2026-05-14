@@ -8,6 +8,9 @@ from .views import (
     category_dashboard_view,
     download_calculated_data,
     download_demo_template,
+    dashboard_section_view,
+    filter_dropdown_options,
+    dashboard_refresh_status,
 )
 
 urlpatterns = [
@@ -21,6 +24,21 @@ urlpatterns = [
     path("dashboard/business/", business_dashboard_view, name="business-dashboard"),
     path("dashboard/ceo/", ceo_dashboard_view, name="ceo-dashboard"),
     path("dashboard/category/", category_dashboard_view, name="category-dashboard"),
+    path(
+        "dashboard/sections/<str:view_name>/<str:section>/",
+        dashboard_section_view,
+        name="dashboard-section",
+    ),
+    path(
+        "api/dashboard/filter-options/",
+        filter_dropdown_options,
+        name="dashboard-filter-options",
+    ),
+    path(
+        "api/dashboard/refresh-status/",
+        dashboard_refresh_status,
+        name="dashboard-refresh-status",
+    ),
     path(
         "dashboard/download/<str:file_format>/",
         download_calculated_data,

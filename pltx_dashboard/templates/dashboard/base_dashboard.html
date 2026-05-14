@@ -20,7 +20,7 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
     <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
     <link rel="stylesheet" href="/static/css/dashboard.css">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/choices.js@10.2.0/public/assets/styles/choices.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css">
     <style>
         /* ── Export Calculated Data Section ── */
         .download-export-section {
@@ -273,6 +273,15 @@
     </script>
     {% endif %}
 
+    <div id="globalUploadProgressNotifier"
+        style="display:none; position:fixed; top:24px; right:24px; z-index:3000; min-width:320px; max-width:460px; border-radius:12px; padding:12px 14px; box-shadow:0 8px 24px rgba(15,23,42,0.16); font-size:13px; font-weight:600; line-height:1.4; align-items:flex-start; gap:10px;">
+        <span class="material-icons-round" id="globalUploadProgressNotifierIcon" style="font-size:18px; margin-top:1px;">cloud_upload</span>
+        <div>
+            <div style="font-size:11px; font-weight:700; letter-spacing:0.3px; text-transform:uppercase; opacity:0.8;">Upload Progress</div>
+            <div id="globalUploadProgressNotifierText"></div>
+        </div>
+    </div>
+
     <!-- Sidebar Navigation -->
     <div class="app-sidebar">
         <div class="sidebar-brand">
@@ -366,8 +375,10 @@
     <!-- Main App Content -->
     <div class="app-main">
         <div class="topbar">
-            <div class="topbar-title" id="page-topbar-title">{% block dashboard_title %}Dashboard{% endblock %}</div>
-            <div class="topbar-subtitle" id="page-topbar-subtitle">{% block dashboard_subtitle %}Real-time business overview & performance insights{% endblock %}</div>
+            <div class="topbar-heading">
+                <div class="topbar-title" id="page-topbar-title">{% block dashboard_title %}Dashboard{% endblock %}</div>
+                <div class="topbar-subtitle" id="page-topbar-subtitle">{% block dashboard_subtitle %}Real-time business overview & performance insights{% endblock %}</div>
+            </div>
             <div class="topbar-spacer"></div>
 
             <div id="dashboardTopbarFilters">
@@ -375,24 +386,44 @@
                 {% endblock %}
             </div>
             <div class="user-profile">
-                <div class="user-avatar">
-                    {{ logged_user.fname|default:"U"|truncatechars:1 }}
-                    {{ logged_user.lname|default:"N"|truncatechars:1 }}
+                <div class="user-avatar" aria-hidden="true">
+                    <span class="material-icons-round user-avatar-icon">admin_panel_settings</span>
+                    <span class="user-avatar-initials">
+                        {{ logged_user.fname|default:"U"|truncatechars:1 }}{{ logged_user.lname|default:"N"|truncatechars:1 }}
+                    </span>
                 </div>
                 <div class="user-info">
                     <span class="user-name">{{ logged_user.fname }} {{ logged_user.lname }}</span>
-                    <span class="user-role" id="page-user-role">{% block user_role %}Business Head{% endblock %}</span>
+                    <span class="user-role-wrap">
+                        <span class="material-icons-round user-role-icon">verified_user</span>
+                        <span class="user-role" id="page-user-role">{% block user_role %}Business Head{% endblock %}</span>
+                    </span>
                 </div>
             </div>
             <a href="{% url 'account-logout' %}" class="btn-logout">
-                <span class="material-icons-round" style="font-size:16px">logout</span>
+                <span class="material-icons-round" style="font-size:17px">logout</span>
             </a>
         </div>
 
         <div id="stockUploadBanner"
-            style="margin: 12px 22px 0; background: #dc2626; color: #ffffff; border: 1px solid #b91c1c; border-radius: 10px; padding: 10px 14px; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; {% if show_stock_upload_banner %}display:flex;{% else %}display:none;{% endif %}">
-            <span class="material-icons-round" style="font-size: 18px;">warning</span>
-            <span>Please upload today's stock files to get inventory health.</span>
+            class="stock-upload-banner {% if show_stock_upload_banner %}is-visible{% else %}is-hidden{% endif %}">
+            <div class="stock-upload-banner-icon">
+                <span class="material-icons-round">inventory_2</span>
+            </div>
+            <div class="stock-upload-banner-content">
+                <div class="stock-upload-banner-title">Inventory Health Needs Today’s Stock Upload</div>
+                <div class="stock-upload-banner-text">Please upload today's Amazon and Flipkart stock files to get accurate inventory health.</div>
+            </div>
+            <a href="{% url 'dashboard-upload' %}" class="stock-upload-banner-cta">
+                <span class="material-icons-round">upload_file</span>
+                Upload Now
+            </a>
+        </div>
+
+        <div id="dashboardRefreshBanner"
+            style="margin: 12px 22px 0; border-radius: 10px; padding: 10px 14px; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; display:none;">
+            <span class="material-icons-round" style="font-size: 18px;" id="dashboardRefreshBannerIcon">autorenew</span>
+            <span id="dashboardRefreshBannerText"></span>
         </div>
 
         <!-- Secondary Filters Bar above KPIs -->
@@ -452,16 +483,10 @@
                     <select class="filter-select-top" id="platformSelect" name="platform"
                         onchange="syncFilterVisibility(); htmx.trigger('#dashboardFilterForm', 'submit')">
                         <option value="">All</option>
-                        {% if payload.filters.platforms %}
-                        {% for p in payload.filters.platforms %}
-                        <option value="{{ p }}" {% if request.GET.platform == p %}selected{% endif %}>{{ p }}</option>
-                        {% endfor %}
-                        {% else %}
                         <option value="Amazon" {% if request.GET.platform == 'Amazon' %}selected{% endif %}>Amazon
                         </option>
                         <option value="Flipkart" {% if request.GET.platform == 'Flipkart' %}selected{% endif %}>Flipkart
                         </option>
-                        {% endif %}
                     </select>
                 </div>
 
@@ -472,8 +497,8 @@
                     </span>
                     <select id="categorySelect" name="category" class="filter-select-top" multiple
                         onchange="htmx.trigger('#dashboardFilterForm', 'submit')">
-                        {% for c in payload.filters.categories %}
-                        <option value="{{ c }}" {% if selected_filters.categories and c in selected_filters.categories %}selected{% endif %}>{{ c }}</option>
+                        {% for c in selected_filters.categories %}
+                        <option value="{{ c }}" selected>{{ c }}</option>
                         {% endfor %}
                     </select>
                 </div>
@@ -484,8 +509,8 @@
                     </span>
                     <select id="asinSelect" name="asin" class="filter-select-top" multiple
                         onchange="htmx.trigger('#dashboardFilterForm', 'submit')">
-                        {% for a in payload.filters.asins %}
-                        <option value="{{ a }}" {% if selected_filters.asins and a in selected_filters.asins %}selected{% endif %}>{{ a }}</option>
+                        {% for a in selected_filters.asins %}
+                        <option value="{{ a }}" selected>{{ a }}</option>
                         {% endfor %}
                     </select>
                 </div>
@@ -496,8 +521,8 @@
                     </span>
                     <select id="fsnSelect" name="fsn" class="filter-select-top" multiple
                         onchange="htmx.trigger('#dashboardFilterForm', 'submit')">
-                        {% for f in payload.filters.fsns %}
-                        <option value="{{ f }}" {% if selected_filters.fsns and f in selected_filters.fsns %}selected{% endif %}>{{ f }}</option>
+                        {% for f in selected_filters.fsns %}
+                        <option value="{{ f }}" selected>{{ f }}</option>
                         {% endfor %}
                     </select>
                 </div>
@@ -550,6 +575,179 @@
         window.DASHBOARD_VIEW_TYPE = "{% block view_type %}business{% endblock %}";
         window.DASHBOARD_PAYLOAD = {{ payload_json|safe|default:"null" }};
         window.SELECTED_FILTERS = {{ selected_filters_json|safe|default:"{}" }};
+        window.DASHBOARD_REFRESH_STATUS = {{ dashboard_refresh_status_json|safe|default:'{"state":"idle","message":""}' }};
+        window.CURRENT_PAGE_URL_NAME = "{{ request.resolver_match.url_name|default:'' }}";
+        window.UPLOAD_PROGRESS_STORAGE_KEY = "pltx_upload_progress_v1";
+
+        function isUploadMenuPage() {
+            return window.CURRENT_PAGE_URL_NAME === "dashboard-upload";
+        }
+
+        function readUploadProgressState() {
+            try {
+                const raw = localStorage.getItem(window.UPLOAD_PROGRESS_STORAGE_KEY);
+                if (!raw) return { status: "", message: "", active: false, updated_at: 0 };
+                const parsed = JSON.parse(raw);
+                if (!parsed || typeof parsed !== "object") {
+                    return { status: "", message: "", active: false, updated_at: 0 };
+                }
+                return {
+                    status: String(parsed.status || ""),
+                    message: String(parsed.message || ""),
+                    active: Boolean(parsed.active),
+                    updated_at: Number(parsed.updated_at || 0),
+                    visible_until: Number(parsed.visible_until || 0),
+                };
+            } catch (e) {
+                return { status: "", message: "", active: false, updated_at: 0 };
+            }
+        }
+        window.readUploadProgressState = readUploadProgressState;
+
+        function writeUploadProgressState(next) {
+            try {
+                localStorage.setItem(window.UPLOAD_PROGRESS_STORAGE_KEY, JSON.stringify(next));
+            } catch (e) {
+                // ignore localStorage write failures
+            }
+        }
+
+        function showGlobalUploadNotifier(state) {
+            const box = document.getElementById('globalUploadProgressNotifier');
+            const icon = document.getElementById('globalUploadProgressNotifierIcon');
+            const text = document.getElementById('globalUploadProgressNotifierText');
+            if (!box || !icon || !text) return;
+
+            const now = Date.now();
+            const status = String(state.status || "").toLowerCase();
+            const isTransientVisible = state.visible_until && state.visible_until > now;
+            const shouldShow = !isUploadMenuPage() && (state.active || isTransientVisible);
+
+            if (!shouldShow) {
+                box.style.display = 'none';
+                return;
+            }
+
+            box.style.display = 'flex';
+            if (status === "processing" || status === "partial") {
+                box.style.background = '#eff6ff';
+                box.style.border = '1px solid #93c5fd';
+                box.style.color = '#1e3a8a';
+                icon.textContent = 'autorenew';
+            } else if (status === "paused") {
+                box.style.background = '#fef3c7';
+                box.style.border = '1px solid #f59e0b';
+                box.style.color = '#92400e';
+                icon.textContent = 'pause_circle';
+            } else if (status === "complete" || status === "success") {
+                box.style.background = '#dcfce7';
+                box.style.border = '1px solid #4ade80';
+                box.style.color = '#166534';
+                icon.textContent = 'check_circle';
+            } else if (status === "error") {
+                box.style.background = '#fee2e2';
+                box.style.border = '1px solid #f87171';
+                box.style.color = '#991b1b';
+                icon.textContent = 'error';
+            } else {
+                box.style.background = '#f8fafc';
+                box.style.border = '1px solid #cbd5e1';
+                box.style.color = '#1f2937';
+                icon.textContent = 'notifications';
+            }
+            text.textContent = state.message || 'Upload in progress...';
+        }
+
+        function emitUploadProgressEvent(state) {
+            window.dispatchEvent(new CustomEvent('pltx-upload-progress', { detail: state }));
+        }
+
+        window.setGlobalUploadProgress = function (payload) {
+            const prev = readUploadProgressState();
+            const next = {
+                status: String(payload.status || prev.status || ""),
+                message: String(payload.message || prev.message || ""),
+                active: typeof payload.active === "boolean" ? payload.active : prev.active,
+                updated_at: Date.now(),
+                visible_until: Number(payload.visible_until || prev.visible_until || 0),
+            };
+            writeUploadProgressState(next);
+            showGlobalUploadNotifier(next);
+            emitUploadProgressEvent(next);
+            return next;
+        };
+
+        window.clearGlobalUploadProgress = function () {
+            const next = { status: "", message: "", active: false, updated_at: Date.now(), visible_until: 0 };
+            writeUploadProgressState(next);
+            showGlobalUploadNotifier(next);
+            emitUploadProgressEvent(next);
+        };
+
+        (function connectGlobalUploadProgressSocket() {
+            let socket = null;
+            let reconnectTimer = null;
+
+            function scheduleReconnect() {
+                if (reconnectTimer) return;
+                reconnectTimer = setTimeout(() => {
+                    reconnectTimer = null;
+                    connect();
+                }, 3000);
+            }
+
+            function handleServerProgressMessage(data) {
+                const status = String(data.status || "").toLowerCase();
+                const message = String(data.message || "");
+                const now = Date.now();
+                const isProcessing = status === "processing" || status === "partial";
+                const isTerminal = status === "complete" || status === "success" || status === "error";
+                window.setGlobalUploadProgress({
+                    status,
+                    message,
+                    active: isProcessing,
+                    visible_until: isTerminal ? now + 12000 : 0,
+                });
+            }
+
+            function connect() {
+                if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
+                    return;
+                }
+                const wss = window.location.protocol === "https:" ? "wss" : "ws";
+                socket = new WebSocket(`${wss}://${window.location.host}/ws/upload-progress/`);
+                socket.onmessage = function (event) {
+                    try {
+                        const data = JSON.parse(event.data);
+                        handleServerProgressMessage(data);
+                    } catch (e) {
+                        // ignore malformed progress message
+                    }
+                };
+                socket.onclose = function () {
+                    socket = null;
+                    scheduleReconnect();
+                };
+                socket.onerror = function () {
+                    try {
+                        socket.close();
+                    } catch (e) {
+                        // ignore close errors
+                    }
+                };
+            }
+
+            document.addEventListener('DOMContentLoaded', function () {
+                showGlobalUploadNotifier(readUploadProgressState());
+                connect();
+            });
+
+            window.addEventListener('storage', function (event) {
+                if (event && event.key === window.UPLOAD_PROGRESS_STORAGE_KEY) {
+                    showGlobalUploadNotifier(readUploadProgressState());
+                }
+            });
+        })();
 
         // Function to update active nav item based on view type
         function updateActiveNav(viewType) {
@@ -641,10 +839,7 @@
 
         document.addEventListener("DOMContentLoaded", function () {
             initFlatpickr();
-
-            // ── Choices.js multi-select init (centralized, with instance tracking) ──
-            initChoicesJs();
-
+            initRemoteFilterSelects();
             // Set initial platform-dependent filter visibility
             syncFilterVisibility();
         });
@@ -692,45 +887,100 @@
             }
         }
     </script>
-    <script src="https://cdn.jsdelivr.net/npm/choices.js@10.2.0/public/assets/scripts/choices.min.js"></script>
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
     <script src="/static/js/filters.js"></script>
     <script src="/static/js/spa.js"></script>
     <script src="/static/js/charts.js"></script>
     <script>
-        // ── Choices.js instance registry ─────────────────────────────────────────
-        var _choicesInstances = {};
-
-        var _choicesDefs = [
-            { id: 'categorySelect', placeholder: 'All Categories', search: 'Search categories...', noResult: 'No categories found', noChoices: 'No categories available' },
-            { id: 'asinSelect', placeholder: 'All ASINs', search: 'Search ASINs...', noResult: 'No ASINs found', noChoices: 'No ASINs available' },
-            { id: 'fsnSelect', placeholder: 'All FSNs', search: 'Search FSNs...', noResult: 'No FSNs found', noChoices: 'No FSNs available' },
+        var _remoteFilterDefs = [
+            { id: 'categorySelect', field: 'category', placeholder: 'All Categories' },
+            { id: 'asinSelect', field: 'asin', placeholder: 'All ASINs' },
+            { id: 'fsnSelect', field: 'fsn', placeholder: 'All FSNs' },
         ];
 
-        /** Destroy + recreate Choices.js wrappers on the 3 filter selects. */
-        function initChoicesJs() {
-            if (typeof Choices === 'undefined') return;
-            _choicesDefs.forEach(function (def) {
+        function _buildRemoteFilterQueryString(field, term, page) {
+            var query = new URLSearchParams();
+            query.set('field', field);
+            query.set('q', term || '');
+            query.set('page', String(page || 1));
+            query.set('page_size', '50');
+
+            var form = document.getElementById('dashboardFilterForm');
+            if (form) {
+                var fd = new FormData(form);
+                fd.forEach(function (value, key) {
+                    if (!value) return;
+                    if (key === field || key === 'field' || key === 'q' || key === 'page' || key === 'page_size') return;
+                    query.append(key, value);
+                });
+            } else {
+                var current = new URLSearchParams(window.location.search || '');
+                current.forEach(function (value, key) {
+                    if (!value) return;
+                    if (key === field || key === 'field' || key === 'q' || key === 'page' || key === 'page_size') return;
+                    query.append(key, value);
+                });
+            }
+            return query.toString();
+        }
+
+        function initRemoteFilterSelects() {
+            if (typeof window.jQuery === 'undefined') return;
+            var $ = window.jQuery;
+            if (!$.fn || !$.fn.select2) return;
+
+            _remoteFilterDefs.forEach(function (def) {
                 var el = document.getElementById(def.id);
-                if (!el) return;
-                // Destroy existing instance cleanly
-                if (_choicesInstances[def.id]) {
-                    try { _choicesInstances[def.id].destroy(); } catch (e) { }
-                    delete _choicesInstances[def.id];
+                if (!el) {
+                    return;
                 }
-                try {
-                    _choicesInstances[def.id] = new Choices(el, {
-                        removeItemButton: true,
-                        searchEnabled: true,
-                        shouldSort: false,
-                        placeholder: true,
-                        placeholderValue: def.placeholder,
-                        itemSelectText: '',
-                        position: 'bottom',
-                        searchPlaceholderValue: def.search,
-                        noResultsText: def.noResult,
-                        noChoicesText: def.noChoices
-                    });
-                } catch (e) { console.warn('Choices init failed for ' + def.id, e); }
+
+                var $el = $(el);
+                if ($el.data('select2')) {
+                    try {
+                        $el.select2('destroy');
+                    } catch (e) { }
+                }
+
+                $el.select2({
+                    width: '220px',
+                    placeholder: def.placeholder,
+                    closeOnSelect: false,
+                    allowClear: false,
+                    ajax: {
+                        url: '/api/dashboard/filter-options/',
+                        dataType: 'json',
+                        delay: 250,
+                        transport: function (params, success, failure) {
+                            var term = (params.data && params.data.term) || '';
+                            var page = (params.data && params.data.page) || 1;
+                            var query = _buildRemoteFilterQueryString(def.field, term, page);
+                            fetch('/api/dashboard/filter-options/?' + query, {
+                                credentials: 'same-origin',
+                                headers: { 'X-Requested-With': 'XMLHttpRequest' }
+                            })
+                                .then(function (response) {
+                                    if (!response.ok) throw new Error('HTTP ' + response.status);
+                                    return response.json();
+                                })
+                                .then(success)
+                                .catch(failure);
+                        },
+                        processResults: function (data) {
+                            return {
+                                results: (data.results || []).map(function (row) {
+                                    return { id: row.value, text: row.label };
+                                }),
+                                pagination: {
+                                    more: !!(data.pagination && data.pagination.has_next),
+                                },
+                            };
+                        },
+                        cache: true,
+                    },
+                    minimumInputLength: 0,
+                });
             });
         }
 
@@ -760,8 +1010,8 @@
             var pageStyles = document.getElementById('page-specific-styles');
             if (pageStyles) pageStyles.textContent = '';
 
-            // 1. Initialize choices on fresh, server-rendered select elements
-            initChoicesJs();
+            // 1. Re-initialize remote dropdowns on fresh server-rendered select elements
+            initRemoteFilterSelects();
             if (typeof initFlatpickr === 'function') initFlatpickr();
             if (typeof syncFilterVisibility === 'function') syncFilterVisibility();
 
@@ -816,6 +1066,94 @@
             window.location.href = url;
         }
 
+        var dashboardRefreshPollTimer = null;
+        var dashboardRefreshLastState = null;
+        var dashboardRefreshTerminalHideTimer = null;
+
+        function clearDashboardTerminalHideTimer() {
+            if (!dashboardRefreshTerminalHideTimer) return;
+            clearTimeout(dashboardRefreshTerminalHideTimer);
+            dashboardRefreshTerminalHideTimer = null;
+        }
+
+        function renderDashboardRefreshBanner(status) {
+            var banner = document.getElementById('dashboardRefreshBanner');
+            var text = document.getElementById('dashboardRefreshBannerText');
+            var icon = document.getElementById('dashboardRefreshBannerIcon');
+            if (!banner || !text || !icon) return;
+
+            var state = (status && status.state) ? String(status.state).toLowerCase() : 'idle';
+            var message = (status && status.message) ? String(status.message) : '';
+
+            if (state === 'processing') {
+                clearDashboardTerminalHideTimer();
+                banner.style.display = 'flex';
+                banner.style.background = '#fef3c7';
+                banner.style.color = '#92400e';
+                banner.style.border = '1px solid #f59e0b';
+                icon.textContent = 'autorenew';
+                text.textContent = message || 'Dashboard updating in process as per the new uploaded data.';
+            } else if (state === 'success') {
+                clearDashboardTerminalHideTimer();
+                banner.style.display = 'flex';
+                banner.style.background = '#dcfce7';
+                banner.style.color = '#166534';
+                banner.style.border = '1px solid #22c55e';
+                icon.textContent = 'check_circle';
+                text.textContent = message || 'Dashboard updated with the new updated data.';
+                dashboardRefreshTerminalHideTimer = setTimeout(function () {
+                    banner.style.display = 'none';
+                }, 9000);
+            } else if (state === 'error') {
+                clearDashboardTerminalHideTimer();
+                banner.style.display = 'flex';
+                banner.style.background = '#fee2e2';
+                banner.style.color = '#991b1b';
+                banner.style.border = '1px solid #ef4444';
+                icon.textContent = 'error';
+                text.textContent = message || 'Dashboard update failed.';
+                dashboardRefreshTerminalHideTimer = setTimeout(function () {
+                    banner.style.display = 'none';
+                }, 9000);
+            } else {
+                clearDashboardTerminalHideTimer();
+                banner.style.display = 'none';
+            }
+        }
+
+        function startDashboardRefreshPolling() {
+            if (dashboardRefreshPollTimer) return;
+            dashboardRefreshPollTimer = setInterval(fetchDashboardRefreshStatus, 3000);
+        }
+
+        function stopDashboardRefreshPolling() {
+            if (!dashboardRefreshPollTimer) return;
+            clearInterval(dashboardRefreshPollTimer);
+            dashboardRefreshPollTimer = null;
+        }
+
+        async function fetchDashboardRefreshStatus() {
+            try {
+                var resp = await fetch('/api/dashboard/refresh-status/', {
+                    credentials: 'same-origin',
+                    headers: { 'X-Requested-With': 'XMLHttpRequest' }
+                });
+                if (!resp.ok) return;
+                var data = await resp.json();
+                renderDashboardRefreshBanner(data);
+
+                var state = (data && data.state) ? String(data.state).toLowerCase() : 'idle';
+                if (state === 'processing') {
+                    startDashboardRefreshPolling();
+                } else {
+                    stopDashboardRefreshPolling();
+                }
+                dashboardRefreshLastState = state;
+            } catch (e) {
+                // Keep UI stable on temporary network errors.
+            }
+        }
+
         // ── HTMX loading spinner ────────────────────────────────────────────────
         (function () {
             var overlay = document.getElementById('htmxLoadingOverlay');
@@ -838,6 +1176,17 @@
                 overlay.style.display = 'none';
             });
         })();
+
+        document.addEventListener('DOMContentLoaded', function () {
+            renderDashboardRefreshBanner(window.DASHBOARD_REFRESH_STATUS || { state: 'idle', message: '' });
+            var initialState = ((window.DASHBOARD_REFRESH_STATUS || {}).state || 'idle').toLowerCase();
+            dashboardRefreshLastState = initialState;
+            if (initialState === 'processing') {
+                startDashboardRefreshPolling();
+            } else {
+                fetchDashboardRefreshStatus();
+            }
+        });
     </script>
     {% block dashboard_scripts %}{% endblock %}
 </body>

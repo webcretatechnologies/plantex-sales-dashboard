@@ -35,7 +35,7 @@ def generate_master_report(
 
     # --- Load Sales Data ---
     try:
-        sales_df = pd.read_csv(sales_file)
+        sales_df = load_data(sales_file)
         print(f" Loaded Sales Data: {len(sales_df)} rows")
     except Exception as e:
         print(f" Error reading sales file: {e}")
@@ -79,7 +79,7 @@ def generate_master_report(
 
     # --- Load Business Report Data ---
     try:
-        business_df = pd.read_csv(business_report_file)
+        business_df = load_data(business_report_file)
         print(f" Loaded Business Report Data: {len(business_df)} rows")
     except Exception as e:
         print(f" Error reading business report file: {e}")
@@ -95,16 +95,21 @@ def generate_master_report(
 
     # --- Generate Ideal Cluster Mapping ---
     try:
-        raw_sales_df = pd.read_csv(
-            raw_sales_file, dtype={"Shipment To Postal Code": str}
-        )
-        pin_code_df = pd.read_csv(pin_code_file, dtype={"PIN CODE": str})
+        raw_sales_df = load_data(raw_sales_file)
+        pin_code_df = load_data(pin_code_file)
         fc_mapping_df = load_data(fc_mapping_file)
         
         # Strip and uppercase column names for robustness
         raw_sales_df.columns = raw_sales_df.columns.astype(str).str.strip().str.upper()
         pin_code_df.columns = pin_code_df.columns.astype(str).str.strip().str.upper()
         fc_mapping_df.columns = fc_mapping_df.columns.astype(str).str.strip().str.upper()
+
+        if "SHIPMENT TO POSTAL CODE" in raw_sales_df.columns:
+            raw_sales_df["SHIPMENT TO POSTAL CODE"] = raw_sales_df[
+                "SHIPMENT TO POSTAL CODE"
+            ].astype(str)
+        if "PIN CODE" in pin_code_df.columns:
+            pin_code_df["PIN CODE"] = pin_code_df["PIN CODE"].astype(str)
 
         print(
             f" Loaded Raw Sales ({len(raw_sales_df)} rows), Pin Codes ({len(pin_code_df)} rows), and FC Mapping ({len(fc_mapping_df)} rows)"
@@ -158,7 +163,7 @@ def generate_master_report(
     # --- Load Input Sheet Parameters ---
     print("\nLoading Input Sheet Parameters...")
     try:
-        input_sheet_df = pd.read_excel(input_sheet_file)
+        input_sheet_df = load_data(input_sheet_file)
         input_sheet_df.columns = input_sheet_df.columns.str.strip()
 
         def get_input_val(particular, default):
