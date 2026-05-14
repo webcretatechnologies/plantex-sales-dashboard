@@ -1,0 +1,8 @@
+{% include section_template %}
+<script>
+    window.DASHBOARD_PAYLOAD = {{ payload_json|safe|default:"null" }};
+    document.body.dispatchEvent(new CustomEvent('dashboardPayloadReady'));
+    document.dispatchEvent(new CustomEvent('dashboardContentLoaded', {
+        detail: { viewType: '{{ dashboard_section_view_type }}' }
+    }));
+</script>

@@ -86,6 +86,7 @@ class FBAStockData(models.Model):
         unique_together = ("user", "asin", "date", "disposition", "location")
         indexes = [
             models.Index(fields=["user", "asin"], name="idx_fba_user_asin"),
+            models.Index(fields=["user", "date", "asin"], name="idx_fba_u_date_asin"),
         ]
 
     def __str__(self):
@@ -108,6 +109,7 @@ class FlexStockData(models.Model):
         indexes = [
             models.Index(fields=["user", "asin"], name="idx_flex_user_asin"),
             models.Index(fields=["user", "asin", "date"], name="idx_flex_u_a_d"),
+            models.Index(fields=["user", "date", "asin"], name="idx_flex_u_date_asin"),
         ]
 
     def __str__(self):
@@ -143,10 +145,19 @@ class ProcessedDashboardData(models.Model):
             models.Index(fields=["user", "category", "date"], name="idx_user_cat_date"),
             models.Index(fields=["user", "date"], name="idx_user_date"),
             models.Index(fields=["user", "asin", "date"], name="idx_user_asin_date"),
+            models.Index(fields=["user", "asin"], name="idx_pdd_u_asin"),
+            models.Index(fields=["user", "category"], name="idx_pdd_u_cat"),
+            models.Index(fields=["user", "portfolio"], name="idx_pdd_u_port"),
+            models.Index(fields=["user", "subcategory"], name="idx_pdd_u_sub"),
             models.Index(
                 fields=["user", "date", "portfolio", "category"],
                 name="idx_u_d_p_c",
             ),
+            models.Index(fields=["user", "portfolio", "date"], name="idx_pdd_u_port_date"),
+            models.Index(fields=["user", "subcategory", "date"], name="idx_pdd_u_sub_date"),
+            models.Index(fields=["user", "category", "asin"], name="idx_pdd_u_cat_asn"),
+            models.Index(fields=["user", "portfolio", "asin"], name="idx_pdd_u_prt_asn"),
+            models.Index(fields=["user", "subcategory", "asin"], name="idx_pdd_u_sub_asn"),
         ]
 
 
@@ -189,6 +200,12 @@ class FlipkartCategoryMap(models.Model):
 
     class Meta:
         unique_together = ("user", "fsn")
+        indexes = [
+            models.Index(fields=["user", "category"], name="idx_fkcat_u_cat"),
+            models.Index(fields=["user", "portfolio"], name="idx_fkcat_u_port"),
+            models.Index(fields=["user", "subcategory"], name="idx_fkcat_u_sub"),
+            models.Index(fields=["user", "product_status"], name="idx_fkcat_u_status"),
+        ]
 
 
 class FlipkartPrice(models.Model):
@@ -217,14 +234,18 @@ class FlipkartPLA(models.Model):
 
     class Meta:
         unique_together = ("user", "campaign_id", "fsn_id", "date")
+        indexes = [
+            models.Index(fields=["user", "fsn_id", "date"], name="idx_fkpla_u_fsn_date"),
+        ]
 
 
 class FlipkartInventoryStock(models.Model):
-    """FK Inventory file — FSN-level current stock snapshot (FK.xlsx)."""
+    """FK Inventory file — FSN-level stock snapshot per date (FK.xlsx)."""
 
     user = models.ForeignKey(
         "accounts.Users", on_delete=models.CASCADE, related_name="fk_inventory_stock"
     )
+    date = models.DateField(db_index=True)
     fsn = models.CharField(max_length=50, db_index=True)
     sku = models.CharField(max_length=200, null=True, blank=True)
     product_status = models.CharField(max_length=50, null=True, blank=True)
@@ -232,11 +253,43 @@ class FlipkartInventoryStock(models.Model):
     qty = models.IntegerField(default=0)
 
     class Meta:
-        unique_together = ("user", "fsn")
+        unique_together = ("user", "fsn", "date")
+        indexes = [
+            models.Index(fields=["user", "date", "fsn"], name="idx_fkinv_u_d_fsn"),
+            models.Index(fields=["user", "fsn"], name="idx_fkinv_u_fsn"),
+        ]
         verbose_name = "Flipkart Inventory Stock"
 
     def __str__(self):
-        return f"FK Inventory: {self.fsn} ({self.qty})"
+        return f"FK Inventory: {self.fsn} ({self.qty}) [{self.date}]"
+
+
+class Flipkartfba(models.Model):
+    """Flipkart FBA current inventory report (FSN/date-level)."""
+
+    user = models.ForeignKey(
+        "accounts.Users", on_delete=models.CASCADE, related_name="fk_fba_stock_data"
+    )
+    date = models.DateField(db_index=True)
+    fsn = models.CharField(max_length=50, db_index=True)
+    warehouse_id = models.CharField(max_length=200, null=True, blank=True)
+    sku = models.CharField(max_length=200, null=True, blank=True)
+    title = models.CharField(max_length=500, null=True, blank=True)
+    listing_id = models.CharField(max_length=120, null=True, blank=True)
+    brand = models.CharField(max_length=120, null=True, blank=True)
+    flipkart_selling_price = models.FloatField(default=0.0)
+    live_on_website = models.IntegerField(default=0)
+
+    class Meta:
+        unique_together = ("user", "date", "fsn", "warehouse_id")
+        indexes = [
+            models.Index(fields=["user", "date", "fsn"], name="idx_fkfba_u_d_fsn"),
+            models.Index(fields=["user", "fsn"], name="idx_fkfba_u_fsn"),
+        ]
+        verbose_name = "Flipkart FBA"
+
+    def __str__(self):
+        return f"FK FBA: {self.fsn} ({self.live_on_website}) [{self.date}]"
 
 
 class FlipkartProcessedDashboardData(models.Model):
@@ -275,8 +328,53 @@ class FlipkartProcessedDashboardData(models.Model):
             ),
             models.Index(fields=["user", "date"], name="idx_fk_user_date"),
             models.Index(fields=["user", "fsn", "date"], name="idx_fk_user_fsn_date"),
+            models.Index(fields=["user", "fsn"], name="idx_fkpdd_u_fsn"),
+            models.Index(fields=["user", "category"], name="idx_fkpdd_u_cat"),
+            models.Index(fields=["user", "portfolio"], name="idx_fkpdd_u_port"),
+            models.Index(fields=["user", "subcategory"], name="idx_fkpdd_u_sub"),
             models.Index(
                 fields=["user", "date", "portfolio", "category"],
                 name="idx_fk_u_d_p_c",
             ),
+            models.Index(
+                fields=["user", "portfolio", "date"],
+                name="idx_fkpdd_u_port_date",
+            ),
+            models.Index(
+                fields=["user", "subcategory", "date"],
+                name="idx_fkpdd_u_sub_date",
+            ),
+            models.Index(fields=["user", "category", "fsn"], name="idx_fkpd_u_cat_fsn"),
+            models.Index(fields=["user", "portfolio", "fsn"], name="idx_fkpd_u_prt_fsn"),
+            models.Index(fields=["user", "subcategory", "fsn"], name="idx_fkpd_u_sub_fsn"),
+        ]
+
+
+class DashboardMaterializedSummary(models.Model):
+    """
+    Persistent payload cache keyed by normalized filters + data version.
+    Keeps repeated dashboard filter views fast even across process restarts.
+    """
+
+    user = models.ForeignKey(
+        "accounts.Users",
+        on_delete=models.CASCADE,
+        related_name="dashboard_materialized_summaries",
+    )
+    view_type = models.CharField(max_length=20, default="shared", db_index=True)
+    data_version = models.BigIntegerField(default=0, db_index=True)
+    filter_hash = models.CharField(max_length=64, db_index=True)
+    normalized_filters = models.TextField()
+    payload_blob = models.BinaryField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ("user", "view_type", "data_version", "filter_hash")
+        indexes = [
+            models.Index(
+                fields=["user", "view_type", "data_version"],
+                name="idx_dms_u_v_dv",
+            ),
+            models.Index(fields=["user", "updated_at"], name="idx_dms_u_upd"),
         ]

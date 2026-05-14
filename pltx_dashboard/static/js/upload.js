@@ -8,6 +8,48 @@ function getCookie(name) {
     return v;
 }
 
+let uploadFlowPlatform = null;
+let uploadFlowStarted = false;
+let uploadFlowCompleted = false;
+
+function syncInlineUploadStatusFromState(state) {
+    const statusEl = document.getElementById('statusMsg');
+    if (!statusEl) return;
+    const message = String((state && state.message) || "");
+    if (!message) return;
+    statusEl.textContent = `⚙️ ${message}`;
+}
+
+function handleGlobalUploadProgressEvent(event) {
+    const data = (event && event.detail) || {};
+    const statusEl = document.getElementById('statusMsg');
+    if (!statusEl) return;
+
+    const status = String(data.status || "").toLowerCase();
+    const message = String(data.message || "");
+    if (message) {
+        statusEl.textContent = `⚙️ ${message}`;
+    }
+
+    if (status === "complete" || status === "success") {
+        uploadFlowCompleted = true;
+        statusEl.textContent = "✅ All files processed successfully!";
+        if (uploadFlowStarted && uploadFlowPlatform) {
+            if (uploadFlowPlatform === 'amazon') {
+                uploadFlowCompleted = true;
+                setTimeout(() => { window.location.href = '/dashboard/business/'; }, 500);
+            } else if (uploadFlowPlatform === 'flipkart') {
+                uploadFlowCompleted = true;
+                setTimeout(() => { window.location.href = '/dashboard/business/?platform=Flipkart'; }, 500);
+            }
+        }
+    } else if (status === "error") {
+        uploadFlowCompleted = true;
+        const btn = document.getElementById('loadBtn');
+        if (btn) btn.disabled = false;
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Platform Switching
 // ---------------------------------------------------------------------------
@@ -35,11 +77,11 @@ const AMAZON_LISTS = ['fileList', 'catFileList', 'spendFileList', 'priceFileList
 
 const FK_IDS = [
     'fkSearchTrafficFile', 'fkCategoryFile', 'fkPriceFile',
-    'fkPlaNewFile', 'fkInventoryFile'
+    'fkPlaNewFile', 'fkFbaStockFile', 'fkInventoryFile'
 ];
 const FK_LISTS = [
     'fkSearchTrafficFileList', 'fkCategoryFileList', 'fkPriceFileList',
-    'fkPlaNewFileList', 'fkInventoryFileList'
+    'fkPlaNewFileList', 'fkFbaStockFileList', 'fkInventoryFileList'
 ];
 
 const DEMO_TEMPLATE_MAP = {
@@ -53,6 +95,7 @@ const DEMO_TEMPLATE_MAP = {
     fkCategoryFile: 'fk_category',
     fkPriceFile: 'fk_price',
     fkPlaNewFile: 'fk_pla',
+    fkFbaStockFile: 'fk_fba_stock',
     fkInventoryFile: 'fk_inventory',
 };
 
@@ -131,6 +174,7 @@ function updateProcessButton() {
     { id: 'fkCategoryFile', listId: 'fkCategoryFileList' },
     { id: 'fkPriceFile', listId: 'fkPriceFileList' },
     { id: 'fkPlaNewFile', listId: 'fkPlaNewFileList' },
+    { id: 'fkFbaStockFile', listId: 'fkFbaStockFileList' },
     { id: 'fkInventoryFile', listId: 'fkInventoryFileList' },
     // Amazon stock files
     { id: 'fbaStockFile', listId: 'fbaStockFileList' },
@@ -147,97 +191,32 @@ function updateProcessButton() {
     });
 });
 
-// ---------------------------------------------------------------------------
-// Poll a Celery task until it resolves (configurable timeout, with backoff)
-// ---------------------------------------------------------------------------
-function pollTaskStatus(taskId) {
-    return new Promise((resolve, reject) => {
-        const MAX_TIMEOUT_MS = Number(window.UPLOAD_TASK_TIMEOUT_MS) > 0
-            ? Number(window.UPLOAD_TASK_TIMEOUT_MS)
-            : 30 * 60 * 1000; // fallback: 30 minutes
-        const startedAt = Date.now();
-        let delay = 1500;
-        let transientErrors = 0;
-
-        const doCheck = async () => {
-            const elapsed = Date.now() - startedAt;
-            if (elapsed >= MAX_TIMEOUT_MS) {
-                const minutes = Math.round(MAX_TIMEOUT_MS / 60000);
-                reject(new Error(`Processing timed out after ${minutes} minutes. The task may still be running in the background - please check back later.`));
-                return;
-            }
-
-            try {
-                const resp = await fetch(`/api/upload/status/${taskId}/`, {
-                    credentials: 'same-origin',
-                });
-
-                if (!resp.ok) {
-                    if (resp.status >= 500) {
-                        delay = Math.min(delay * 1.2, 5000);
-                        setTimeout(doCheck, delay);
-                        return;
-                    }
-                    reject(new Error(`Server error: HTTP ${resp.status}`));
-                    return;
-                }
-
-                const data = await resp.json();
-                transientErrors = 0;
-
-                if (data.status === 'success') {
-                    resolve(data);
-                } else if (data.status === 'error') {
-                    reject(new Error(data.message || 'Processing failed'));
-                } else {
-                    // Still processing - schedule next check with slight backoff (max 4s)
-                    delay = Math.min(delay * 1.05, 4000);
-                    setTimeout(doCheck, delay);
-                }
-            } catch (err) {
-                transientErrors += 1;
-                if (transientErrors >= 5) {
-                    reject(new Error(`Network error while checking task status: ${err.message || err}`));
-                    return;
-                }
-                delay = Math.min(delay * 1.2, 5000);
-                setTimeout(doCheck, delay);
-            }
-        };
-
-        doCheck();
-    });
+function generateBatchId() {
+    if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+        return window.crypto.randomUUID().replace(/-/g, '');
+    }
+    return `batch_${Date.now()}_${Math.random().toString(16).slice(2, 10)}`;
 }
 
-// ---------------------------------------------------------------------------
-// Main upload handler
-// ---------------------------------------------------------------------------
 async function loadDashboard() {
     let btn = document.getElementById('loadBtn');
     let status = document.getElementById('statusMsg');
     let platform = getSelectedPlatform();
+    uploadFlowPlatform = platform;
+    uploadFlowStarted = true;
+    uploadFlowCompleted = false;
 
     btn.disabled = true;
-    let wss = window.location.protocol === "https:" ? "wss" : "ws";
-    let ws = new WebSocket(`${wss}://${window.location.host}/ws/upload-progress/`);
-
-    ws.onmessage = function(event) {
-        let data = JSON.parse(event.data);
-        status.textContent = `⚙️ ${data.message}`;
-        if (data.status === 'complete') {
-            status.textContent = '✅ All files processed successfully!';
-            if (platform === 'amazon') {
-                setTimeout(() => { window.location.href = '/dashboard/business/'; }, 500);
-            } else if (platform === 'flipkart') {
-                setTimeout(() => { window.location.href = '/dashboard/business/?platform=Flipkart'; }, 500);
-            }
-        } else if (data.status === 'error') {
-            btn.disabled = false;
-        }
-    };
 
     try {
         status.textContent = '⏳ Queuing files...';
+        if (typeof window.setGlobalUploadProgress === "function") {
+            window.setGlobalUploadProgress({
+                status: "processing",
+                message: "Files are queued for upload.",
+                active: true,
+            });
+        }
 
         // Collect all file-type pairs based on platform
         let fileQueue = [];
@@ -259,6 +238,7 @@ async function loadDashboard() {
             for (let i = 0; i < flexStockFiles.length; i++) fileQueue.push({ file: flexStockFiles[i], type: 'flex_stock' });
 
             if (fileQueue.length === 0) {
+                uploadFlowStarted = false;
                 alert("Please upload at least one Amazon file.");
                 btn.disabled = false;
                 return;
@@ -271,6 +251,7 @@ async function loadDashboard() {
                 { inputId: 'fkCategoryFile',      type: 'fk_category' },
                 { inputId: 'fkPriceFile',         type: 'fk_price' },
                 { inputId: 'fkPlaNewFile',        type: 'fk_pla' },
+                { inputId: 'fkFbaStockFile',      type: 'fk_fba_stock' },
                 { inputId: 'fkInventoryFile',     type: 'fk_inventory' },
             ];
 
@@ -279,7 +260,8 @@ async function loadDashboard() {
                 return !el || !el.files || el.files.length === 0;
             });
             if (missingFlipkartInputs.length > 0) {
-                alert("Please upload all Flipkart required files: Search Traffic, Category, PLA, Price, and FK Inventory.");
+                uploadFlowStarted = false;
+                alert("Please upload all Flipkart required files: Search Traffic, Category, PLA, Price, FK FBA Stock, and FK Inventory.");
                 btn.disabled = false;
                 return;
             }
@@ -295,22 +277,30 @@ async function loadDashboard() {
         }
 
         let totalFiles = fileQueue.length;
+        let batchId = generateBatchId();
 
         for (let idx = 0; idx < fileQueue.length; idx++) {
             let item = fileQueue[idx];
-            let isLast = (idx === totalFiles - 1);
 
             status.textContent = `⏳ Uploading ${item.file.name} (${idx + 1}/${totalFiles})...`;
+            if (typeof window.setGlobalUploadProgress === "function") {
+                window.setGlobalUploadProgress({
+                    status: "processing",
+                    message: `Uploading ${item.file.name} (${idx + 1}/${totalFiles})...`,
+                    active: true,
+                });
+            }
 
             let form = new FormData();
             form.append("file", item.file);
             form.append("file_type", item.type);
-            if (isLast) form.append("is_last", "true");
+            form.append("batch_id", batchId);
+            form.append("batch_total", String(totalFiles));
 
             // For Amazon sales, extract date from filename
             if (item.type === 'sales') {
                 let filename = item.file.name;
-                let dateStr = filename.replace(/\.csv$/i, '').substring(0, 10);
+                let dateStr = filename.replace(/\.(csv|xlsx|xls|xlsm)$/i, '').substring(0, 10);
                 form.append("date", dateStr);
             }
 
@@ -323,36 +313,48 @@ async function loadDashboard() {
 
             let respData = await resp.json();
 
-            if (resp.status === 202 && respData.task_id) {
-                // File accepted — poll until processing completes
-                status.textContent = `⚙️ Processing ${item.file.name} (${idx + 1}/${totalFiles})...`;
-                try {
-                    await pollTaskStatus(respData.task_id);
-                } catch (taskErr) {
-                    // WebSocket will show the error too, but update status here
-                    status.textContent = `❌ Error processing ${item.file.name}: ${taskErr.message}`;
-                    btn.disabled = false;
-                    return;
-                }
-            } else if (!resp.ok) {
+            if (!resp.ok) {
                 status.textContent = `❌ Upload failed: ${respData.error || 'Unknown error'}`;
+                if (typeof window.setGlobalUploadProgress === "function") {
+                    window.setGlobalUploadProgress({
+                        status: "error",
+                        message: `Upload failed: ${respData.error || 'Unknown error'}`,
+                        active: false,
+                        visible_until: Date.now() + 12000,
+                    });
+                }
                 btn.disabled = false;
                 return;
             }
         }
 
-        // If WebSocket hasn't already updated to "complete", set a fallback
-        if (status.textContent.includes('Processing') || status.textContent.includes('Uploading')) {
-            status.textContent = '✅ All files processed successfully!';
-            if (platform === 'amazon') {
-                setTimeout(() => { window.location.href = '/dashboard/business/'; }, 500);
-            } else if (platform === 'flipkart') {
-                setTimeout(() => { window.location.href = '/dashboard/business/?platform=Flipkart'; }, 500);
-            }
+        status.textContent = "✅ All files uploaded. Processing continues in background. You can navigate safely.";
+        if (typeof window.setGlobalUploadProgress === "function") {
+            window.setGlobalUploadProgress({
+                status: "processing",
+                message: "All files uploaded. Processing and dashboard update continue in background.",
+                active: true,
+            });
         }
 
     } catch (err) {
+        uploadFlowCompleted = true;
         status.textContent = "❌ " + err.message;
+        if (typeof window.setGlobalUploadProgress === "function") {
+            window.setGlobalUploadProgress({
+                status: "error",
+                message: err.message || "Upload failed.",
+                active: false,
+                visible_until: Date.now() + 12000,
+            });
+        }
         btn.disabled = false;
     }
 }
+
+document.addEventListener('DOMContentLoaded', function () {
+    if (typeof window.readUploadProgressState === "function") {
+        syncInlineUploadStatusFromState(window.readUploadProgressState());
+    }
+    window.addEventListener('pltx-upload-progress', handleGlobalUploadProgressEvent);
+});

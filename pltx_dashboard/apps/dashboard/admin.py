@@ -9,6 +9,7 @@ from .models import (
     ProcessedDashboardData,
     FlipkartSearchTraffic,
     FlipkartCategoryMap,
+    Flipkartfba,
     FlipkartPrice,
     FlipkartPLA,
     FlipkartProcessedDashboardData,
@@ -87,6 +88,13 @@ class FlipkartCategoryMapAdmin(admin.ModelAdmin):
 class FlipkartPriceAdmin(admin.ModelAdmin):
     list_display = ("user", "fsn", "price")
     search_fields = ("fsn",)
+
+
+@admin.register(Flipkartfba)
+class FlipkartfbaAdmin(admin.ModelAdmin):
+    list_display = ("user", "date", "fsn", "warehouse_id", "live_on_website")
+    list_filter = ("date", "user")
+    search_fields = ("fsn", "sku", "listing_id")
 
 
 @admin.register(FlipkartPLA)

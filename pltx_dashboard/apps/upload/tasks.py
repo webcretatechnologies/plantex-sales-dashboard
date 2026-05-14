@@ -1,12 +1,14 @@
 import os
 import logging
 import csv
-from datetime import datetime
+import hashlib
+import time
 from openpyxl import load_workbook
 from celery import shared_task
-from celery.exceptions import SoftTimeLimitExceeded
+from celery.exceptions import SoftTimeLimitExceeded, Retry
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
+from django.core.cache import cache
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +16,22 @@ logger = logging.getLogger(__name__)
 def _send_ws(user_id, message, status):
     """Send a WebSocket progress message to the user's channel group."""
     try:
+        # Prevent flooding Redis channel queues with very frequent progress pings.
+        # Final states should always be delivered immediately.
+        if status == "processing":
+            msg_hash = hashlib.md5(str(message).encode("utf-8")).hexdigest()
+            dedupe_key = f"upload_ws_dedupe_{user_id}_{status}_{msg_hash}"
+            # Skip repeated identical processing message for a short window.
+            if not cache.add(dedupe_key, 1, timeout=2):
+                return
+
+            # Global per-user processing throttle (~2 messages / second).
+            # Use a time-bucket key to avoid sub-second cache timeout precision issues.
+            throttle_bucket = int(time.monotonic() * 2)
+            throttle_key = f"upload_ws_throttle_{user_id}_{throttle_bucket}"
+            if not cache.add(throttle_key, 1, timeout=2):
+                return
+
         channel_layer = get_channel_layer()
         async_to_sync(channel_layer.group_send)(
             f"user_{user_id}",
@@ -25,6 +43,277 @@ def _send_ws(user_id, message, status):
         )
     except Exception as exc:
         logger.warning("[UploadTask] WebSocket send failed: %s", exc)
+
+
+def _enqueue_dashboard_warmup(data_owner_id):
+    try:
+        from django.conf import settings
+
+        if not getattr(settings, "DASHBOARD_WARMUP_ENABLED", True):
+            return
+        from apps.dashboard.tasks import warmup_dashboard_payloads_task
+
+        warmup_dashboard_payloads_task.delay(data_owner_id=data_owner_id)
+    except Exception:
+        logger.exception(
+            "[UploadTask] Failed to enqueue dashboard warmup for user=%s", data_owner_id
+        )
+
+
+def _dashboard_refresh_cache_key(data_owner_id):
+    return f"dashboard_refresh_status_{data_owner_id}"
+
+
+def _set_dashboard_refresh_status(data_owner_id, state, message, timeout=3600):
+    cache.set(
+        _dashboard_refresh_cache_key(data_owner_id),
+        {
+            "state": state,
+            "message": message,
+            "updated_at_ts": time.time(),
+        },
+        timeout=timeout,
+    )
+
+
+def _upload_batch_key(batch_id, suffix):
+    return f"upload_batch_{batch_id}_{suffix}"
+
+
+def _mark_batch_task_complete(
+    *,
+    batch_id,
+    batch_total,
+    user_id,
+    data_owner_id,
+    is_flipkart,
+    success,
+):
+    if not batch_id:
+        return
+
+    ttl = 86400
+    expected_key = _upload_batch_key(batch_id, "expected_total")
+    completed_key = _upload_batch_key(batch_id, "completed_total")
+    failed_key = _upload_batch_key(batch_id, "failed_total")
+    finalized_key = _upload_batch_key(batch_id, "finalized")
+    meta_key = _upload_batch_key(batch_id, "meta")
+
+    expected = cache.get(expected_key)
+    if expected is None:
+        expected = int(batch_total or 0)
+        if expected > 0:
+            cache.set(expected_key, expected, timeout=ttl)
+    else:
+        expected = int(expected)
+    if expected <= 0:
+        return
+
+    try:
+        completed = cache.incr(completed_key)
+    except ValueError:
+        cache.set(completed_key, 1, timeout=ttl)
+        completed = 1
+
+    if not success:
+        try:
+            cache.incr(failed_key)
+        except ValueError:
+            cache.set(failed_key, 1, timeout=ttl)
+
+    if completed < expected:
+        return
+
+    # Finalize only once, even if multiple workers reach completion concurrently.
+    if not cache.add(finalized_key, 1, timeout=ttl):
+        return
+
+    failed_total = int(cache.get(failed_key) or 0)
+    meta = cache.get(meta_key) or {}
+    owner_id = int(meta.get("data_owner_id") or data_owner_id)
+    owner_user_id = int(meta.get("user_id") or user_id)
+    owner_is_flipkart = bool(meta.get("is_flipkart")) if "is_flipkart" in meta else bool(is_flipkart)
+
+    if failed_total > 0:
+        msg = (
+            "We could not process a few uploaded files, so the dashboard was not refreshed. "
+            "Please re-upload the failed files and try again."
+        )
+        _set_dashboard_refresh_status(owner_id, "error", msg, timeout=900)
+        _send_ws(owner_user_id, msg, "error")
+        return
+
+    _set_dashboard_refresh_status(
+        owner_id,
+        "processing",
+        "Dashboard updating in process as per the new uploaded data.",
+        timeout=3600,
+    )
+    _send_ws(
+        owner_user_id,
+        "All files uploaded successfully. Dashboard update started.",
+        "partial",
+    )
+    refresh_dashboard_after_upload_task.delay(
+        data_owner_id=owner_id,
+        user_id=owner_user_id,
+        is_flipkart=owner_is_flipkart,
+        # Force full-refresh path once all files are done to avoid out-of-order task races.
+        file_type="fk_category" if owner_is_flipkart else "category",
+        affected_dates=[],
+        dashboard_refreshed=False,
+    )
+
+
+def _run_dashboard_refresh(
+    *,
+    data_owner,
+    user_id,
+    is_flipkart,
+    file_type,
+    affected_dates=None,
+    dashboard_refreshed=False,
+):
+    from apps.upload.dashboard_builders import (
+        generate_dashboard_data,
+        generate_flipkart_dashboard_data,
+    )
+    from apps.dashboard.services.invalidation import invalidate_dashboard_cache_for_user
+    from apps.dashboard.models import (
+        Flipkartfba,
+        FlipkartCategoryMap,
+        FlipkartSearchTraffic,
+        FlipkartPLA,
+        FlipkartPrice,
+        FlipkartInventoryStock,
+    )
+
+    affected_dates = set(affected_dates or [])
+    dashboard_invalidated = False
+
+    def _dashboard_progress(message):
+        _send_ws(user_id, message, "processing")
+
+    if is_flipkart:
+        has_fk_category = FlipkartCategoryMap.objects.filter(user=data_owner).exists()
+        has_fk_traffic = FlipkartSearchTraffic.objects.filter(user=data_owner).exists()
+        has_fk_pla = FlipkartPLA.objects.filter(user=data_owner).exists()
+        has_fk_price = FlipkartPrice.objects.filter(user=data_owner).exists()
+        if not (has_fk_category and has_fk_traffic and has_fk_pla and has_fk_price):
+            raise ValueError(
+                "Flipkart requires Search Traffic, Category, PLA, and Price reports."
+            )
+
+        has_fba_stock = Flipkartfba.objects.filter(user=data_owner).exists()
+        has_fk_inventory = FlipkartInventoryStock.objects.filter(user=data_owner).exists()
+        if not has_fba_stock or not has_fk_inventory:
+            raise ValueError(
+                "Flipkart requires both FK Inventory and FK FBA Stock uploads for inventory health."
+            )
+
+        if file_type in {"fk_search_traffic", "fk_pla"} and affected_dates:
+            generate_flipkart_dashboard_data(
+                data_owner,
+                progress_callback=_dashboard_progress,
+                only_dates=sorted(affected_dates),
+            )
+            dashboard_refreshed = True
+        elif file_type in {"fk_category", "fk_price"}:
+            generate_flipkart_dashboard_data(
+                data_owner, progress_callback=_dashboard_progress
+            )
+            dashboard_refreshed = True
+        else:
+            invalidate_dashboard_cache_for_user(data_owner.id, clear_materialized=True)
+            dashboard_invalidated = True
+    elif file_type in {"sales", "spend"}:
+        if affected_dates:
+            generate_dashboard_data(
+                data_owner,
+                progress_callback=_dashboard_progress,
+                only_dates=sorted(affected_dates),
+            )
+        else:
+            generate_dashboard_data(data_owner, progress_callback=_dashboard_progress)
+        dashboard_refreshed = True
+    elif file_type in {"category", "price"}:
+        generate_dashboard_data(data_owner, progress_callback=_dashboard_progress)
+        dashboard_refreshed = True
+    else:
+        invalidate_dashboard_cache_for_user(data_owner.id, clear_materialized=True)
+        dashboard_invalidated = True
+
+    if dashboard_refreshed or dashboard_invalidated:
+        _enqueue_dashboard_warmup(data_owner.id)
+
+
+@shared_task(bind=True)
+def refresh_dashboard_after_upload_task(
+    self,
+    data_owner_id,
+    user_id,
+    is_flipkart,
+    file_type,
+    affected_dates=None,
+    dashboard_refreshed=False,
+):
+    from apps.accounts.models import Users
+
+    try:
+        lock_key = f"dashboard_refresh_lock_{data_owner_id}"
+        lock_token = self.request.id
+        if not cache.add(lock_key, lock_token, timeout=1800):
+            raise self.retry(countdown=10, max_retries=30)
+
+        data_owner = Users.objects.get(pk=data_owner_id)
+        _set_dashboard_refresh_status(
+            data_owner_id,
+            "processing",
+            "Dashboard updating in process as per the new uploaded data.",
+            timeout=3600,
+        )
+        _send_ws(
+            user_id,
+            "Dashboard updating in process as per the new uploaded data.",
+            "processing",
+        )
+
+        _run_dashboard_refresh(
+            data_owner=data_owner,
+            user_id=user_id,
+            is_flipkart=is_flipkart,
+            file_type=file_type,
+            affected_dates=affected_dates or [],
+            dashboard_refreshed=dashboard_refreshed,
+        )
+
+        _set_dashboard_refresh_status(
+            data_owner_id,
+            "success",
+            "Dashboard updated with the new updated data.",
+            timeout=300,
+        )
+        _send_ws(user_id, "Dashboard updated with the new updated data.", "complete")
+        return {"status": "success"}
+    except Retry:
+        raise
+    except Exception as exc:
+        logger.exception("[DashboardRefreshTask] Error: %s", exc)
+        _set_dashboard_refresh_status(
+            data_owner_id,
+            "error",
+            f"Dashboard update failed: {str(exc)}",
+            timeout=600,
+        )
+        _send_ws(user_id, f"Dashboard update failed: {str(exc)}", "error")
+        return {"status": "error", "message": str(exc)}
+    finally:
+        try:
+            lock_key = f"dashboard_refresh_lock_{data_owner_id}"
+            if cache.get(lock_key) == self.request.id:
+                cache.delete(lock_key)
+        except Exception:
+            pass
 
 
 NON_CONVERTIBLE_EXCEL_TYPES = set()
@@ -72,6 +361,8 @@ def process_upload_file_task(
     date_str="",
     is_last=False,
     is_flipkart=False,
+    batch_id="",
+    batch_total=None,
 ):
     """
     Celery task that processes a single uploaded file.
@@ -98,28 +389,29 @@ def process_upload_file_task(
     """
     from apps.accounts.models import Users  # noqa: F401
     from apps.upload.models import UploadLog
-    from apps.upload.services import (
+    from apps.upload.amazon import (
         process_category_file,
         process_price_file,
         process_spend_file,
         process_sales_file,
         process_fba_stock_file,
         process_flex_stock_file,
+    )
+    from apps.upload.flipkart import (
+        process_fk_fba_stock_file,
+        process_fk_flex_stock_file,
         process_fk_inventory_file,
-        generate_dashboard_data,
         process_fk_search_traffic,
         process_fk_category,
         process_fk_price,
         process_fk_pla,
-        generate_flipkart_dashboard_data,
     )
-
     _send_ws(user_id, f"Processing {file_type} file...", "processing")
 
     try:
         data_owner = Users.objects.get(pk=data_owner_id)
         files_to_cleanup = [file_path]
-        sales_date_obj = None
+        affected_dates = set()
         upload_log = None
         if upload_log_id:
             upload_log = UploadLog.objects.filter(pk=upload_log_id).first()
@@ -127,9 +419,6 @@ def process_upload_file_task(
                 upload_log.status = UploadLog.STATUS_PROCESSING
                 upload_log.message = "Processing started."
                 upload_log.save(update_fields=["status", "message", "updated_at"])
-        
-        def _dashboard_progress(message):
-            _send_ws(user_id, message, "processing")
 
         processing_path = _convert_excel_to_csv_if_possible(file_path, file_type)
         if processing_path != file_path:
@@ -142,36 +431,29 @@ def process_upload_file_task(
             elif file_type == "price":
                 process_price_file(fh, data_owner)
             elif file_type == "spend":
-                process_spend_file(fh, data_owner)
+                affected_dates = process_spend_file(fh, data_owner) or set()
             elif file_type == "sales":
-                process_sales_file(fh, date_str, data_owner)
-                sales_date_obj = datetime.strptime(date_str, "%d-%m-%Y").date()
+                affected_dates = process_sales_file(fh, date_str, data_owner) or set()
             elif file_type == "fba_stock":
                 process_fba_stock_file(fh, data_owner)
             elif file_type == "flex_stock":
                 process_flex_stock_file(fh, data_owner)
             elif file_type == "fk_search_traffic":
-                process_fk_search_traffic(fh, data_owner)
+                affected_dates = process_fk_search_traffic(fh, data_owner) or set()
             elif file_type == "fk_category":
                 process_fk_category(fh, data_owner)
             elif file_type == "fk_price":
                 process_fk_price(fh, data_owner)
             elif file_type == "fk_pla":
-                process_fk_pla(fh, data_owner)
+                affected_dates = process_fk_pla(fh, data_owner) or set()
             elif file_type == "fk_fba_stock":
-                process_fba_stock_file(
-                    fh,
-                    data_owner,
-                    id_columns=("ASIN", "FSN", "FSN ID", "Flipkart Serial Number"),
-                )
+                affected_dates = process_fk_fba_stock_file(fh, data_owner) or set()
             elif file_type == "fk_flex_stock":
-                process_flex_stock_file(
-                    fh,
-                    data_owner,
-                    id_columns=("ASIN", "FSN", "FSN ID", "Flipkart Serial Number"),
-                )
+                affected_dates = process_fk_flex_stock_file(fh, data_owner) or set()
             elif file_type == "fk_inventory":
                 process_fk_inventory_file(fh, data_owner)
+            else:
+                raise ValueError(f"Unsupported file_type: {file_type}")
 
         # Clean up uploaded files after processing
         for path in files_to_cleanup:
@@ -180,63 +462,36 @@ def process_upload_file_task(
             except OSError:
                 pass
 
-        # Fast path for high-volume sales uploads:
-        # Rebuild only the affected day instead of full user history.
-        if file_type == "sales" and sales_date_obj and not is_flipkart:
+        if batch_id:
+            _send_ws(user_id, f"{file_type} processed successfully.", "partial")
+            _mark_batch_task_complete(
+                batch_id=batch_id,
+                batch_total=batch_total,
+                user_id=user_id,
+                data_owner_id=data_owner.id,
+                is_flipkart=is_flipkart,
+                success=True,
+            )
+        elif is_last:
+            _set_dashboard_refresh_status(
+                data_owner.id,
+                "processing",
+                "Dashboard updating in process as per the new uploaded data.",
+                timeout=3600,
+            )
+            refresh_dashboard_after_upload_task.delay(
+                data_owner_id=data_owner.id,
+                user_id=user_id,
+                is_flipkart=is_flipkart,
+                file_type=file_type,
+                affected_dates=sorted(affected_dates),
+                dashboard_refreshed=False,
+            )
             _send_ws(
                 user_id,
-                f"Refreshing dashboard for {sales_date_obj.isoformat()}...",
-                "processing",
+                "All files uploaded successfully. Dashboard update started.",
+                "partial",
             )
-            generate_dashboard_data(
-                data_owner,
-                progress_callback=_dashboard_progress,
-                only_dates=[sales_date_obj],
-            )
-
-
-        if is_last:
-            _send_ws(user_id, "Generating final dashboard data...", "processing")
-
-            def _dashboard_progress(message):
-                _send_ws(user_id, message, "processing")
-
-            if is_flipkart:
-                from apps.dashboard.models import (
-                    FBAStockData,
-                    FlexStockData,
-                    FlipkartCategoryMap,
-                    FlipkartSearchTraffic,
-                    FlipkartPLA,
-                    FlipkartPrice,
-                )
-
-                has_fk_category = FlipkartCategoryMap.objects.filter(user=data_owner).exists()
-                has_fk_traffic = FlipkartSearchTraffic.objects.filter(user=data_owner).exists()
-                has_fk_pla = FlipkartPLA.objects.filter(user=data_owner).exists()
-                has_fk_price = FlipkartPrice.objects.filter(user=data_owner).exists()
-                if not (has_fk_category and has_fk_traffic and has_fk_pla and has_fk_price):
-                    raise ValueError(
-                        "Flipkart requires Search Traffic, Category, PLA, and Price reports."
-                    )
-
-                has_fba_stock = FBAStockData.objects.filter(user=data_owner).exists()
-                has_flex_stock = FlexStockData.objects.filter(user=data_owner).exists()
-                from apps.dashboard.models import FlipkartInventoryStock
-                has_fk_inventory = FlipkartInventoryStock.objects.filter(user=data_owner).exists()
-                if not has_fk_inventory and not (has_fba_stock and has_flex_stock):
-                    raise ValueError(
-                        "Flipkart requires either an FK Inventory file (FK.xlsx) or both FBA Stock and Flex Stock uploads."
-                    )
-                generate_flipkart_dashboard_data(data_owner)
-            elif file_type == "sales" and sales_date_obj:
-                # Sales already refreshed incrementally above.
-                pass
-            else:
-                generate_dashboard_data(
-                    data_owner, progress_callback=_dashboard_progress
-                )
-            _send_ws(user_id, "All files processed successfully!", "complete")
         else:
             _send_ws(user_id, f"{file_type} processed successfully.", "partial")
 
@@ -264,6 +519,16 @@ def process_upload_file_task(
                     upload_log.save(update_fields=["status", "message", "updated_at"])
             except Exception:
                 logger.exception("[UploadTask] Failed updating timeout status.")
+
+        if batch_id:
+            _mark_batch_task_complete(
+                batch_id=batch_id,
+                batch_total=batch_total,
+                user_id=user_id,
+                data_owner_id=data_owner_id,
+                is_flipkart=is_flipkart,
+                success=False,
+            )
 
         return {
             "status": "error",
@@ -293,6 +558,16 @@ def process_upload_file_task(
                 os.remove(path)
             except OSError:
                 pass
+
+        if batch_id:
+            _mark_batch_task_complete(
+                batch_id=batch_id,
+                batch_total=batch_total,
+                user_id=user_id,
+                data_owner_id=data_owner_id,
+                is_flipkart=is_flipkart,
+                success=False,
+            )
 
         return {
             "status": "error",

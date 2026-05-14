@@ -8,6 +8,13 @@ from apps.dashboard.services.analytics_services_orm import (
 from apps.dashboard.services.analytics_services_orm_tables import (
     generate_bi_data_orm,
 )
+from apps.dashboard.services.metrics import (
+    amazon_cvr,
+    flipkart_cvr,
+    roas as calculate_roas,
+    safe_growth as calculate_growth,
+    tacos as calculate_tacos,
+)
 from django.core.cache import cache
 from django.db.models import Sum, Max
 from django.utils import timezone
@@ -177,9 +184,7 @@ def get_prev_period_qs(qs, filters):
 
 
 def _safe_growth(curr, prev):
-    if prev and prev != 0:
-        return round((curr - prev) / abs(prev) * 100, 1)
-    return 0
+    return calculate_growth(curr, prev)
 
 
 def get_available_filters_orm(qs, fk_qs):
@@ -294,8 +299,6 @@ def run_orm_computation(
     
     total_revenue = sum(r["revenue"] for r in table_data)
     total_spend = sum(r["total_spend"] for r in table_data)
-    revenue_for_ads = total_revenue * 0.7  # Revenue * 0.7 for TACOS/ROAS
-    
     # 3. KPIs
     kpis = {
         "revenue": total_revenue,
@@ -315,15 +318,15 @@ def run_orm_computation(
     }
 
     platform_filter = (filters.get("platform") or "").strip()
-    roas = (revenue_for_ads / kpis["spend"]) if kpis["spend"] > 0 else 0
+    roas = calculate_roas(total_revenue, kpis["spend"])
     flipkart_cvr_mode = platform_filter == "Flipkart" or (
         not platform_filter and kpis["az_units"] == 0 and kpis["fk_units"] > 0
     )
     if flipkart_cvr_mode:
-        conversion = (kpis["pageviews"] / kpis["units"]) if kpis["units"] > 0 else 0
+        conversion = flipkart_cvr(kpis["units"], kpis["pageviews"])
     else:
-        conversion = (kpis["orders"] / kpis["pageviews"] * 100) if kpis["pageviews"] > 0 else 0
-    tacos = (kpis["spend"] / revenue_for_ads * 100) if revenue_for_ads > 0 else 0
+        conversion = amazon_cvr(kpis["orders"], kpis["pageviews"])
+    tacos = calculate_tacos(total_revenue, kpis["spend"])
 
     kpis.update({
         "roas": round(roas, 2),
@@ -455,16 +458,17 @@ def run_orm_computation(
     kpis["mom_period_previous_end"] = pm_end
     kpis["yoy_period_previous_start"] = yoy_cm_start
     kpis["yoy_period_previous_end"] = yoy_cm_end
+    kpis["mom_current_revenue"] = round(cm_rev, 2)
+    kpis["mom_previous_revenue"] = round(pm_rev, 2)
+    kpis["yoy_previous_revenue"] = round(yoy_cm_rev, 2)
     kpis["mom_spend_growth"] = _safe_growth(cm_spend, pm_spend)
     
-    cm_rev_ads = cm_rev * 0.7
-    pm_rev_ads = pm_rev * 0.7
-    cm_roas = (cm_rev_ads / cm_spend) if cm_spend > 0 else 0
-    pm_roas = (pm_rev_ads / pm_spend) if pm_spend > 0 else 0
+    cm_roas = calculate_roas(cm_rev, cm_spend)
+    pm_roas = calculate_roas(pm_rev, pm_spend)
     kpis["mom_roas_change"] = round(cm_roas - pm_roas, 2)
     
-    cm_tacos = (cm_spend / cm_rev_ads * 100) if cm_rev_ads > 0 else 0
-    pm_tacos = (pm_spend / pm_rev_ads * 100) if pm_rev_ads > 0 else 0
+    cm_tacos = calculate_tacos(cm_rev, cm_spend)
+    pm_tacos = calculate_tacos(pm_rev, pm_spend)
     kpis["mom_tacos_change"] = round(cm_tacos - pm_tacos, 1)
 
     # Used by forecast and other sections that should anchor to data freshness.
@@ -535,6 +539,7 @@ def run_orm_computation(
     from apps.dashboard.models import (
         FBAStockData,
         FlexStockData,
+        Flipkartfba,
         SalesData,
         CategoryMapping,
         FlipkartCategoryMap,
@@ -545,10 +550,21 @@ def run_orm_computation(
     is_flipkart_only = platform_filter == "Flipkart"
     sku_filter = filters.get("fsn") if is_flipkart_only else filters.get("asin")
 
-    # ── Flipkart Inventory Health via FK.xlsx (FlipkartInventoryStock) ──
+    # ── Flipkart Inventory Health via FK Inventory + FK FBA (Live on Website) ──
+    # Total Stock = FBA Live on Website + FK Qty  (FSN + Date level)
+    # DRR = Sales Qty / 30   (Sales Qty from traffic file, rolling 30 days)
+    # DOC = Total Stock / DRR
+    # DOC rules:
+    #   < 5 Days  → Nearly OOS
+    #   < 15 Days → Understock
+    #   15–30     → Ideal Stocking
+    #   > 30      → Over Stock
+    #   > 90      → Highly Over Stock
+    #   > 180     → Not Selling
     has_fk_inventory = is_flipkart_only and FlipkartInventoryStock.objects.filter(user=user).exists()
+    has_fk_fba_stock = is_flipkart_only and Flipkartfba.objects.filter(user=user).exists()
 
-    if has_fk_inventory:
+    if has_fk_inventory and has_fk_fba_stock:
         # Build FSN allow-list from category filters
         fk_cat_qs = FlipkartCategoryMap.objects.filter(user=user)
         if filters.get("category"):
@@ -560,134 +576,241 @@ def run_orm_computation(
             sub_val = filters["subcategory"]
             fk_cat_qs = fk_cat_qs.filter(subcategory__in=sub_val) if isinstance(sub_val, (list, tuple)) else fk_cat_qs.filter(subcategory=sub_val)
 
-        # Map FSN → category from category file
+        # Map FSN -> category from category file
         fk_fsn_to_cat = {
             str(r["fsn"]): str(r["category"] or "Unknown")
             for r in fk_cat_qs.values("fsn", "category")
         }
         cat_fsns = set(fk_fsn_to_cat.keys())
 
-        # Get FK Inventory stock data — only FSNs that exist in category file
+        # FK Inventory qty (from FK.xlsx) by FSN+Date
         inv_qs = FlipkartInventoryStock.objects.filter(user=user, fsn__in=cat_fsns)
+        inv_qs = apply_global_filters_orm(inv_qs, filters)
         if sku_filter:
             if isinstance(sku_filter, (list, tuple)):
                 inv_qs = inv_qs.filter(fsn__in=sku_filter)
             else:
                 inv_qs = inv_qs.filter(fsn=sku_filter)
+        fk_inventory_qty_by_key = {}
+        for row in inv_qs.values("fsn", "date").annotate(total=Sum("qty")):
+            key = (str(row["fsn"]), row["date"])
+            fk_inventory_qty_by_key[key] = int(row["total"] or 0)
 
-        fk_stock_by_fsn = {}
-        for row in inv_qs.values("fsn", "qty"):
-            fk_stock_by_fsn[str(row["fsn"])] = int(row["qty"] or 0)
-
-        # Get Sales from Traffic file (last 30 days or all available)
-        from apps.dashboard.models import FlipkartSearchTraffic
-        traffic_qs = FlipkartSearchTraffic.objects.filter(user=user, fsn__in=cat_fsns)
+        # FK FBA qty (Live on Website from FBA file) by FSN+Date
+        fba_qs = apply_global_filters_orm(Flipkartfba.objects.filter(user=user), filters)
+        fba_qs = fba_qs.filter(fsn__in=cat_fsns)
         if sku_filter:
             if isinstance(sku_filter, (list, tuple)):
-                traffic_qs = traffic_qs.filter(fsn__in=sku_filter)
+                fba_qs = fba_qs.filter(fsn__in=sku_filter)
             else:
-                traffic_qs = traffic_qs.filter(fsn=sku_filter)
+                fba_qs = fba_qs.filter(fsn=sku_filter)
+        fba_stock_by_key = {}
+        for row in fba_qs.values("fsn", "date").annotate(total=Sum("live_on_website")):
+            key = (str(row["fsn"]), row["date"])
+            fba_stock_by_key[key] = int(row["total"] or 0)
 
-        fk_sales_by_fsn = {}
-        for row in traffic_qs.values("fsn").annotate(total_sales=Sum("sales")):
-            fk_sales_by_fsn[str(row["fsn"])] = int(row["total_sales"] or 0)
+        # Sales (30-day total) by FSN from Search Traffic for DRR calculation
+        # DRR = Sales Qty / 30
+        from apps.dashboard.models import FlipkartSearchTraffic as FKTraffic
 
-        # Revenue per FSN from processed dashboard data
-        fk_rev_by_fsn = {}
-        if fk_qs_f is not None:
-            for row in fk_qs_f.values("fsn").annotate(total_revenue=Sum("revenue")):
-                fk_rev_by_fsn[str(row["fsn"])] = float(row["total_revenue"] or 0)
+        traffic_sales_qs = FKTraffic.objects.filter(user=user, fsn__in=cat_fsns)
+        traffic_sales_qs = apply_global_filters_orm(traffic_sales_qs, filters)
+        if sku_filter:
+            if isinstance(sku_filter, (list, tuple)):
+                traffic_sales_qs = traffic_sales_qs.filter(fsn__in=sku_filter)
+            else:
+                traffic_sales_qs = traffic_sales_qs.filter(fsn=sku_filter)
 
-        # Compute DOC for each FSN
-        all_fsns = set(fk_stock_by_fsn.keys())
+        drr_divisor = 30
+
+        # Sum sales by FSN (total over the period) for DRR
+        fk_sales_total_by_fsn = {}
+        for row in traffic_sales_qs.values("fsn").annotate(total_sales=Sum("sales")):
+            fk_sales_total_by_fsn[str(row["fsn"])] = int(row["total_sales"] or 0)
+
+        # Also get sales by FSN+Date for detail display
+        fk_sales_by_key = {}
+        for row in traffic_sales_qs.values("fsn", "date").annotate(total_sales=Sum("sales")):
+            key = (str(row["fsn"]), row["date"])
+            fk_sales_by_key[key] = int(row["total_sales"] or 0)
+
+        # Revenue from processed Flipkart data
+        fk_revenue_by_key = {}
+        fk_revenue_by_fsn = {}
+        traffic_rev_qs = fk_qs_f if fk_qs_f is not None else fk_qs.none()
+        traffic_rev_qs = traffic_rev_qs.filter(fsn__in=cat_fsns)
+        if sku_filter:
+            if isinstance(sku_filter, (list, tuple)):
+                traffic_rev_qs = traffic_rev_qs.filter(fsn__in=sku_filter)
+            else:
+                traffic_rev_qs = traffic_rev_qs.filter(fsn=sku_filter)
+        for row in traffic_rev_qs.values("fsn", "date").annotate(total_revenue=Sum("revenue")):
+            key = (str(row["fsn"]), row["date"])
+            fk_revenue_by_key[key] = float(row["total_revenue"] or 0)
+        for row in traffic_rev_qs.values("fsn").annotate(total_revenue=Sum("revenue")):
+            fk_revenue_by_fsn[str(row["fsn"])] = float(row["total_revenue"] or 0)
+
+        # Build all FSN+Date keys from BOTH stock sources
+        stock_keys = set(fba_stock_by_key.keys()) | set(fk_inventory_qty_by_key.keys())
+        sales_keys = set(fk_sales_by_key.keys())
+        stock_dates = {d for _fsn, d in stock_keys if d}
+        sales_dates = {d for _fsn, d in sales_keys if d}
+        aligned_dates = stock_dates & sales_dates
+        if aligned_dates:
+            aligned_stock_keys = {k for k in stock_keys if k[1] in aligned_dates}
+            aligned_sales_keys = {k for k in sales_keys if k[1] in aligned_dates}
+            all_keys = aligned_stock_keys | aligned_sales_keys
+        else:
+            all_keys = set()
+
+        key_count_by_fsn = {}
+        for fsn, _row_date in all_keys:
+            key_count_by_fsn[fsn] = key_count_by_fsn.get(fsn, 0) + 1
+
         inventory_details = []
+        inventory_detail_rows_total = len(all_keys)
+        nearly_oos_count = 0
+        understock_count = 0
+        ideal_count = 0
+        fk_overstock_count = 0
+        highly_overstock_count = 0
+        not_selling_count = 0
         inventory_revenue_buckets = {
-            "nearly_oos": 0.0, "understock": 0.0, "ideal": 0.0,
-            "overstock": 0.0, "highly_overstock": 0.0, "not_selling": 0.0,
-        }
-        fk_inv_counts = {
-            "nearly_oos": 0, "understock": 0, "ideal": 0,
-            "overstock": 0, "highly_overstock": 0, "not_selling": 0,
+            "nearly_oos": 0.0,
+            "understock": 0.0,
+            "ideal": 0.0,
+            "overstock": 0.0,
+            "highly_overstock": 0.0,
+            "not_selling": 0.0,
+            "oos": 0.0,
         }
 
-        for fsn in sorted(all_fsns):
-            stock_qty = fk_stock_by_fsn.get(fsn, 0)
-            sales_qty = fk_sales_by_fsn.get(fsn, 0)
-            rev = fk_rev_by_fsn.get(fsn, 0.0)
-            cat = fk_fsn_to_cat.get(fsn, "Unknown")
-            drr = sales_qty / 30.0
+        def _inventory_sort_key(key):
+            fsn, row_date = key
+            rev = float(fk_revenue_by_key.get((fsn, row_date), 0.0) or 0.0)
+            return (
+                row_date or datetime.date.min,
+                rev,
+                fsn,
+            )
 
+        for fsn, row_date in sorted(all_keys, key=_inventory_sort_key, reverse=True):
+            fba_qty = int(fba_stock_by_key.get((fsn, row_date), 0))
+            fk_qty = int(fk_inventory_qty_by_key.get((fsn, row_date), 0))
+            stock_qty = fba_qty + fk_qty  # Total Stock = Live on Website + Qty
+
+            # DRR = Total Sales Qty (from traffic file) / 30
+            total_sales_qty = int(fk_sales_total_by_fsn.get(fsn, 0))
+            drr = total_sales_qty / drr_divisor
+
+            # DOC = Total Stock / DRR
             if drr > 0:
                 doc = round(stock_qty / drr, 1)
             else:
                 doc = 999.0 if stock_qty > 0 else 0.0
 
-            # Classify by DOC
-            if doc > 180:
-                status, status_class, bucket = "Not Selling", "neutral", "not_selling"
-                reason = f"DOC = {doc} days (Stock: {stock_qty}, DRR: {drr:.2f}, No meaningful sales)"
-            elif doc > 90:
-                status, status_class, bucket = "Highly Over Stock", "neutral", "highly_overstock"
-                reason = f"DOC = {doc} days (Stock: {stock_qty}, DRR: {drr:.2f})"
-            elif doc > 30:
-                status, status_class, bucket = "Over Stock", "warn", "overstock"
-                reason = f"DOC = {doc} days (Stock: {stock_qty}, DRR: {drr:.2f})"
-            elif doc >= 15:
-                status, status_class, bucket = "Ideal Stocking", "good", "ideal"
-                reason = f"DOC = {doc} days (Stock: {stock_qty}, DRR: {drr:.2f})"
-            elif doc >= 5:
-                status, status_class, bucket = "Understock", "warn", "understock"
-                reason = f"DOC = {doc} days (Stock: {stock_qty}, DRR: {drr:.2f})"
-            else:
-                status, status_class, bucket = "Nearly OOS", "danger", "nearly_oos"
-                reason = f"DOC = {doc} days (Stock: {stock_qty}, DRR: {drr:.2f})"
+            key_count = max(int(key_count_by_fsn.get(fsn, 1)), 1)
+            rev = float(
+                fk_revenue_by_key.get(
+                    (fsn, row_date),
+                    float(fk_revenue_by_fsn.get(fsn, 0.0)) / key_count,
+                )
+                or 0.0
+            )
+            cat = fk_fsn_to_cat.get(fsn, "Unknown")
+            same_day_sales = int(fk_sales_by_key.get((fsn, row_date), 0))
 
-            fk_inv_counts[bucket] += 1
-            inventory_revenue_buckets[bucket] += rev
-            if bucket == "nearly_oos":
+            # DOC categorization rules
+            if stock_qty <= 0:
+                status = "OOS"
+                status_class = "danger"
+                oos_count += 1
                 total_lost_sales += rev
+                reason = f"Stock Qty = 0 (Live on Website: {fba_qty}, FK Qty: {fk_qty})"
+                inventory_revenue_buckets["oos"] += rev
+            elif doc < 5:
+                status = "Nearly OOS"
+                status_class = "danger"
+                nearly_oos_count += 1
+                oos_count += 1
+                total_lost_sales += rev
+                reason = f"DOC = {doc} days (Stock: {stock_qty}, DRR: {drr:.2f})"
+                inventory_revenue_buckets["nearly_oos"] += rev
+            elif doc < 15:
+                status = "Understock"
+                status_class = "warn"
+                understock_count += 1
+                low_stock_count += 1
+                reason = f"DOC = {doc} days (Stock: {stock_qty}, DRR: {drr:.2f})"
+                inventory_revenue_buckets["understock"] += rev
+            elif doc <= 30:
+                status = "Ideal Stocking"
+                status_class = "good"
+                ideal_count += 1
+                in_stock_count += 1
+                reason = f"DOC = {doc} days (Stock: {stock_qty}, DRR: {drr:.2f})"
+                inventory_revenue_buckets["ideal"] += rev
+            elif doc <= 90:
+                status = "Over Stock"
+                status_class = "neutral"
+                fk_overstock_count += 1
+                overstock_count += 1
+                reason = f"DOC = {doc} days (Stock: {stock_qty}, DRR: {drr:.2f})"
+                inventory_revenue_buckets["overstock"] += rev
+            elif doc <= 180:
+                status = "Highly Over Stock"
+                status_class = "neutral"
+                highly_overstock_count += 1
+                overstock_count += 1
+                reason = f"DOC = {doc} days (Stock: {stock_qty}, DRR: {drr:.2f})"
+                inventory_revenue_buckets["highly_overstock"] += rev
+            else:
+                status = "Not Selling"
+                status_class = "neutral"
+                not_selling_count += 1
+                overstock_count += 1
+                reason = f"DOC = {doc} days (Stock: {stock_qty}, DRR: {drr:.2f})"
+                inventory_revenue_buckets["not_selling"] += rev
 
-
-            inventory_details.append({
-                "date": None,
-                "sku": fsn,
-                "category": cat,
-                "stock_qty": stock_qty,
-                "fba_qty": 0,
-                "flex_qty": stock_qty,
-                "sale_qty": sales_qty,
-                "drr": round(drr, 2),
-                "doc": doc,
-                "units": sales_qty,
-                "revenue": round(rev, 2),
-                "status": status,
-                "status_class": status_class,
-                "reason": reason,
-            })
-
-        in_stock_count = fk_inv_counts["ideal"]
-        low_stock_count = fk_inv_counts["nearly_oos"] + fk_inv_counts["understock"]
-        oos_count = fk_inv_counts["nearly_oos"]
-        overstock_count = fk_inv_counts["overstock"] + fk_inv_counts["highly_overstock"] + fk_inv_counts["not_selling"]
+            if sku_filter or len(inventory_details) < 100:
+                inventory_details.append(
+                    {
+                        "date": row_date,
+                        "sku": fsn,
+                        "category": cat,
+                        "stock_qty": stock_qty,
+                        "fba_qty": fba_qty,
+                        "flex_qty": fk_qty,
+                        "sale_qty": same_day_sales,
+                        "total_sales_30d": total_sales_qty,
+                        "drr": round(drr, 2),
+                        "doc": doc,
+                        "units": same_day_sales,
+                        "revenue": round(rev, 2),
+                        "status": status,
+                        "status_class": status_class,
+                        "reason": reason,
+                    }
+                )
 
         inventory = {
-            "in_stock": in_stock_count,
-            "low_stock": low_stock_count,
-            "oos": oos_count,
-            "overstock": overstock_count,
-            "nearly_oos": fk_inv_counts["nearly_oos"],
-            "understock": fk_inv_counts["understock"],
-            "ideal": fk_inv_counts["ideal"],
-            "fk_overstock": fk_inv_counts["overstock"],
-            "highly_overstock": fk_inv_counts["highly_overstock"],
-            "not_selling": fk_inv_counts["not_selling"],
+            "in_stock": int(in_stock_count),
+            "low_stock": int(low_stock_count),
+            "oos": int(oos_count),
+            "overstock": int(overstock_count),
+            "nearly_oos": int(nearly_oos_count),
+            "understock": int(understock_count),
+            "ideal": int(ideal_count),
+            "fk_overstock": int(fk_overstock_count),
+            "highly_overstock": int(highly_overstock_count),
+            "not_selling": int(not_selling_count),
             "is_fk_inventory": True,
             "details": inventory_details,
-            "details_total": len(all_fsns),
-            "details_shown": len(inventory_details),
-            "details_truncated": len(all_fsns) > len(inventory_details),
-            "has_stock_data": True,
-            "num_sale_days": 30,
+            "details_total": int(inventory_detail_rows_total),
+            "details_shown": int(len(inventory_details)),
+            "details_truncated": inventory_detail_rows_total > len(inventory_details),
+            "has_stock_data": True if aligned_dates else False,
+            "num_sale_days": max(len(aligned_dates), 1),
         }
 
         oos_impact = {"lost_sales": round(total_lost_sales, 2), "skus_affected": oos_count, "orders_lost": 0}
@@ -696,15 +819,16 @@ def run_orm_computation(
         if total_revenue > 0:
             tracked_rev = sum(inventory_revenue_buckets.values())
             pct_den = tracked_rev if tracked_rev > 0 else total_revenue
-            fk_bucket_defs = [
-                ("Ideal (15–30D)", "ideal", "green"),
-                ("Understock (5–15D)", "understock", "amber"),
+            bucket_defs = [
                 ("Nearly OOS (<5D)", "nearly_oos", "red"),
-                ("Over Stock (30–90D)", "overstock", "orange"),
-                ("Highly Over Stock (90–180D)", "highly_overstock", "#e65100"),
-                ("Not Selling (>180D)", "not_selling", "grey"),
+                ("Understock (<15D)", "understock", "amber"),
+                ("Ideal (15\u201330D)", "ideal", "green"),
+                ("Over Stock (>30D)", "overstock", "orange"),
+                ("Highly Over Stock (>90D)", "highly_overstock", "orange"),
+                ("Not Selling (>180D)", "not_selling", "gray"),
+                ("Out of Stock", "oos", "red"),
             ]
-            for label, key, color in fk_bucket_defs:
+            for label, key, color in bucket_defs:
                 rev_val = inventory_revenue_buckets[key]
                 pct = round(rev_val / pct_den * 100, 1) if pct_den > 0 else 0
                 inventory_position.append({"label": label, "revenue": rev_val, "pct": pct, "color": color})
@@ -746,8 +870,14 @@ def run_orm_computation(
 
             allowed_skus = set(cat_map_qs.values_list(id_field, flat=True))
 
-        fba_qs = apply_global_filters_orm(FBAStockData.objects.filter(user=user), filters)
-        flex_qs = apply_global_filters_orm(FlexStockData.objects.filter(user=user), filters)
+        if is_flipkart_only:
+            # Prevent cross-platform mixing: Flipkart inventory health must come
+            # from Flipkart-specific FBA/Flex tables only.
+            fba_qs = FBAStockData.objects.none()
+            flex_qs = FlexStockData.objects.none()
+        else:
+            fba_qs = apply_global_filters_orm(FBAStockData.objects.filter(user=user), filters)
+            flex_qs = apply_global_filters_orm(FlexStockData.objects.filter(user=user), filters)
 
         if sku_filter:
             if isinstance(sku_filter, (list, tuple)):

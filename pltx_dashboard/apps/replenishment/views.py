@@ -5,7 +5,6 @@ from datetime import datetime
 from io import BytesIO
 from django.shortcuts import render, redirect
 from django.http import JsonResponse, FileResponse
-from django.views.decorators.csrf import csrf_exempt
 from celery.result import AsyncResult
 from apps.accounts.utils import get_logged_in_user
 from apps.accounts.models import Feature
@@ -14,6 +13,50 @@ from apps.accounts.models import Feature
 from .tasks import validate_reports_celery, generate_master_celery
 
 from apps.accounts.decorators import require_feature
+
+ALLOWED_UPLOAD_EXTENSIONS = {".csv", ".xlsx", ".xls", ".xlsm"}
+
+
+def _require_replenishment_api_user(request):
+    user = get_logged_in_user(request)
+    if not user:
+        return None, None, JsonResponse({"error": "Not authenticated"}, status=401)
+
+    if user.is_main_user:
+        data_owner = user
+        return user, data_owner, None
+
+    if not user.role or not user.role.features.filter(code_name="replenishment").exists():
+        return None, None, JsonResponse({"error": "Permission denied"}, status=403)
+
+    data_owner = user.created_by if user.created_by else user
+    return user, data_owner, None
+
+
+def _track_replenishment_task(request, task_id):
+    task_ids = request.session.get("replenishment_task_ids", [])
+    if task_id not in task_ids:
+        task_ids.append(task_id)
+        request.session["replenishment_task_ids"] = task_ids[-200:]
+        request.session.modified = True
+
+
+def _is_allowed_replenishment_task(request, task_id):
+    task_ids = request.session.get("replenishment_task_ids", [])
+    return task_id in task_ids
+
+
+def _path_is_allowed_for_master_download(request, file_path):
+    if not file_path:
+        return False
+
+    master_data = request.session.get("master_report") or {}
+    allowed_paths = [master_data.get("csv_path"), master_data.get("excel_path")]
+    allowed_real_paths = {
+        os.path.realpath(os.path.abspath(path)) for path in allowed_paths if path
+    }
+    file_real_path = os.path.realpath(os.path.abspath(file_path))
+    return file_real_path in allowed_real_paths
 
 
 @require_feature("replenishment")
@@ -64,14 +107,32 @@ def save_uploaded_files(request_files):
     return saved_paths
 
 
-@csrf_exempt
+def _validate_uploaded_extensions(request_files):
+    invalid = []
+    for key, file in request_files.items():
+        ext = os.path.splitext(str(getattr(file, "name", "") or ""))[1].lower()
+        if ext not in ALLOWED_UPLOAD_EXTENSIONS:
+            invalid.append(f"{key} ({ext or 'no extension'})")
+    if invalid:
+        raise ValueError(
+            "Unsupported file format for: "
+            + ", ".join(invalid)
+            + ". Upload CSV or Excel (.xlsx/.xls/.xlsm)."
+        )
+
+
 def validate_api(request):
     try:
+        _, _, auth_error = _require_replenishment_api_user(request)
+        if auth_error:
+            return auth_error
+
         if request.method != "POST":
             return JsonResponse({"error": "Only POST allowed"}, status=405)
 
         if not request.FILES:
             return JsonResponse({"error": "No files uploaded"}, status=400)
+        _validate_uploaded_extensions(request.FILES)
 
         # Save files to a unique temporary folder
         files = save_uploaded_files(request.FILES)
@@ -99,13 +160,13 @@ def validate_api(request):
         }
 
         task = validate_reports_celery.delay(reports_to_validate, mapping_files)
+        _track_replenishment_task(request, task.id)
 
         return JsonResponse({"task_id": task.id, "status": "processing"})
     except Exception as e:
         return JsonResponse({"error": f"Validation Error: {str(e)}"}, status=500)
 
 
-@csrf_exempt
 def generate_master_api(request):
     import traceback
     import logging
@@ -113,11 +174,16 @@ def generate_master_api(request):
     logger = logging.getLogger(__name__)
 
     try:
+        _, _, auth_error = _require_replenishment_api_user(request)
+        if auth_error:
+            return auth_error
+
         if request.method != "POST":
             return JsonResponse({"error": "Only POST allowed"}, status=405)
 
         if not request.FILES:
             return JsonResponse({"error": "No files uploaded"}, status=400)
+        _validate_uploaded_extensions(request.FILES)
 
         logger.info(
             f"[generate_master_api] Received {len(request.FILES)} files: {list(request.FILES.keys())}"
@@ -156,6 +222,7 @@ def generate_master_api(request):
 
         temp_dir = tempfile.mkdtemp()
         task = generate_master_celery.delay(files, temp_dir)
+        _track_replenishment_task(request, task.id)
         logger.info(f"[generate_master_api] Celery task dispatched: {task.id}")
 
         return JsonResponse({"task_id": task.id, "status": "processing"})
@@ -166,6 +233,13 @@ def generate_master_api(request):
 
 def check_task_status(request, task_id):
     """Poll Celery state and transfer result to session so downloads work"""
+    _, _, auth_error = _require_replenishment_api_user(request)
+    if auth_error:
+        return auth_error
+
+    if not _is_allowed_replenishment_task(request, task_id):
+        return JsonResponse({"error": "Permission denied"}, status=403)
+
     task = AsyncResult(task_id)
 
     if task.state == "PENDING":
@@ -223,6 +297,10 @@ def check_task_status(request, task_id):
 
 def download_validation_error(request, report_type, file_format):
     """Download validation error file on-demand"""
+    _, _, auth_error = _require_replenishment_api_user(request)
+    if auth_error:
+        return auth_error
+
     if (
         "validation_errors" not in request.session
         or report_type not in request.session["validation_errors"]
@@ -260,6 +338,10 @@ def download_validation_error(request, report_type, file_format):
 
 def download_master_report(request, file_format):
     """Download master report file on-demand"""
+    _, _, auth_error = _require_replenishment_api_user(request)
+    if auth_error:
+        return auth_error
+
     if "master_report" not in request.session:
         return JsonResponse({"error": "Master report not found"}, status=404)
 
@@ -267,22 +349,26 @@ def download_master_report(request, file_format):
 
     try:
         if file_format == "csv":
-            if not os.path.exists(master_data["csv_path"]):
+            csv_path = master_data.get("csv_path")
+            if not _path_is_allowed_for_master_download(request, csv_path):
+                return JsonResponse({"error": "Permission denied"}, status=403)
+            if not os.path.exists(csv_path):
                 return JsonResponse({"error": "CSV file not found"}, status=404)
             response = FileResponse(
-                open(master_data["csv_path"], "rb"), content_type="text/csv"
+                open(csv_path, "rb"), content_type="text/csv"
             )
             response["Content-Disposition"] = (
                 f'attachment; filename="Master_Merged_Report_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv"'
             )
             return response
         elif file_format == "excel":
-            if not master_data["excel_path"] or not os.path.exists(
-                master_data["excel_path"]
-            ):
+            excel_path = master_data.get("excel_path")
+            if not _path_is_allowed_for_master_download(request, excel_path):
+                return JsonResponse({"error": "Permission denied"}, status=403)
+            if not excel_path or not os.path.exists(excel_path):
                 return JsonResponse({"error": "Excel file not found"}, status=404)
             response = FileResponse(
-                open(master_data["excel_path"], "rb"),
+                open(excel_path, "rb"),
                 content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
             response["Content-Disposition"] = (
@@ -296,8 +382,16 @@ def download_master_report(request, file_format):
 
 
 def download_file(request):
+    _, _, auth_error = _require_replenishment_api_user(request)
+    if auth_error:
+        return auth_error
+
     filepath = request.GET.get("path")
-    if not filepath or not os.path.exists(filepath):
+    if not filepath:
+        return JsonResponse({"error": "File not found"}, status=404)
+    if not _path_is_allowed_for_master_download(request, filepath):
+        return JsonResponse({"error": "Permission denied"}, status=403)
+    if not os.path.exists(filepath):
         return JsonResponse({"error": "File not found"}, status=404)
 
     return FileResponse(open(filepath, "rb"), as_attachment=True)

@@ -131,7 +131,7 @@ document.addEventListener('DOMContentLoaded', () => {
             statusText.textContent = `Selected: ${fileName}`;
             display.classList.add('has-file');
         } else {
-            const originalText = input.id.includes('Sales') || input.id.includes('Pincode') || input.id.includes('Business') ? 'Click to upload .csv file' : 'Click to upload .xlsx file';
+            const originalText = 'Click to upload CSV or Excel file';
             statusText.textContent = originalText;
             display.classList.remove('has-file');
         }

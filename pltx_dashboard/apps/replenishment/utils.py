@@ -7,6 +7,30 @@ import pandas as pd
 from apps.dashboard.utils import extract_days
 
 
+def read_tabular_file(path, **kwargs):
+    """Read CSV/XLSX/XLSM/XLS input with a consistent fallback strategy."""
+    ext = str(path or "").lower().rsplit(".", 1)
+    ext = f".{ext[-1]}" if len(ext) == 2 else ""
+
+    if ext == ".csv":
+        for enc in ("utf-8", "latin-1", "cp1252"):
+            try:
+                return pd.read_csv(path, encoding=enc, **kwargs)
+            except UnicodeDecodeError:
+                continue
+        return pd.read_csv(path, **kwargs)
+
+    if ext in {".xlsx", ".xlsm", ".xls"}:
+        try:
+            return pd.read_excel(path, **kwargs)
+        except Exception:
+            return pd.read_excel(path, engine="openpyxl", **kwargs)
+
+    raise ValueError(
+        f"Unsupported file format '{ext}'. Only .csv, .xlsx, .xlsm, and .xls are supported."
+    )
+
+
 def generate_master_data(
     fc_mapping_path, pincode_path, product_details_path, input_sheet_path
 ):
@@ -15,24 +39,10 @@ def generate_master_data(
     used by the validation functions.
     """
     try:
-        fc_cluster_mapping_3 = pd.read_excel(fc_mapping_path, engine="openpyxl")
-        # Try multiple encodings – some mapping CSVs contain non-UTF-8 chars
-        for enc in ("utf-8", "latin-1", "cp1252"):
-            try:
-                pincode_cluster = pd.read_csv(pincode_path, encoding=enc)
-                break
-            except UnicodeDecodeError:
-                continue
-        else:
-            raise UnicodeDecodeError(
-                "utf-8",
-                b"",
-                0,
-                1,
-                f"Could not decode {pincode_path} with utf-8, latin-1, or cp1252",
-            )
-        product_details = pd.read_excel(product_details_path, engine="openpyxl")
-        input_sheet_1 = pd.read_excel(input_sheet_path, engine="openpyxl")
+        fc_cluster_mapping_3 = read_tabular_file(fc_mapping_path)
+        pincode_cluster = read_tabular_file(pincode_path)
+        product_details = read_tabular_file(product_details_path)
+        input_sheet_1 = read_tabular_file(input_sheet_path)
 
         # Clean columns
         fc_cluster_mapping_3.columns = fc_cluster_mapping_3.columns.str.strip()
