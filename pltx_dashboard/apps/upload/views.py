@@ -1,16 +1,21 @@
 import os
+import shutil
 import tempfile
 from datetime import datetime
 from uuid import uuid4
+import re
 
 from django.conf import settings
+from django.core.cache import cache
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser
 from celery.result import AsyncResult
 
+from apps.accounts.authentication import SessionUserIdAuthentication
 from apps.accounts.utils import get_logged_in_user
 from .models import UploadLog
+from .schema import parse_sales_upload_date, validate_file_type
 from .tasks import process_upload_file_task
 
 
@@ -45,6 +50,7 @@ UPLOAD_TYPE_LABELS = {
 UPLOAD_ROOT_DIR = os.getenv(
     "UPLOAD_ROOT_DIR", os.path.join(settings.BASE_DIR, "uploads")
 )
+ALLOWED_UPLOAD_EXTENSIONS = {".csv", ".xlsx", ".xls", ".xlsm"}
 
 UPLOAD_SUBDIRS = {
     "sales": "sales",
@@ -63,12 +69,58 @@ UPLOAD_SUBDIRS = {
 }
 
 
+def _track_upload_task(request, task_id):
+    task_ids = request.session.get("upload_task_ids", [])
+    if task_id not in task_ids:
+        task_ids.append(task_id)
+        request.session["upload_task_ids"] = task_ids[-500:]
+        request.session.modified = True
+
+
+def _is_allowed_upload_task(request, task_id):
+    task_ids = request.session.get("upload_task_ids", [])
+    return task_id in task_ids
+
+
 def _get_upload_dir(file_type):
     platform_dir = "flipkart" if file_type in FK_FILE_TYPES else "amazon"
     category_dir = UPLOAD_SUBDIRS.get(file_type, "misc")
     upload_dir = os.path.join(UPLOAD_ROOT_DIR, platform_dir, category_dir)
     os.makedirs(upload_dir, exist_ok=True)
     return upload_dir
+
+
+def _upload_batch_key(batch_id, suffix):
+    return f"upload_batch_{batch_id}_{suffix}"
+
+
+def _register_upload_batch(batch_id, *, batch_total, user_id, data_owner_id, is_flipkart):
+    ttl = 86400
+    meta_key = _upload_batch_key(batch_id, "meta")
+    expected_key = _upload_batch_key(batch_id, "expected_total")
+    completed_key = _upload_batch_key(batch_id, "completed_total")
+    failed_key = _upload_batch_key(batch_id, "failed_total")
+    finalized_key = _upload_batch_key(batch_id, "finalized")
+
+    existing_expected = cache.get(expected_key)
+    if existing_expected is not None and int(existing_expected) != int(batch_total):
+        raise ValueError("Invalid batch_total for existing upload batch.")
+
+    cache.set(
+        meta_key,
+        {
+            "user_id": int(user_id),
+            "data_owner_id": int(data_owner_id),
+            "is_flipkart": bool(is_flipkart),
+        },
+        timeout=ttl,
+    )
+    cache.set(expected_key, int(batch_total), timeout=ttl)
+
+    if existing_expected is None:
+        cache.set(completed_key, 0, timeout=ttl)
+        cache.set(failed_key, 0, timeout=ttl)
+        cache.delete(finalized_key)
 
 
 def _save_upload_to_disk(file_obj, file_type):
@@ -82,15 +134,28 @@ def _save_upload_to_disk(file_obj, file_type):
     ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S_%f")
     unique_prefix = f"upload_{ts}_{uuid4().hex[:8]}_"
     fd, path = tempfile.mkstemp(suffix=suffix, prefix=unique_prefix, dir=upload_dir)
-    with os.fdopen(fd, "wb") as f:
+    os.close(fd)
+
+    temp_path_getter = getattr(file_obj, "temporary_file_path", None)
+    if callable(temp_path_getter):
+        source_path = temp_path_getter()
+        shutil.move(source_path, path)
+        return path
+
+    with open(path, "wb") as f:
         for chunk in file_obj.chunks():
             f.write(chunk)
     return path
 
 
+def _is_allowed_tabular_extension(filename):
+    ext = os.path.splitext(str(filename or ""))[1].lower()
+    return ext in ALLOWED_UPLOAD_EXTENSIONS
+
+
 class FileUploadView(APIView):
     parser_classes = (MultiPartParser, FormParser)
-    authentication_classes = []
+    authentication_classes = [SessionUserIdAuthentication]
 
     def post(self, request, *args, **kwargs):
         user = get_logged_in_user(request)
@@ -111,17 +176,55 @@ class FileUploadView(APIView):
         file_obj = request.FILES.get("file")
         file_type = request.data.get("file_type")  # 'sales', 'spend', 'category', etc.
         date_str = request.data.get("date", "")
+        batch_id = str(request.data.get("batch_id") or "").strip()
+        batch_total_raw = request.data.get("batch_total")
+        batch_total = None
 
         if not file_obj or not file_type:
             return Response({"error": "file and file_type are required"}, status=400)
+        try:
+            validate_file_type(file_type)
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=400)
+
+        if batch_id:
+            if not re.fullmatch(r"[A-Za-z0-9_-]{8,64}", batch_id):
+                return Response({"error": "Invalid batch_id."}, status=400)
+            try:
+                batch_total = int(batch_total_raw)
+            except (TypeError, ValueError):
+                return Response({"error": "batch_total must be a positive integer."}, status=400)
+            if batch_total <= 0:
+                return Response({"error": "batch_total must be a positive integer."}, status=400)
 
         is_last = request.data.get("is_last") == "true"
         filename = os.path.basename(file_obj.name)
+        if not _is_allowed_tabular_extension(filename):
+            return Response(
+                {"error": "Unsupported file format. Upload CSV or Excel (.xlsx/.xls/.xlsm)."},
+                status=400,
+            )
 
         if file_type == "sales" and not date_str:
             date_str = os.path.splitext(filename)[0][:10]
+        if file_type == "sales":
+            try:
+                parse_sales_upload_date(date_str)
+            except ValueError as exc:
+                return Response({"error": str(exc)}, status=400)
 
         is_flipkart = file_type in FK_FILE_TYPES
+        if batch_id:
+            try:
+                _register_upload_batch(
+                    batch_id,
+                    batch_total=batch_total,
+                    user_id=user.id,
+                    data_owner_id=data_owner.id,
+                    is_flipkart=is_flipkart,
+                )
+            except ValueError as exc:
+                return Response({"error": str(exc)}, status=400)
 
         # Save uploaded file to disk for Celery worker access
         try:
@@ -152,6 +255,8 @@ class FileUploadView(APIView):
                     "date_str": date_str,
                     "is_last": is_last,
                     "is_flipkart": is_flipkart,
+                    "batch_id": batch_id,
+                    "batch_total": batch_total,
                 },
                 time_limit=timeout,
                 soft_time_limit=soft_timeout,
@@ -166,6 +271,9 @@ class FileUploadView(APIView):
             upload_log.save(update_fields=["status", "message", "updated_at"])
             return Response({"error": "Failed to queue file for processing."}, status=500)
 
+        cache.set(f"upload_task_owner_{task.id}", data_owner.id, timeout=86400)
+        _track_upload_task(request, task.id)
+
         return Response(
             {
                 "message": "File queued for processing",
@@ -178,9 +286,23 @@ class FileUploadView(APIView):
 class UploadTaskStatusView(APIView):
     """Poll Celery task state for an upload processing task."""
 
-    authentication_classes = []
+    authentication_classes = [SessionUserIdAuthentication]
 
     def get(self, request, task_id, *args, **kwargs):
+        user = get_logged_in_user(request)
+        if not user:
+            return Response({"error": "Not authenticated"}, status=401)
+
+        if not _is_allowed_upload_task(request, task_id):
+            return Response({"error": "Permission Denied"}, status=403)
+
+        data_owner = user.created_by if user.created_by else user
+        task_owner_id = cache.get(f"upload_task_owner_{task_id}")
+        if task_owner_id is None:
+            return Response({"error": "Task not found or expired"}, status=404)
+        if int(task_owner_id) != int(data_owner.id):
+            return Response({"error": "Permission Denied"}, status=403)
+
         task = AsyncResult(task_id)
 
         if task.state == "PENDING":
