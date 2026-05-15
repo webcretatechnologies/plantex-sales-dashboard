@@ -100,6 +100,10 @@ def process_price_file(file_obj, user):
 def process_spend_file(file_obj, user):
     """
     Insert spend rows scoped to the user, or update existing records directly if they already exist.
+
+    Spend values are pre-aggregated (summed) per unique key
+    (user, date, asin, ad_account, ad_type) before upserting, so duplicate
+    rows in the source file are combined instead of silently overwritten.
     """
     total_spends = 0
     touched_dates = set()
@@ -109,7 +113,9 @@ def process_spend_file(file_obj, user):
         any_chunk = True
         require_columns(df, "spend")
 
-        new_spends = []
+        # Pre-aggregate spend by unique key to avoid losing data when the
+        # source file contains duplicate (date, asin, ad_account, ad_type) rows.
+        spend_agg = {}  # key -> summed spend
         for row in df.to_dict("records"):
             row_number += 1
             asin = str(row.get("ASIN", "")).strip()
@@ -134,14 +140,23 @@ def process_spend_file(file_obj, user):
             else:
                 ad_type = ad_type[:10]
 
+            ad_account = str(row.get("Ad Account", "")).strip()
+            spend_val = clean_currency(row.get("Spend", 0))
+
+            key = (row_date, asin, ad_account, ad_type)
+            spend_agg[key] = spend_agg.get(key, 0.0) + spend_val
+
+        # Build SpendData objects from the aggregated dict
+        new_spends = []
+        for (row_date, asin, ad_account, ad_type), spend_total in spend_agg.items():
             new_spends.append(
                 SpendData(
                     user=user,
                     date=row_date,
                     asin=asin,
-                    ad_account=str(row.get("Ad Account", "")).strip(),
+                    ad_account=ad_account,
                     ad_type=ad_type,
-                    spend=clean_currency(row.get("Spend", 0)),
+                    spend=spend_total,
                 )
             )
 

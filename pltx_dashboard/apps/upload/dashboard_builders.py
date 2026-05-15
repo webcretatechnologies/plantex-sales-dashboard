@@ -286,16 +286,7 @@ def generate_flipkart_dashboard_data(user, progress_callback=None, only_dates=No
         traffic_qs = traffic_qs.filter(date__in=target_dates)
         pla_qs = pla_qs.filter(date__in=target_dates)
 
-    category_fsn_qs = (
-        FlipkartCategoryMap.objects.filter(user=user)
-        .exclude(fsn__isnull=True)
-        .exclude(fsn="")
-        .values_list("fsn", flat=True)
-    )
-    has_category_map = category_fsn_qs.exists()
-    if has_category_map:
-        traffic_qs = traffic_qs.filter(fsn__in=category_fsn_qs)
-        pla_qs = pla_qs.filter(fsn_id__in=category_fsn_qs)
+    has_category_map = FlipkartCategoryMap.objects.filter(user=user).exclude(fsn__isnull=True).exclude(fsn="").exists()
 
     processed_qs.delete()
 
@@ -369,8 +360,7 @@ def generate_flipkart_dashboard_data(user, progress_callback=None, only_dates=No
     ):
         if not date or not fsn:
             return
-        if has_category_map and fsn not in category_by_fsn:
-            return
+
 
         portfolio, category, subcategory = category_by_fsn.get(fsn, ("", "", ""))
         records.append(

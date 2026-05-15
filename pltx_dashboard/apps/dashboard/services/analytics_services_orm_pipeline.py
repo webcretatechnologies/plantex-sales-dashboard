@@ -328,13 +328,67 @@ def run_orm_computation(
         conversion = amazon_cvr(kpis["orders"], kpis["pageviews"])
     tacos = calculate_tacos(total_revenue, kpis["spend"])
 
+    # Ad Spend SKUs = individual spend rows with spend > 0 (from raw SpendData
+    # table), NOT unique ASINs.  This matches the source file row count.
+    az_ad_spend_sku_count = 0
+    if spend_qs is not None:
+        spend_qs_f = apply_global_filters_orm(spend_qs, filters)
+        if spend_qs_f is not None:
+            az_ad_spend_sku_count = spend_qs_f.filter(spend__gt=0).count()
+    fk_ad_spend_sku_count = 0
+    if fk_qs_f is not None:
+        from apps.dashboard.models import FlipkartPLA
+        fk_pla_qs = apply_global_filters_orm(
+            FlipkartPLA.objects.filter(user=user), filters
+        )
+        if fk_pla_qs is not None:
+            fk_ad_spend_sku_count = fk_pla_qs.filter(ad_spend__gt=0).count()
+
+    # 0-Sales SKU count: only ASINs that appear in the sales file
+    # (have pageviews, revenue, or orders > 0, OR exist in the raw Sales file).
+    # We fetch the set of raw sales ASINs for the period to correctly identify
+    # sales ASINs that have 0 pageviews/orders/revenue.
+    from apps.dashboard.models import SalesData as _SalesData, FlipkartSearchTraffic as _FKTraffic
+    
+    az_sales_asins = set()
+    sales_qs_direct = apply_global_filters_orm(
+        _SalesData.objects.filter(user=user), filters
+    )
+    if sales_qs_direct is not None:
+        az_sales_asins = set(sales_qs_direct.values_list("asin", flat=True))
+
+    fk_sales_fsns = set()
+    fk_traffic_qs = apply_global_filters_orm(
+        _FKTraffic.objects.filter(user=user), filters
+    )
+    if fk_traffic_qs is not None and platform_filter != "Amazon":
+        fk_sales_fsns = set(fk_traffic_qs.values_list("fsn", flat=True))
+
+    def _has_sales_data(r):
+        if r.get("fk_revenue", 0) > 0 or r.get("fk_orders", 0) > 0:
+            return True
+        if r.get("az_revenue", 0) > 0 or r.get("az_orders", 0) > 0 or r.get("pageviews", 0) > 0:
+            return True
+        # If all zeros, check if it's genuinely from the sales file
+        asin = r.get("asin")
+        if asin and (asin in az_sales_asins or asin in fk_sales_fsns):
+            return True
+        return False
+
     kpis.update({
         "roas": round(roas, 2),
         "conversion": round(conversion, 2),
         "tacos": round(tacos, 2),
-        "ad_spend_sku_count": sum(1 for r in table_data if r.get("total_spend", 0) > 0),
+        "ad_spend_sku_count": az_ad_spend_sku_count + fk_ad_spend_sku_count,
         "selling_sku_count": sum(1 for r in table_data if r.get("units", 0) > 0),
-        "zero_sales_pageviews": sum(r.get("pageviews", 0) for r in table_data if r.get("units", 0) == 0),
+        "zero_selling_sku_count": sum(
+            1 for r in table_data
+            if r.get("units", 0) == 0 and _has_sales_data(r)
+        ),
+        "zero_sales_pageviews": sum(
+            r.get("pageviews", 0) for r in table_data
+            if r.get("units", 0) == 0 and _has_sales_data(r)
+        ),
     })
 
     # ── Flipkart Product Status Metrics ──
@@ -375,15 +429,18 @@ def run_orm_computation(
         for row in status_qs.values("fsn", "product_status"):
             fsn = str(row.get("fsn") or "").strip()
             status_raw = str(row.get("product_status") or "").strip().lower()
-            if status_raw in ("continued", "continue"):
+            if status_raw in ("continued", "continue", "continued/pack of not sales"):
                 fsn_to_status[fsn] = "Continued"
             elif status_raw in ("discontinued", "discontinue"):
                 fsn_to_status[fsn] = "Discontinued"
 
-        for status in fsn_to_status.values():
-            status_counts[status] += 1
+        # Count ALL FSNs from category map for status counts
+        # (not just those with traffic data in the period)
+        for fsn, status in fsn_to_status.items():
+            if status in status_counts:
+                status_counts[status] += 1
 
-        # Sum revenue by FSN for filtered period
+        # Sum revenue by FSN for filtered period only
         for row in fk_qs_f.values("fsn").annotate(total_revenue=Sum("revenue")):
             fsn = str(row.get("fsn") or "").strip()
             status = fsn_to_status.get(fsn)
@@ -521,7 +578,7 @@ def run_orm_computation(
 
 
     marketing = {
-        "ad_spend": kpis["spend"], 
+        "ad_spend": int(kpis["spend"]), 
         "ad_spend_change": kpis.get("mom_spend_growth", 0),
         "roas": kpis["roas"], 
         "roas_change_pct": kpis.get("mom_roas_change", 0), 
@@ -529,6 +586,7 @@ def run_orm_computation(
         "tacos_change": kpis.get("mom_tacos_change", 0),
         "ad_spend_sku_count": kpis.get("ad_spend_sku_count", 0),
         "selling_sku_count": kpis.get("selling_sku_count", 0),
+        "zero_selling_sku_count": kpis.get("zero_selling_sku_count", 0),
         "zero_sales_pageviews": kpis.get("zero_sales_pageviews", 0),
     }
 

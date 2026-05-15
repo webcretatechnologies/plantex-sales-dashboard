@@ -520,7 +520,7 @@ def process_fk_category(file_obj, user):
             )
             normalized_status = ""
             status_lower = raw_status.lower()
-            if status_lower in ("continued", "continue"):
+            if status_lower in ("continued", "continue", "continued/pack of not sales"):
                 normalized_status = "Continued"
             elif status_lower in ("discontinued", "discontinue"):
                 normalized_status = "Discontinued"
