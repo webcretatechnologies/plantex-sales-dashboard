@@ -812,7 +812,13 @@
             var defaultEnd = document.getElementById('customEndDate') ? document.getElementById('customEndDate').value : "{{ request.GET.end_date|default:'' }}";
             var defaultDates = [];
             if (defaultStart && defaultEnd) {
-                defaultDates = [defaultStart, defaultEnd];
+                if (defaultStart === defaultEnd) {
+                    defaultDates = [defaultStart];  // single date
+                } else {
+                    defaultDates = [defaultStart, defaultEnd];  // range
+                }
+            } else if (defaultStart) {
+                defaultDates = [defaultStart];  // single date fallback
             }
 
             var fpEl = document.getElementById("flatpickrRange");
@@ -828,6 +834,11 @@
                         if (selectedDates.length === 2) {
                             document.getElementById('customStartDate').value = instance.formatDate(selectedDates[0], "Y-m-d");
                             document.getElementById('customEndDate').value = instance.formatDate(selectedDates[1], "Y-m-d");
+                        } else if (selectedDates.length === 1) {
+                            // Single date selected — treat as both start and end
+                            var singleDate = instance.formatDate(selectedDates[0], "Y-m-d");
+                            document.getElementById('customStartDate').value = singleDate;
+                            document.getElementById('customEndDate').value = singleDate;
                         } else {
                             document.getElementById('customStartDate').value = '';
                             document.getElementById('customEndDate').value = '';
@@ -862,18 +873,19 @@
             var startDate = document.getElementById('customStartDate').value;
             var endDate = document.getElementById('customEndDate').value;
 
-            if (!startDate || !endDate) {
-                alert("Please select both start and end dates.");
+            if (!startDate) {
+                alert("Please select a date or date range.");
                 return;
+            }
+
+            // If only start date is set (single date), use it as both start and end
+            if (!endDate) {
+                endDate = startDate;
+                document.getElementById('customEndDate').value = endDate;
             }
 
             var sDate = new Date(startDate);
             var eDate = new Date(endDate);
-
-            if (sDate.getTime() === eDate.getTime()) {
-                alert("Start date and end date should not be the same.");
-                return;
-            }
 
             if (sDate > eDate) {
                 alert("Start date should not be after the end date.");
