@@ -5,7 +5,7 @@ import hashlib
 import time
 from openpyxl import load_workbook
 from celery import shared_task
-from celery.exceptions import SoftTimeLimitExceeded, Retry
+from celery.exceptions import SoftTimeLimitExceeded, MaxRetriesExceededError, Retry
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from django.core.cache import cache
@@ -104,28 +104,59 @@ def _mark_batch_task_complete(
         expected = int(batch_total or 0)
         if expected > 0:
             cache.set(expected_key, expected, timeout=ttl)
+            logger.info(
+                "[BatchTracker] batch=%s expected_total key was missing, re-set to %d",
+                batch_id, expected,
+            )
     else:
         expected = int(expected)
     if expected <= 0:
+        logger.warning(
+            "[BatchTracker] batch=%s expected_total=0, skipping finalization check. "
+            "batch_total kwarg=%s",
+            batch_id, batch_total,
+        )
         return
 
+    # Atomically increment the completed counter.
+    # Use add-then-incr to avoid the race where two workers both fallback
+    # to cache.set(key, 1) and one increment is lost.
     try:
         completed = cache.incr(completed_key)
     except ValueError:
-        cache.set(completed_key, 1, timeout=ttl)
-        completed = 1
+        # Key doesn't exist yet — seed it at 0, then incr.
+        cache.add(completed_key, 0, timeout=ttl)
+        try:
+            completed = cache.incr(completed_key)
+        except ValueError:
+            # Extremely unlikely double-race fallback.
+            cache.set(completed_key, 1, timeout=ttl)
+            completed = 1
+
+    logger.info(
+        "[BatchTracker] batch=%s completed=%d/%d success=%s",
+        batch_id, completed, expected, success,
+    )
 
     if not success:
         try:
             cache.incr(failed_key)
         except ValueError:
-            cache.set(failed_key, 1, timeout=ttl)
+            cache.add(failed_key, 0, timeout=ttl)
+            try:
+                cache.incr(failed_key)
+            except ValueError:
+                cache.set(failed_key, 1, timeout=ttl)
 
     if completed < expected:
         return
 
     # Finalize only once, even if multiple workers reach completion concurrently.
     if not cache.add(finalized_key, 1, timeout=ttl):
+        logger.info(
+            "[BatchTracker] batch=%s already finalized by another worker, skipping.",
+            batch_id,
+        )
         return
 
     failed_total = int(cache.get(failed_key) or 0)
@@ -133,6 +164,11 @@ def _mark_batch_task_complete(
     owner_id = int(meta.get("data_owner_id") or data_owner_id)
     owner_user_id = int(meta.get("user_id") or user_id)
     owner_is_flipkart = bool(meta.get("is_flipkart")) if "is_flipkart" in meta else bool(is_flipkart)
+
+    logger.info(
+        "[BatchTracker] batch=%s FINALIZING — completed=%d expected=%d failed=%d owner=%d flipkart=%s",
+        batch_id, completed, expected, failed_total, owner_id, owner_is_flipkart,
+    )
 
     if failed_total > 0:
         msg = (
@@ -207,8 +243,10 @@ def _run_dashboard_refresh(
         has_fba_stock = Flipkartfba.objects.filter(user=data_owner).exists()
         has_fk_inventory = FlipkartInventoryStock.objects.filter(user=data_owner).exists()
         if not has_fba_stock or not has_fk_inventory:
-            raise ValueError(
-                "Flipkart requires both FK Inventory and FK FBA Stock uploads for inventory health."
+            logger.warning(
+                "[DashboardRefresh] user=%s missing FK Inventory (%s) or FBA Stock (%s) — "
+                "skipping inventory health, but will still build core dashboard.",
+                data_owner.id, has_fk_inventory, has_fba_stock,
             )
 
         if file_type in {"fk_search_traffic", "fk_pla"} and affected_dates:
@@ -262,10 +300,44 @@ def refresh_dashboard_after_upload_task(
     try:
         lock_key = f"dashboard_refresh_lock_{data_owner_id}"
         lock_token = self.request.id
+
         if not cache.add(lock_key, lock_token, timeout=1800):
-            raise self.retry(countdown=10, max_retries=30)
+            # Check if the existing lock is stale (older than 15 minutes).
+            existing_token = cache.get(lock_key)
+            lock_status = cache.get(f"{lock_key}_ts")
+            stale_threshold = 900  # 15 minutes
+            if lock_status and (time.time() - float(lock_status)) > stale_threshold:
+                logger.warning(
+                    "[DashboardRefreshTask] Stale lock detected for owner=%s "
+                    "(held by %s for %.0fs). Forcing release.",
+                    data_owner_id, existing_token,
+                    time.time() - float(lock_status),
+                )
+                cache.delete(lock_key)
+                cache.delete(f"{lock_key}_ts")
+                # Try to acquire again after clearing stale lock.
+                if not cache.add(lock_key, lock_token, timeout=1800):
+                    logger.info(
+                        "[DashboardRefreshTask] Lock re-acquired by another worker after stale clear. Retrying."
+                    )
+                    raise self.retry(countdown=10, max_retries=30)
+            else:
+                logger.info(
+                    "[DashboardRefreshTask] Lock held by %s for owner=%s. "
+                    "Retry %d. task=%s",
+                    existing_token, data_owner_id,
+                    self.request.retries, lock_token,
+                )
+                raise self.retry(countdown=10, max_retries=30)
+
+        # Record lock acquisition time for staleness detection.
+        cache.set(f"{lock_key}_ts", str(time.time()), timeout=1800)
 
         data_owner = Users.objects.get(pk=data_owner_id)
+        logger.info(
+            "[DashboardRefreshTask] Starting refresh for owner=%s flipkart=%s file_type=%s",
+            data_owner_id, is_flipkart, file_type,
+        )
         _set_dashboard_refresh_status(
             data_owner_id,
             "processing",
@@ -294,11 +366,28 @@ def refresh_dashboard_after_upload_task(
             timeout=300,
         )
         _send_ws(user_id, "Dashboard updated with the new updated data.", "complete")
+        logger.info("[DashboardRefreshTask] Completed successfully for owner=%s", data_owner_id)
         return {"status": "success"}
     except Retry:
         raise
+    except MaxRetriesExceededError:
+        logger.error(
+            "[DashboardRefreshTask] Max retries exceeded for owner=%s. "
+            "Lock may be permanently stuck. Clearing lock and notifying user.",
+            data_owner_id,
+        )
+        # Force-clear the lock so subsequent uploads aren't permanently blocked.
+        try:
+            cache.delete(f"dashboard_refresh_lock_{data_owner_id}")
+            cache.delete(f"dashboard_refresh_lock_{data_owner_id}_ts")
+        except Exception:
+            pass
+        msg = "Dashboard update timed out waiting for a previous update to finish. Please try uploading again."
+        _set_dashboard_refresh_status(data_owner_id, "error", msg, timeout=600)
+        _send_ws(user_id, msg, "error")
+        return {"status": "error", "message": msg}
     except Exception as exc:
-        logger.exception("[DashboardRefreshTask] Error: %s", exc)
+        logger.exception("[DashboardRefreshTask] Error for owner=%s: %s", data_owner_id, exc)
         _set_dashboard_refresh_status(
             data_owner_id,
             "error",
@@ -312,6 +401,7 @@ def refresh_dashboard_after_upload_task(
             lock_key = f"dashboard_refresh_lock_{data_owner_id}"
             if cache.get(lock_key) == self.request.id:
                 cache.delete(lock_key)
+                cache.delete(f"{lock_key}_ts")
         except Exception:
             pass
 
