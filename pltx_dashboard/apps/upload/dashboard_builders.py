@@ -1,5 +1,6 @@
 import datetime
 import logging
+import time
 
 from django.db.models import Sum
 
@@ -61,6 +62,14 @@ def generate_dashboard_data(user, progress_callback=None, only_dates=None):
                 target_dates.add(value.date())
             elif isinstance(value, datetime.date):
                 target_dates.add(value)
+            elif isinstance(value, str) and value.strip():
+                try:
+                    target_dates.add(datetime.datetime.strptime(value.strip(), "%Y-%m-%d").date())
+                except ValueError:
+                    pass
+
+    _t0 = time.monotonic()
+    mode = f"incremental ({len(target_dates)} dates)" if target_dates else "full rebuild"
 
     if target_dates:
         _notify("Refreshing dashboard aggregates for selected dates...")
@@ -221,6 +230,11 @@ def generate_dashboard_data(user, progress_callback=None, only_dates=None):
 
     _notify(f"Processed {total_rows} dashboard rows.")
     _invalidate_dashboard_cache()
+    _elapsed = time.monotonic() - _t0
+    logger.info(
+        "[Dashboard] generate_dashboard_data user=%s mode=%s rows=%d elapsed=%.1fs",
+        user.id, mode, total_rows, _elapsed,
+    )
 
 
 # ===========================================================================
@@ -272,6 +286,14 @@ def generate_flipkart_dashboard_data(user, progress_callback=None, only_dates=No
                 target_dates.add(value.date())
             elif isinstance(value, datetime.date):
                 target_dates.add(value)
+            elif isinstance(value, str) and value.strip():
+                try:
+                    target_dates.add(datetime.datetime.strptime(value.strip(), "%Y-%m-%d").date())
+                except ValueError:
+                    pass
+
+    _t0 = time.monotonic()
+    mode = f"incremental ({len(target_dates)} dates)" if target_dates else "full rebuild"
 
     if target_dates:
         _notify("Refreshing Flipkart dashboard aggregates for selected dates...")
@@ -286,13 +308,12 @@ def generate_flipkart_dashboard_data(user, progress_callback=None, only_dates=No
         traffic_qs = traffic_qs.filter(date__in=target_dates)
         pla_qs = pla_qs.filter(date__in=target_dates)
 
-    has_category_map = FlipkartCategoryMap.objects.filter(user=user).exclude(fsn__isnull=True).exclude(fsn="").exists()
 
     processed_qs.delete()
 
-    if not traffic_qs.exists():
+    if not traffic_qs.exists() and not pla_qs.exists():
         _invalidate_dashboard_cache()
-        logger.info("[FK Dashboard] No search traffic data - skipping.")
+        logger.info("[FK Dashboard] No search traffic or PLA data - skipping.")
         return
 
     _notify("Loading Flipkart category and price mappings...")
@@ -416,5 +437,9 @@ def generate_flipkart_dashboard_data(user, progress_callback=None, only_dates=No
 
     _flush_records()
     _invalidate_dashboard_cache()
+    _elapsed = time.monotonic() - _t0
 
-    logger.info("[FK Dashboard] Generated %s processed records.", total_processed)
+    logger.info(
+        "[FK Dashboard] Generated %s processed records. mode=%s elapsed=%.1fs",
+        total_processed, mode, _elapsed,
+    )

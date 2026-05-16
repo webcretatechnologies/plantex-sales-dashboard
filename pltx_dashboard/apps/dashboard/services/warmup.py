@@ -1,5 +1,7 @@
 import hashlib
 import json
+import logging
+import time
 from copy import deepcopy
 
 from django.core.cache import cache
@@ -27,6 +29,8 @@ from apps.dashboard.services.materialized_cache import (
     get_materialized_summary,
     store_materialized_summary,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _apply_spend_filters(spend_qs, filters):
@@ -111,6 +115,10 @@ def prime_dashboard_payloads_for_user(
 
         spend_qs = _apply_spend_filters(SpendData.objects.filter(user=user), filters)
 
+        # Check which view_types still need computation for this filter set.
+        # The ORM computation result is identical for all view_types (only cache
+        # key differs), so compute ONCE and reuse for all.
+        views_needing_compute = []
         for view_type in resolved_view_types:
             key = _cache_key(user.id, view_type, data_version, cache_hash)
             payload = cache.get(key)
@@ -129,14 +137,28 @@ def prime_dashboard_payloads_for_user(
                 reused_materialized += 1
                 continue
 
-            payload = run_orm_computation(
-                scoped_qs,
-                scoped_fk_qs,
-                spend_qs,
-                filters,
-                user,
-                cached_filter_metadata=cached_filter_metadata,
-            )
+            views_needing_compute.append(view_type)
+
+        if not views_needing_compute:
+            continue
+
+        # Compute once and cache for all view_types that need it.
+        _t0 = time.monotonic()
+        payload = run_orm_computation(
+            scoped_qs,
+            scoped_fk_qs,
+            spend_qs,
+            filters,
+            user,
+            cached_filter_metadata=cached_filter_metadata,
+        )
+        _elapsed = time.monotonic() - _t0
+        logger.info(
+            "[DashboardWarmup] Computed payload for %d view_types in %.1fs (filters=%s)",
+            len(views_needing_compute), _elapsed, filter_key_str[:80],
+        )
+        for view_type in views_needing_compute:
+            key = _cache_key(user.id, view_type, data_version, cache_hash)
             store_materialized_summary(
                 user_id=user.id,
                 view_type=view_type,

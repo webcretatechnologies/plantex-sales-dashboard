@@ -88,6 +88,8 @@ def _mark_batch_task_complete(
     data_owner_id,
     is_flipkart,
     success,
+    file_type="",
+    affected_dates=None,
 ):
     if not batch_id:
         return
@@ -98,6 +100,30 @@ def _mark_batch_task_complete(
     failed_key = _upload_batch_key(batch_id, "failed_total")
     finalized_key = _upload_batch_key(batch_id, "finalized")
     meta_key = _upload_batch_key(batch_id, "meta")
+    file_types_key = _upload_batch_key(batch_id, "file_types")
+    dates_key = _upload_batch_key(batch_id, "affected_dates")
+
+    # Accumulate file types and affected dates from each task.
+    # Note: get-modify-set has a small race window with concurrent workers.
+    # Worst case: a file_type or date is lost, causing a full rebuild instead
+    # of incremental — safe but slower. We retry once to minimise this.
+    if file_type:
+        for _attempt in range(3):
+            existing_types = cache.get(file_types_key) or set()
+            existing_types.add(file_type)
+            cache.set(file_types_key, existing_types, timeout=ttl)
+            # Verify the write stuck
+            verify = cache.get(file_types_key)
+            if verify and file_type in verify:
+                break
+
+    if affected_dates:
+        for _attempt in range(3):
+            existing_dates = cache.get(dates_key) or set()
+            for d in affected_dates:
+                existing_dates.add(str(d))
+            cache.set(dates_key, existing_dates, timeout=ttl)
+            break  # dates are additive; minor race loss is acceptable
 
     expected = cache.get(expected_key)
     if expected is None:
@@ -165,6 +191,10 @@ def _mark_batch_task_complete(
     owner_user_id = int(meta.get("user_id") or user_id)
     owner_is_flipkart = bool(meta.get("is_flipkart")) if "is_flipkart" in meta else bool(is_flipkart)
 
+    # Determine smart file_type and affected_dates from accumulated batch data.
+    batch_file_types = cache.get(file_types_key) or set()
+    batch_affected_dates = sorted(cache.get(dates_key) or set())
+
     logger.info(
         "[BatchTracker] batch=%s FINALIZING — completed=%d expected=%d failed=%d owner=%d flipkart=%s",
         batch_id, completed, expected, failed_total, owner_id, owner_is_flipkart,
@@ -178,6 +208,35 @@ def _mark_batch_task_complete(
         _set_dashboard_refresh_status(owner_id, "error", msg, timeout=900)
         _send_ws(owner_user_id, msg, "error")
         return
+
+    # Determine the effective file_type for the refresh.
+    # Only force full rebuild when category/price files are in the batch.
+    # For sales-only or spend-only batches, enable incremental date-scoped refresh.
+    FULL_REBUILD_TYPES_AMZ = {"category", "price"}
+    FULL_REBUILD_TYPES_FK = {"fk_category", "fk_price"}
+    full_rebuild_types = FULL_REBUILD_TYPES_FK if owner_is_flipkart else FULL_REBUILD_TYPES_AMZ
+
+    needs_full_rebuild = bool(batch_file_types & full_rebuild_types)
+    if needs_full_rebuild:
+        effective_file_type = "fk_category" if owner_is_flipkart else "category"
+        effective_dates = []  # full rebuild ignores dates
+    else:
+        # Pick the dominant file type; prefer "sales"/"spend" for incremental.
+        if owner_is_flipkart:
+            if "fk_search_traffic" in batch_file_types:
+                effective_file_type = "fk_search_traffic"
+            elif "fk_pla" in batch_file_types:
+                effective_file_type = "fk_pla"
+            else:
+                effective_file_type = next(iter(batch_file_types), "fk_category")
+        else:
+            if "sales" in batch_file_types:
+                effective_file_type = "sales"
+            elif "spend" in batch_file_types:
+                effective_file_type = "spend"
+            else:
+                effective_file_type = next(iter(batch_file_types), "category")
+        effective_dates = batch_affected_dates
 
     _set_dashboard_refresh_status(
         owner_id,
@@ -194,9 +253,8 @@ def _mark_batch_task_complete(
         data_owner_id=owner_id,
         user_id=owner_user_id,
         is_flipkart=owner_is_flipkart,
-        # Force full-refresh path once all files are done to avoid out-of-order task races.
-        file_type="fk_category" if owner_is_flipkart else "category",
-        affected_dates=[],
+        file_type=effective_file_type,
+        affected_dates=effective_dates,
         dashboard_refreshed=False,
     )
 
@@ -561,6 +619,8 @@ def process_upload_file_task(
                 data_owner_id=data_owner.id,
                 is_flipkart=is_flipkart,
                 success=True,
+                file_type=file_type,
+                affected_dates=sorted(affected_dates),
             )
         elif is_last:
             _set_dashboard_refresh_status(
@@ -618,6 +678,7 @@ def process_upload_file_task(
                 data_owner_id=data_owner_id,
                 is_flipkart=is_flipkart,
                 success=False,
+                file_type=file_type,
             )
 
         return {
@@ -657,6 +718,7 @@ def process_upload_file_task(
                 data_owner_id=data_owner_id,
                 is_flipkart=is_flipkart,
                 success=False,
+                file_type=file_type,
             )
 
         return {

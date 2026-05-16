@@ -248,11 +248,11 @@ async function loadDashboard() {
             // Flipkart file types mapped to slim pipeline
             const fkFileMap = [
                 { inputId: 'fkSearchTrafficFile', type: 'fk_search_traffic' },
-                { inputId: 'fkCategoryFile',      type: 'fk_category' },
-                { inputId: 'fkPriceFile',         type: 'fk_price' },
-                { inputId: 'fkPlaNewFile',        type: 'fk_pla' },
-                { inputId: 'fkFbaStockFile',      type: 'fk_fba_stock' },
-                { inputId: 'fkInventoryFile',     type: 'fk_inventory' },
+                { inputId: 'fkCategoryFile', type: 'fk_category' },
+                { inputId: 'fkPriceFile', type: 'fk_price' },
+                { inputId: 'fkPlaNewFile', type: 'fk_pla' },
+                { inputId: 'fkFbaStockFile', type: 'fk_fba_stock' },
+                { inputId: 'fkInventoryFile', type: 'fk_inventory' },
             ];
 
             const missingFlipkartInputs = fkFileMap.filter(m => {
