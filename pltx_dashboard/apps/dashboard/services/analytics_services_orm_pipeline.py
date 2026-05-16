@@ -16,7 +16,7 @@ from apps.dashboard.services.metrics import (
     tacos as calculate_tacos,
 )
 from django.core.cache import cache
-from django.db.models import Sum, Max
+from django.db.models import Sum, Max, Case, When, F, Value
 from django.utils import timezone
 
 def safe_replace_year(d, year_offset=-1):
@@ -486,20 +486,69 @@ def run_orm_computation(
     yoy_pm_start = safe_replace_year(pm_start)
     yoy_pm_end = safe_replace_year(pm_end)
 
-    cm_rev = get_revenue_for_period(qs, fk_qs, cm_start, cm_end)
-    pm_rev = get_revenue_for_period(qs, fk_qs, pm_start, pm_end)
-    ppm_rev = get_revenue_for_period(qs, fk_qs, ppm_start, ppm_end)
-    yoy_cm_rev = get_revenue_for_period(qs, fk_qs, yoy_cm_start, yoy_cm_end)
-    yoy_pm_rev = get_revenue_for_period(qs, fk_qs, yoy_pm_start, yoy_pm_end)
-    cm_az_rev = get_revenue_for_period(qs, None, cm_start, cm_end)
-    pm_az_rev = get_revenue_for_period(qs, None, pm_start, pm_end)
-    yoy_cm_az_rev = get_revenue_for_period(qs, None, yoy_cm_start, yoy_cm_end)
-    cm_fk_rev = get_revenue_for_period(None, fk_qs, cm_start, cm_end)
-    pm_fk_rev = get_revenue_for_period(None, fk_qs, pm_start, pm_end)
-    yoy_cm_fk_rev = get_revenue_for_period(None, fk_qs, yoy_cm_start, yoy_cm_end)
+    # Batch all period-based revenue+spend queries into 2 SQL calls (one per table)
+    # instead of 13+ individual calls. Uses CASE/WHEN to aggregate all periods in
+    # a single pass.
 
-    cm_spend = get_spend_for_period(qs, fk_qs, cm_start, cm_end)
-    pm_spend = get_spend_for_period(qs, fk_qs, pm_start, pm_end)
+    _growth_periods = {
+        "cm": (cm_start, cm_end),
+        "pm": (pm_start, pm_end),
+        "ppm": (ppm_start, ppm_end),
+        "yoy_cm": (yoy_cm_start, yoy_cm_end),
+        "yoy_pm": (yoy_pm_start, yoy_pm_end),
+    }
+
+    def _batch_period_aggregates(base_qs, periods, rev_field="revenue", spend_field="total_spend"):
+        """Compute revenue and spend for multiple periods in a single SQL query."""
+        if base_qs is None:
+            return {f"{k}_rev": 0.0 for k in periods} | {f"{k}_spend": 0.0 for k in periods}
+
+        agg_kwargs = {}
+        for label, (p_start, p_end) in periods.items():
+            agg_kwargs[f"{label}_rev"] = Sum(
+                Case(
+                    When(date__gte=p_start, date__lte=p_end, then=F(rev_field)),
+                    default=Value(0.0),
+                )
+            )
+            agg_kwargs[f"{label}_spend"] = Sum(
+                Case(
+                    When(date__gte=p_start, date__lte=p_end, then=F(spend_field)),
+                    default=Value(0.0),
+                )
+            )
+
+        # Limit the queryset to the full date range covering all periods to avoid
+        # scanning the entire table.
+        all_starts = [s for s, _ in periods.values()]
+        all_ends = [e for _, e in periods.values()]
+        min_date = min(all_starts)
+        max_date = max(all_ends)
+        scoped = base_qs.filter(date__gte=min_date, date__lte=max_date)
+
+        result = scoped.aggregate(**agg_kwargs)
+        return {k: float(v or 0) for k, v in result.items()}
+
+    az_periods = _batch_period_aggregates(qs, _growth_periods)
+    fk_periods = _batch_period_aggregates(fk_qs, _growth_periods)
+
+    # Combined (Amazon + Flipkart) period values
+    cm_rev = az_periods["cm_rev"] + fk_periods["cm_rev"]
+    pm_rev = az_periods["pm_rev"] + fk_periods["pm_rev"]
+    ppm_rev = az_periods["ppm_rev"] + fk_periods["ppm_rev"]
+    yoy_cm_rev = az_periods["yoy_cm_rev"] + fk_periods["yoy_cm_rev"]
+    yoy_pm_rev = az_periods["yoy_pm_rev"] + fk_periods["yoy_pm_rev"]
+
+    # Per-platform period values
+    cm_az_rev = az_periods["cm_rev"]
+    pm_az_rev = az_periods["pm_rev"]
+    yoy_cm_az_rev = az_periods["yoy_cm_rev"]
+    cm_fk_rev = fk_periods["cm_rev"]
+    pm_fk_rev = fk_periods["pm_rev"]
+    yoy_cm_fk_rev = fk_periods["yoy_cm_rev"]
+
+    cm_spend = az_periods["cm_spend"] + fk_periods["cm_spend"]
+    pm_spend = az_periods["pm_spend"] + fk_periods["pm_spend"]
 
     kpis["mom_growth"] = _safe_growth(cm_rev, pm_rev)
     kpis["yoy_growth"] = _safe_growth(cm_rev, yoy_cm_rev)
