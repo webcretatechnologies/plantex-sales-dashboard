@@ -311,7 +311,9 @@
                             </div>
                         </td>
                         <td class="num">{{ prod.revenue|fmt_rupee }}</td>
-                        <td class="num growth-up">▲ {{ prod.growth }}%</td>
+                        <td class="num {% if prod.growth >= 0 %}growth-up{% else %}growth-down{% endif %}">
+                            {% if prod.growth >= 0 %}▲{% else %}▼{% endif %} {{ prod.growth|abs_val }}%
+                        </td>
                     </tr>
                     {% endfor %}
                 </tbody>

@@ -1351,14 +1351,24 @@ def run_orm_computation(
         growth = _safe_growth(curr_rev, prev_rev)
         
         top_prods.append({"sku": sku, "cluster": row.get("portfolio") or "Standard", "revenue": curr_rev, "growth": growth, "units_sold": row["units"]})
-        
-        # Declining based on MOM drop
+
+    # Declining based on MOM drop:
+    # Use the union of current/previous month SKU keys so drops to zero
+    # are still captured (these SKUs may not appear in current-period table_data).
+    for sku in set(cm_sku_rev.keys()) | set(pm_sku_rev.keys()):
         sku_cm = cm_sku_rev.get(sku, 0)
         sku_pm = pm_sku_rev.get(sku, 0)
         mom_growth = _safe_growth(sku_cm, sku_pm)
         if mom_growth < 0:
-            under_prods.append({"sku": sku, "revenue": sku_cm, "drop_pct": mom_growth, "impact": sku_cm - sku_pm})
-            
+            under_prods.append(
+                {
+                    "sku": sku,
+                    "revenue": sku_cm,
+                    "drop_pct": mom_growth,
+                    "impact": max(sku_pm - sku_cm, 0),
+                }
+            )
+
     under_prods.sort(key=lambda x: x["drop_pct"])  # Sort by most negative growth
 
     port_perf_dict = {}

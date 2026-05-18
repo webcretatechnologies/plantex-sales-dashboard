@@ -81,7 +81,6 @@
     </div>
 
     <!-- Orders -->
-    {% if request.GET.platform != "Flipkart" %}
     <div class="ceo-kpi-card" id="cat-kpi-orders">
         <div class="ceo-kpi-header">
             <span class="ceo-kpi-label">Orders</span>
@@ -98,9 +97,7 @@
             <span><span style="color:#f59e0b;font-size:8px;">●</span> {{ payload.kpis.fk_orders|fmt_num }}</span>
         </div>
     </div>
-    {% endif %}
 
-    {% if request.GET.platform == "Flipkart" %}
     <div class="ceo-kpi-card" id="cat-kpi-discontinue-sales-count">
         <div class="ceo-kpi-header">
             <span class="ceo-kpi-label">Total Revenue of Discontinue FSN</span>
@@ -122,7 +119,6 @@
             <span class="sub">SKU Count: {{ payload.kpis.continue_sku_count|fmt_num }}</span>
         </div>
     </div>
-    {% endif %}
 
     <!-- Units Sold -->
     <div class="ceo-kpi-card" id="cat-kpi-units">
@@ -149,14 +145,14 @@
             <div class="ceo-kpi-icon amber"><span class="material-icons-round" style="font-size:16px">payments</span>
             </div>
         </div>
-        <div class="ceo-kpi-value">₹{{ payload.marketing.ad_spend|fmt_num }}</div>
+        <div class="ceo-kpi-value">{{ payload.marketing.ad_spend|fmt_rupee }}</div>
         <div class="ceo-kpi-change {% if payload.marketing.ad_spend_change < 0 %}down{% else %}up{% endif %}">
             {% if payload.marketing.ad_spend_change < 0 %}▼{% else %}▲{% endif %} {{ payload.marketing.ad_spend_change|abs_val }}% <span class="sub">vs last month</span>
         </div>
         <div
             style="display:flex; justify-content:space-between; margin-top:10px; font-size:10px; color:var(--muted); font-family:'JetBrains Mono', monospace; padding-top:8px; border-top:1px dashed var(--border-light);">
-            <span><span style="color:#3b82f6;font-size:8px;">●</span> ₹{{ payload.kpis.az_spend|fmt_num }}</span>
-            <span><span style="color:#f59e0b;font-size:8px;">●</span> ₹{{ payload.kpis.fk_spend|fmt_num }}</span>
+            <span><span style="color:#3b82f6;font-size:8px;">●</span> {{ payload.kpis.az_spend|fmt_rupee }}</span>
+            <span><span style="color:#f59e0b;font-size:8px;">●</span> {{ payload.kpis.fk_spend|fmt_rupee }}</span>
         </div>
     </div>
 
