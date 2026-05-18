@@ -9,6 +9,7 @@ from .views import (
     download_calculated_data,
     download_demo_template,
     dashboard_section_view,
+    dashboard_modal_rows_view,
     filter_dropdown_options,
     dashboard_refresh_status,
 )
@@ -28,6 +29,11 @@ urlpatterns = [
         "dashboard/sections/<str:view_name>/<str:section>/",
         dashboard_section_view,
         name="dashboard-section",
+    ),
+    path(
+        "dashboard/modal-rows/<str:view_name>/<str:modal_key>/",
+        dashboard_modal_rows_view,
+        name="dashboard-modal-rows",
     ),
     path(
         "api/dashboard/filter-options/",

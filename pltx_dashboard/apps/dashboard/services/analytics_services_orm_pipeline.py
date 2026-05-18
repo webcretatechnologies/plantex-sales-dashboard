@@ -265,7 +265,7 @@ def get_available_filters_orm_cached(qs, fk_qs, data_owner_id, show_amazon=True,
 
 
 def run_orm_computation(
-    qs, fk_qs, spend_qs, filters, user, cached_filter_metadata=None
+    qs, fk_qs, spend_qs, filters, user, cached_filter_metadata=None, include_full_payload=False
 ):
     # 1. Apply date filters
     qs_f = apply_global_filters_orm(qs, filters)
@@ -879,7 +879,7 @@ def run_orm_computation(
                 reason = f"DOC = {doc} days (Stock: {stock_qty}, DRR: {drr:.2f})"
                 inventory_revenue_buckets["not_selling"] += rev
 
-            if sku_filter or len(inventory_details) < 100:
+            if include_full_payload and (sku_filter or len(inventory_details) < 100):
                 inventory_details.append(
                     {
                         "date": row_date,
@@ -1174,7 +1174,7 @@ def run_orm_computation(
                 inventory_revenue_buckets["in_stock"] += rev
 
             # Only add to detailed list if within limit or if searching for a specific SKU
-            if sku_filter or len(inventory_details) < 100:
+            if include_full_payload and (sku_filter or len(inventory_details) < 100):
                 inventory_details.append(
                     {
                         "date": row_date,
@@ -1349,8 +1349,19 @@ def run_orm_computation(
         curr_rev = row["revenue"]
         prev_rev = prev_rev_by_asin.get(sku, 0)
         growth = _safe_growth(curr_rev, prev_rev)
-        
-        top_prods.append({"sku": sku, "cluster": row.get("portfolio") or "Standard", "revenue": curr_rev, "growth": growth, "units_sold": row["units"]})
+
+        prod_item = {
+            "sku": sku,
+            "cluster": row.get("portfolio") or "Standard",
+            "revenue": curr_rev,
+            "growth": growth,
+            "units_sold": row["units"],
+        }
+        if include_full_payload:
+            top_prods.append(prod_item)
+        elif len(top_prods) < 5:
+            # table_data is revenue-desc sorted already
+            top_prods.append(prod_item)
 
     # Declining based on MOM drop:
     # Use the union of current/previous month SKU keys so drops to zero
@@ -1360,16 +1371,25 @@ def run_orm_computation(
         sku_pm = pm_sku_rev.get(sku, 0)
         mom_growth = _safe_growth(sku_cm, sku_pm)
         if mom_growth < 0:
-            under_prods.append(
-                {
-                    "sku": sku,
-                    "revenue": sku_cm,
-                    "drop_pct": mom_growth,
-                    "impact": max(sku_pm - sku_cm, 0),
-                }
-            )
+            drop_item = {
+                "sku": sku,
+                "revenue": sku_cm,
+                "drop_pct": mom_growth,
+                "impact": max(sku_pm - sku_cm, 0),
+            }
+            if include_full_payload:
+                under_prods.append(drop_item)
+            else:
+                # keep only worst 5 drops for initial payload
+                if len(under_prods) < 5:
+                    under_prods.append(drop_item)
+                    under_prods.sort(key=lambda x: x["drop_pct"])
+                elif drop_item["drop_pct"] < under_prods[-1]["drop_pct"]:
+                    under_prods[-1] = drop_item
+                    under_prods.sort(key=lambda x: x["drop_pct"])
 
-    under_prods.sort(key=lambda x: x["drop_pct"])  # Sort by most negative growth
+    if include_full_payload:
+        under_prods.sort(key=lambda x: x["drop_pct"])  # Sort by most negative growth
 
     port_perf_dict = {}
     for r in table_data:
@@ -1397,7 +1417,10 @@ def run_orm_computation(
         "oos_impact": oos_impact,
         "inventory": inventory, "inventory_position": inventory_position, "forecast": forecast,
         "priorities": priorities, "marketing": marketing,
-        "cluster_performance": cluster_performance, "cat_top_products": top_prods[:5],
-        "cat_under_products": under_prods[:5], "cat_all_top_products": top_prods[:100], "cat_all_under_products": under_prods[:100],
+        "cluster_performance": cluster_performance,
+        "cat_top_products": top_prods[:5] if include_full_payload else top_prods,
+        "cat_under_products": under_prods[:5] if include_full_payload else under_prods,
+        "cat_all_top_products": top_prods[:100] if include_full_payload else [],
+        "cat_all_under_products": under_prods[:100] if include_full_payload else [],
         "growth_opportunities": [],
     }

@@ -118,7 +118,7 @@
             <!-- ════════════ VIEW ALL MODALS ════════════ -->
 
             <!-- Category Growth Modal -->
-            <div class="tbl-overlay" id="catGrowthModal">
+            <div class="tbl-overlay" id="catGrowthModal" data-lazy-url="{% url 'dashboard-modal-rows' 'business' 'category-growth' %}">
                 <div class="tbl-overlay-inner">
                     <div class="tbl-overlay-header">
                         <span class="tbl-overlay-title">All Categories by Growth</span>
@@ -134,17 +134,10 @@
                                     <th class="num">Contribution</th>
                                 </tr>
                             </thead>
-                            <tbody>
-                                {% for cat in payload.category_performance %}
+                            <tbody data-modal-lazy="1">
                                 <tr>
-                                    <td style="font-weight:600;">{{ cat.category }}</td>
-                                    <td class="num">{{ cat.revenue|fmt_rupee }}</td>
-                                    <td class="num {% if cat.growth >= 0 %}growth-up{% else %}growth-down{% endif %}">
-                                        {% if cat.growth >= 0 %}&#9650;{% else %}&#9660;{% endif %} {{ cat.growth|abs_val }}%
-                                    </td>
-                                    <td class="num">{{ cat.contribution }}%</td>
+                                    <td colspan="4" class="empty">Loading data...</td>
                                 </tr>
-                                {% endfor %}
                             </tbody>
                         </table>
                     </div>
@@ -152,7 +145,7 @@
             </div>
 
             <!-- Top Revenue Contributors Modal -->
-            <div class="tbl-overlay" id="winningModal">
+            <div class="tbl-overlay" id="winningModal" data-lazy-url="{% url 'dashboard-modal-rows' 'business' 'top-products' %}">
                 <div class="tbl-overlay-inner">
                     <div class="tbl-overlay-header">
                         <span class="tbl-overlay-title">Top Revenue Contributors</span>
@@ -167,20 +160,10 @@
                                     <th class="num">Growth</th>
                                 </tr>
                             </thead>
-                            <tbody>
-                                {% for prod in payload.cat_all_top_products %}
+                            <tbody data-modal-lazy="1">
                                 <tr>
-                                    <td>
-                                        <div class="ceo-sku-cell">
-                                            <div class="ceo-sku-thumb">&#128230;</div><span>{{ prod.sku }}</span>
-                                        </div>
-                                    </td>
-                                    <td class="num">{{ prod.revenue|fmt_rupee }}</td>
-                                    <td class="num {% if prod.growth >= 0 %}growth-up{% else %}growth-down{% endif %}">
-                                        {% if prod.growth >= 0 %}&#9650;{% else %}&#9660;{% endif %} {{ prod.growth|abs_val }}%
-                                    </td>
+                                    <td colspan="3" class="empty">Loading data...</td>
                                 </tr>
-                                {% endfor %}
                             </tbody>
                         </table>
                     </div>
@@ -190,7 +173,7 @@
 
 
             <!-- Inventory Health Breakdown Modal -->
-            <div class="tbl-overlay inventory-health-modal" id="bizInventoryHealthModal">
+            <div class="tbl-overlay inventory-health-modal" id="bizInventoryHealthModal" data-lazy-url="{% url 'dashboard-modal-rows' 'business' 'inventory-health' %}">
                 <div class="tbl-overlay-inner" style="max-width: 1000px;">
                     <div class="tbl-overlay-header">
                         <div>
@@ -233,37 +216,10 @@
                                     <th>Calculation</th>
                                 </tr>
                             </thead>
-                            <tbody>
-                                {% for item in payload.inventory.details %}
+                            <tbody data-modal-lazy="1">
                                 <tr>
-                                    <td>{{ item.date|date:"d M Y" }}</td>
-                                    <td>
-                                        <div class="ceo-sku-cell">
-                                            <div class="ceo-sku-thumb">📦</div>
-                                            <span>{{ item.sku }}</span>
-                                        </div>
-                                    </td>
-                                    <td>{{ item.category }}</td>
-                                    <td class="num">{{ item.stock_qty|fmt_num }}</td>
-                                    <td class="num">{{ item.sale_qty|fmt_num }}</td>
-                                    <td class="num" style="font-weight:600;">{{ item.doc }}</td>
-                                    <td class="num">{{ item.revenue|fmt_rupee }}</td>
-                                    <td>
-                                        <span class="ceo-inv-value {{ item.status_class }}"
-                                            style="padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600;">
-                                            {{ item.status }}
-                                        </span>
-                                    </td>
-                                    <td
-                                        style="font-size: 11px; color: var(--muted); font-family: 'JetBrains Mono', monospace;">
-                                        {{ item.reason|safe }}
-                                    </td>
+                                    <td colspan="9" class="empty">Loading data...</td>
                                 </tr>
-                                {% empty %}
-                                <tr>
-                                    <td colspan="9" class="empty">No inventory data available</td>
-                                </tr>
-                                {% endfor %}
                             </tbody>
                         </table>
                     </div>
@@ -271,7 +227,7 @@
             </div>
 
             <!-- Declining Products (MOM) — Full View Modal -->
-            <div class="tbl-overlay" id="bizDecliningModal">
+            <div class="tbl-overlay" id="bizDecliningModal" data-lazy-url="{% url 'dashboard-modal-rows' 'business' 'declining-products' %}">
                 <div class="tbl-overlay-inner">
                     <div class="tbl-overlay-header">
                         <span class="tbl-overlay-title">Declining Products (MOM) — Full View</span>
@@ -286,18 +242,10 @@
                                     <th class="num">Impact (₹)</th>
                                 </tr>
                             </thead>
-                            <tbody>
-                                {% for prod in payload.cat_all_under_products %}
+                            <tbody data-modal-lazy="1">
                                 <tr>
-                                    <td>
-                                        <div class="ceo-sku-cell">
-                                            <div class="ceo-sku-thumb">📦</div><span>{{ prod.sku }}</span>
-                                        </div>
-                                    </td>
-                                    <td class="num growth-down">▼ {{ prod.drop_pct|abs_val }}%</td>
-                                    <td class="num" style="color:var(--danger);">-{{ prod.impact|fmt_rupee }}</td>
+                                    <td colspan="3" class="empty">Loading data...</td>
                                 </tr>
-                                {% endfor %}
                             </tbody>
                         </table>
                     </div>
