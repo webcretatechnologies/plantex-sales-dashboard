@@ -85,9 +85,51 @@ function destroyAllCharts() {
 }
 
 /* ── Modal Logic ── */
+function _loadModalRowsOnDemand(modalEl) {
+    if (!modalEl) return;
+    var lazyUrl = modalEl.getAttribute('data-lazy-url');
+    if (!lazyUrl) return;
+    if (modalEl.dataset.lazyLoaded === '1' || modalEl.dataset.lazyLoading === '1') return;
+
+    var tbody = modalEl.querySelector('tbody[data-modal-lazy="1"]');
+    if (!tbody) return;
+
+    var thCount = 3;
+    var ths = modalEl.querySelectorAll('thead th');
+    if (ths && ths.length) thCount = ths.length;
+
+    modalEl.dataset.lazyLoading = '1';
+    tbody.innerHTML = '<tr><td colspan="' + thCount + '" class="empty">Loading data...</td></tr>';
+
+    var qs = window.location.search || '';
+    fetch(lazyUrl + qs, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+        .then(function (resp) {
+            if (!resp.ok) throw new Error('HTTP ' + resp.status);
+            return resp.text();
+        })
+        .then(function (html) {
+            tbody.innerHTML = html;
+            modalEl.dataset.lazyLoaded = '1';
+            if (modalEl.classList.contains('inventory-health-modal')) {
+                modalEl.dataset.invHealthInit = '0';
+                initInventoryHealthModals();
+            }
+        })
+        .catch(function () {
+            tbody.innerHTML = '<tr><td colspan="' + thCount + '" class="empty">Failed to load data. Please retry.</td></tr>';
+        })
+        .finally(function () {
+            modalEl.dataset.lazyLoading = '0';
+        });
+}
+
 function openModal(id) {
     var el = document.getElementById(id);
-    if (el) { el.classList.add('active'); document.body.style.overflow = 'hidden'; }
+    if (el) {
+        _loadModalRowsOnDemand(el);
+        el.classList.add('active');
+        document.body.style.overflow = 'hidden';
+    }
 }
 function closeModal(id) {
     var el = document.getElementById(id);
@@ -157,16 +199,18 @@ function initInventoryHealthModals() {
         var tbody = table ? table.querySelector('tbody') : null;
         if (!table || !tbody) return;
 
-        var allRows = Array.from(tbody.querySelectorAll('tr')).filter(function (row) {
-            return !row.querySelector('.empty');
-        });
+        function allRows() {
+            return Array.from(tbody.querySelectorAll('tr')).filter(function (row) {
+                return !row.querySelector('.empty');
+            });
+        }
 
 
         var searchInput = modal.querySelector('.inv-health-search');
 
 
         modal.querySelectorAll('.inv-health-download').forEach(function (btn) {
-            btn.addEventListener('click', function () {
+            btn.onclick = function () {
                 var format = btn.getAttribute('data-format');
                 var headers = Array.from(table.querySelectorAll('thead th')).map(_invCellText);
                 var rows = _invAllRows(tbody).map(function (row) {
@@ -192,34 +236,35 @@ function initInventoryHealthModals() {
                     var xlsBlob = new Blob([tableHtml], { type: 'application/vnd.ms-excel;charset=utf-8;' });
                     _invDownloadBlob(xlsBlob, baseName + '.xls');
                 }
-            });
+            };
         });
 
         // Limit modal display to first 100 rows; rest stay in DOM for download
         var INV_MODAL_DISPLAY_LIMIT = 100;
-        if (allRows.length > INV_MODAL_DISPLAY_LIMIT) {
-            allRows.forEach(function (row, idx) {
+        if (allRows().length > INV_MODAL_DISPLAY_LIMIT) {
+            allRows().forEach(function (row, idx) {
                 if (idx >= INV_MODAL_DISPLAY_LIMIT) row.style.display = 'none';
             });
         }
 
         // Override search to also respect display limit
         if (searchInput) {
-            searchInput.addEventListener('input', function (e) {
+            searchInput.oninput = function (e) {
                 var q = String(e.target.value || '').toLowerCase().trim();
+                var rows = allRows();
                 if (!q) {
                     // Reset: show first 100 only
-                    allRows.forEach(function (row, idx) {
+                    rows.forEach(function (row, idx) {
                         row.style.display = idx < INV_MODAL_DISPLAY_LIMIT ? '' : 'none';
                     });
                 } else {
                     // Search: show all matching (no limit)
-                    allRows.forEach(function (row) {
+                    rows.forEach(function (row) {
                         var match = _invCellText(row).toLowerCase().indexOf(q) !== -1;
                         row.style.display = match ? '' : 'none';
                     });
                 }
-            });
+            };
         }
     });
 }

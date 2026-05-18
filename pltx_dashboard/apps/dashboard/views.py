@@ -10,8 +10,9 @@ import pandas as pd
 from django.conf import settings
 from django.core.cache import cache
 from django.db.models import F
-from django.http import FileResponse, JsonResponse
+from django.http import FileResponse, JsonResponse, HttpResponse
 from django.shortcuts import render, redirect
+from django.template.loader import render_to_string
 
 from apps.accounts.decorators import require_feature, _first_allowed_dashboard_for
 from apps.accounts.models import Feature
@@ -56,6 +57,20 @@ DASHBOARD_SECTION_TEMPLATE_MAP = {
     ("category", "details"): "dashboard/sections/category/details.html",
 }
 
+DASHBOARD_MODAL_ROWS_TEMPLATE_MAP = {
+    ("business", "category-growth"): ("dashboard/modals/rows/category_growth_rows.html", "category_performance"),
+    ("ceo", "inventory-health"): ("dashboard/modals/rows/inventory_health_rows.html", "inventory.details"),
+    ("ceo", "top-products"): ("dashboard/modals/rows/top_products_simple_rows.html", "cat_all_top_products"),
+    ("ceo", "declining-products"): ("dashboard/modals/rows/declining_products_rows.html", "cat_all_under_products"),
+    ("business", "inventory-health"): ("dashboard/modals/rows/inventory_health_rows.html", "inventory.details"),
+    ("business", "top-products"): ("dashboard/modals/rows/top_products_simple_rows.html", "cat_all_top_products"),
+    ("business", "declining-products"): ("dashboard/modals/rows/declining_products_rows.html", "cat_all_under_products"),
+    ("category", "cluster-performance"): ("dashboard/modals/rows/cluster_performance_rows.html", "cluster_performance"),
+    ("category", "inventory-health"): ("dashboard/modals/rows/inventory_health_rows.html", "inventory.details"),
+    ("category", "top-products"): ("dashboard/modals/rows/top_products_category_rows.html", "cat_all_top_products"),
+    ("category", "declining-products"): ("dashboard/modals/rows/declining_products_rows.html", "cat_all_under_products"),
+}
+
 
 def _build_payload_json(payload):
     """
@@ -71,6 +86,22 @@ def _build_template_payload(payload):
     Keep template payload separate from cached payload mutation.
     """
     return deepcopy(payload) if isinstance(payload, dict) else payload
+
+
+def _trim_payload_for_initial_load(payload):
+    """
+    Keep initial section payload lightweight; large modal datasets are loaded on demand.
+    """
+    if not isinstance(payload, dict):
+        return payload
+    payload["cat_all_top_products"] = []
+    payload["cat_all_under_products"] = []
+    inventory = payload.get("inventory")
+    if isinstance(inventory, dict):
+        inventory["details"] = []
+        inventory["details_shown"] = 0
+        inventory["details_truncated"] = False
+    return payload
 
 
 def _get_dashboard_refresh_status(data_owner_id):
@@ -188,7 +219,12 @@ def _ensure_processed_tables_if_missing(data_owner):
         generate_flipkart_dashboard_data(data_owner)
 
 
-def get_dashboard_context(request, include_payload=True, cache_view_type=None):
+def get_dashboard_context(
+    request,
+    include_payload=True,
+    cache_view_type=None,
+    include_full_payload=False,
+):
     user = get_logged_in_user(request)
     if not user:
         return None
@@ -279,14 +315,14 @@ def get_dashboard_context(request, include_payload=True, cache_view_type=None):
 
     cache_key = (
         f"dashboard_payload_v{DASHBOARD_PAYLOAD_CACHE_VERSION}_"
-        f"{data_owner.id}_{view_type}_{data_version}_{cache_hash}"
+        f"{data_owner.id}_{view_type}_{data_version}_{cache_hash}_{'full' if include_full_payload else 'lite'}"
     )
 
     payload = cache.get(cache_key)
     if payload and _payload_needs_refresh(payload):
         payload = None
 
-    if not payload:
+    if not payload and not include_full_payload:
         payload = get_materialized_summary(
             user_id=data_owner.id,
             view_type=view_type,
@@ -304,23 +340,28 @@ def get_dashboard_context(request, include_payload=True, cache_view_type=None):
             filters,
             data_owner,
             cached_filter_metadata=cached_filter_metadata,
+            include_full_payload=include_full_payload,
         )
-        try:
-            store_materialized_summary(
-                user_id=data_owner.id,
-                view_type=view_type,
-                data_version=data_version,
-                filter_hash=cache_hash,
-                normalized_filters=json.dumps(
-                    normalize_payload_filters(filters), sort_keys=True
-                ),
-                payload=payload,
-            )
-        except Exception:
-            # Materialized summaries are a performance layer; do not fail requests.
-            pass
+        if not include_full_payload:
+            try:
+                store_materialized_summary(
+                    user_id=data_owner.id,
+                    view_type=view_type,
+                    data_version=data_version,
+                    filter_hash=cache_hash,
+                    normalized_filters=json.dumps(
+                        normalize_payload_filters(filters), sort_keys=True
+                    ),
+                    payload=payload,
+                )
+            except Exception:
+                # Materialized summaries are a performance layer; do not fail requests.
+                pass
 
-        cache.set(cache_key, payload, timeout=3600 * 24)  # Cache for 24 hours
+        cache.set(cache_key, payload, timeout=3600 if include_full_payload else 3600 * 24)
+
+    if not include_full_payload:
+        payload = _trim_payload_for_initial_load(payload)
 
     template_payload = _build_template_payload(payload)
 
@@ -450,6 +491,45 @@ def dashboard_section_view(request, view_name, section):
     ctx["dashboard_section_view_type"] = view_name
     ctx["section_template"] = template_name
     return render(request, "dashboard/sections/section_wrapper.html", ctx)
+
+
+@no_cache_for_htmx
+def dashboard_modal_rows_view(request, view_name, modal_key):
+    user = get_logged_in_user(request)
+    if not user:
+        return JsonResponse({"error": "Not authenticated"}, status=401)
+
+    feature_code = DASHBOARD_FEATURE_BY_VIEW.get(view_name)
+    if not feature_code:
+        return JsonResponse({"error": "Invalid dashboard view."}, status=404)
+    if not _user_has_feature(user, feature_code):
+        return JsonResponse({"error": "Permission denied."}, status=403)
+
+    modal_tpl = DASHBOARD_MODAL_ROWS_TEMPLATE_MAP.get((view_name, modal_key))
+    if not modal_tpl:
+        return JsonResponse({"error": "Invalid modal key."}, status=404)
+    template_name, payload_key = modal_tpl
+
+    ctx = get_dashboard_context(
+        request,
+        include_payload=True,
+        cache_view_type=f"{view_name}-dashboard",
+        include_full_payload=True,
+    )
+    if ctx is None:
+        return JsonResponse({"error": "Not authenticated"}, status=401)
+
+    payload = ctx.get("payload") or {}
+    rows = payload
+    for part in str(payload_key).split("."):
+        if isinstance(rows, dict):
+            rows = rows.get(part)
+        else:
+            rows = None
+            break
+    rows = rows or []
+    html = render_to_string(template_name, {"rows": rows}, request=request)
+    return HttpResponse(html)
 
 
 @require_feature("upload_data")
