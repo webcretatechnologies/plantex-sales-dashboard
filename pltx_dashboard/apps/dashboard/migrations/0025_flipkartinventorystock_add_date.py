@@ -3,7 +3,6 @@ Add date field to FlipkartInventoryStock and update unique_together
 to (user, fsn, date) for FSN+Date level granularity.
 """
 
-import datetime
 from django.db import migrations, models
 
 

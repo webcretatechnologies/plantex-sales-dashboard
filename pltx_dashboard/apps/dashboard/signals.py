@@ -36,17 +36,9 @@ INVALIDATION_MODELS = (
 )
 
 
-@receiver(post_save, dispatch_uid="dashboard_cache_invalidate_save")
-def _invalidate_on_save(sender, instance, **kwargs):
-    if sender not in INVALIDATION_MODELS:
-        return
-    user_id = getattr(instance, "user_id", None)
-    if user_id:
-        invalidate_dashboard_cache_for_user(user_id, clear_materialized=True)
-
-
 @receiver(post_delete, dispatch_uid="dashboard_cache_invalidate_delete")
-def _invalidate_on_delete(sender, instance, **kwargs):
+@receiver(post_save, dispatch_uid="dashboard_cache_invalidate_save")
+def _invalidate_on_change(sender, instance, **kwargs):
     if sender not in INVALIDATION_MODELS:
         return
     user_id = getattr(instance, "user_id", None)

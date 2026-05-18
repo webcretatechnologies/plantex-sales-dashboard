@@ -53,7 +53,7 @@
 <div class="secondary-filter-bar" id="secondaryFilters" hx-swap-oob="true" {% if request.resolver_match.url_name != 'ceo-dashboard' and request.resolver_match.url_name != 'business-dashboard' and request.resolver_match.url_name != 'category-dashboard' %}style="display:none;"{% endif %}>
     {% if request.resolver_match.url_name == 'ceo-dashboard' or request.resolver_match.url_name == 'business-dashboard' or request.resolver_match.url_name == 'category-dashboard' %}
     <form method="GET" action="{{ request.path }}" class="topbar-filters" style="margin:0;" id="dashboardFilterForm"
-        hx-get="{{ request.path }}" hx-target=".dash-body" hx-push-url="true" hx-swap="innerHTML" hx-trigger="submit">
+        hx-get="{{ request.path }}" hx-target=".dash-body" hx-push-url="true" hx-swap="innerHTML" hx-trigger="submit" hx-sync="body:abort">
 
         <div class="topbar-filter-group filter-group-uniform">
             <span class="filter-label">Date Range</span>
@@ -97,7 +97,7 @@
         <div class="topbar-filter-group filter-group-uniform">
             <span class="filter-label">Platform</span>
             <select class="filter-select-top" id="platformSelect" name="platform"
-                onchange="syncFilterVisibility(); htmx.trigger('#dashboardFilterForm', 'submit')">
+                onchange="syncFilterVisibility(); markFiltersDirty()">
                 <option value="">All</option>
                 <option value="Amazon" {% if request.GET.platform == "Amazon" %}selected{% endif %}>Amazon</option>
                 <option value="Flipkart" {% if request.GET.platform == "Flipkart" %}selected{% endif %}>Flipkart</option>
@@ -110,7 +110,7 @@
                     style="font-size:11px;vertical-align:middle;margin-right:3px;">category</span>Category
             </span>
             <select id="categorySelect" name="category" class="filter-select-top" multiple
-                onchange="htmx.trigger('#dashboardFilterForm', 'submit')">
+                onchange="markFiltersDirty()">
                 {% for c in selected_filters.categories %}
                 <option value="{{ c }}" selected>{{ c }}</option>
                 {% endfor %}
@@ -122,7 +122,7 @@
                     style="font-size:11px;vertical-align:middle;margin-right:3px;">qr_code</span>ASIN
             </span>
             <select id="asinSelect" name="asin" class="filter-select-top" multiple
-                onchange="htmx.trigger('#dashboardFilterForm', 'submit')">
+                onchange="markFiltersDirty()">
                 {% for a in selected_filters.asins %}
                 <option value="{{ a }}" selected>{{ a }}</option>
                 {% endfor %}
@@ -134,11 +134,17 @@
                     style="font-size:11px;vertical-align:middle;margin-right:3px;">qr_code</span>FSN
             </span>
             <select id="fsnSelect" name="fsn" class="filter-select-top" multiple
-                onchange="htmx.trigger('#dashboardFilterForm', 'submit')">
+                onchange="markFiltersDirty()">
                 {% for f in selected_filters.fsns %}
                 <option value="{{ f }}" selected>{{ f }}</option>
                 {% endfor %}
             </select>
+        </div>
+
+        <div class="topbar-filter-group" style="margin-left: 8px;">
+            <span class="filter-label">&nbsp;</span>
+            <button type="button" class="ceo-view-all-btn" id="applyFiltersBtn"
+                onclick="applyDashboardFilters()" title="Apply selected filters">Apply Filters</button>
         </div>
 
         <div class="topbar-filter-group" style="margin-left: 8px;">

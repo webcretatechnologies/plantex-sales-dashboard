@@ -104,13 +104,24 @@ def generate_kpis_orm(qs, fk_qs, spend_qs=None):
     }
 
 
-def generate_charts_data_orm(qs, fk_qs, table_data=None):
+def generate_charts_data_orm(qs, fk_qs, table_data=None, preaggregated_trend=None):
     # ── Trend Data ──
     amazon_trend = {}  # date → revenue (Amazon only)
     flipkart_trend = {}  # date → revenue (Flipkart only)
     merged_trend = {}  # date → merged metrics
 
-    if qs is not None:
+    if preaggregated_trend:
+        for dt, values in preaggregated_trend.items():
+            amazon_trend[dt] = float(values.get("amazon_revenue", 0) or 0)
+            flipkart_trend[dt] = float(values.get("flipkart_revenue", 0) or 0)
+            merged_trend[dt] = {
+                "revenue": float(values.get("revenue", 0) or 0),
+                "total_spend": float(values.get("total_spend", 0) or 0),
+                "pageviews": int(values.get("pageviews", 0) or 0),
+                "orders": int(values.get("orders", 0) or 0),
+            }
+
+    if not preaggregated_trend and qs is not None:
         qs_trend = (
             qs.values("date")
             .annotate(
@@ -133,7 +144,7 @@ def generate_charts_data_orm(qs, fk_qs, table_data=None):
                 "orders": int(r["orders"] or 0),
             }
 
-    if fk_qs is not None:
+    if not preaggregated_trend and fk_qs is not None:
         fk_trend = (
             fk_qs.values("date")
             .annotate(
