@@ -63,7 +63,9 @@
                         </td>
                         <td>{{ prod.cluster }}</td>
                         <td class="num">{{ prod.revenue|fmt_rupee }}</td>
-                        <td class="num growth-up">▲ {{ prod.growth }}%</td>
+                        <td class="num {% if prod.growth >= 0 %}growth-up{% else %}growth-down{% endif %}">
+                            {% if prod.growth >= 0 %}▲{% else %}▼{% endif %} {{ prod.growth|abs_val }}%
+                        </td>
                         <td class="num">{{ prod.units_sold|fmt_num }}</td>
                     </tr>
                     {% endfor %}

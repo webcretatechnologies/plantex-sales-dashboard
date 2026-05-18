@@ -433,7 +433,7 @@
                 hx-get="{{ request.path }}" hx-target=".dash-body" hx-push-url="true" hx-swap="innerHTML"
                 hx-trigger="submit">
 
-                <div class="topbar-filter-group">
+                <div class="topbar-filter-group filter-group-uniform">
                     <span class="filter-label">Date Range</span>
                     <select class="filter-select-top" id="dateRangeSelect" name="date_range"
                         onchange="handleDateRangeChange(event, this)">
@@ -478,7 +478,7 @@
                             onclick="submitCustomDate()">Apply</button>
                     </div>
                 </div>
-                <div class="topbar-filter-group">
+                <div class="topbar-filter-group filter-group-uniform">
                     <span class="filter-label">Platform</span>
                     <select class="filter-select-top" id="platformSelect" name="platform"
                         onchange="syncFilterVisibility(); htmx.trigger('#dashboardFilterForm', 'submit')">
@@ -490,7 +490,7 @@
                     </select>
                 </div>
 
-                <div class="topbar-filter-group filter-group-multi">
+                <div class="topbar-filter-group filter-group-multi filter-group-uniform">
                     <span class="filter-label">
                         <span class="material-icons-round"
                             style="font-size:11px;vertical-align:middle;margin-right:3px;">category</span>Category
@@ -502,7 +502,7 @@
                         {% endfor %}
                     </select>
                 </div>
-                <div class="topbar-filter-group filter-group-multi filter-group-asin">
+                <div class="topbar-filter-group filter-group-multi filter-group-asin filter-group-uniform">
                     <span class="filter-label">
                         <span class="material-icons-round"
                             style="font-size:11px;vertical-align:middle;margin-right:3px;">qr_code</span>ASIN
@@ -514,7 +514,7 @@
                         {% endfor %}
                     </select>
                 </div>
-                <div class="topbar-filter-group filter-group-multi" id="fsnFilterGroup" style="display:none;">
+                <div class="topbar-filter-group filter-group-multi filter-group-uniform" id="fsnFilterGroup" style="display:none;">
                     <span class="filter-label">
                         <span class="material-icons-round"
                             style="font-size:11px;vertical-align:middle;margin-right:3px;">qr_code</span>FSN
