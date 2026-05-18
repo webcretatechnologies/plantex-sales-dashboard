@@ -166,22 +166,9 @@
                 </tr>
             </thead>
             <tbody>
-                {% for cat in payload.category_performance %}
                 <tr>
-                    <td style="color:var(--muted);font-size:12px;">{{ forloop.counter }}</td>
-                    <td style="font-weight:600;">{{ cat.category }}</td>
-                    <td class="num">{{ cat.revenue|fmt_rupee }}</td>
-                    <td class="num {% if cat.growth >= 0 %}growth-up{% else %}growth-down{% endif %}">
-                        {% if cat.growth >= 0 %}▲{% else %}▼{% endif %} {{ cat.growth|abs_val }}%
-                    </td>
-                    <td class="num">{{ cat.contribution }}%</td>
+                    <td colspan="5" class="empty" style="text-align:center;padding:20px;color:var(--muted);">Loading data...</td>
                 </tr>
-                {% empty %}
-                <tr>
-                    <td colspan="5" class="empty" style="text-align: center; padding: 20px; color: var(--muted);">No
-                        data available</td>
-                </tr>
-                {% endfor %}
             </tbody>
         </table>
         <div class="pagination-container"
@@ -192,70 +179,97 @@
 
 <script>
     (function () {
-        function initPaginatedTable(tableId, searchId, paginationId, rowsPerPage = 10) {
-            const table = document.getElementById(tableId);
-            if (!table) return;
-            const tbody = table.querySelector('tbody');
-            if (!tbody) return;
-            let rows = Array.from(tbody.querySelectorAll('tr'));
-            if (rows.length === 0 || (rows.length === 1 && rows[0].querySelector('.empty'))) return;
+        const endpoint = "{% url 'dashboard-category-performance-rows' 'ceo' %}";
+        const table = document.getElementById('categoryPerformanceTable');
+        const tbody = table ? table.querySelector('tbody') : null;
+        const searchInput = document.getElementById('catSearchInput');
+        const paginationControls = document.getElementById('catPagination');
+        const pageSize = 10;
+        let currentPage = 1;
+        let debounceId = null;
+        let inFlightController = null;
 
-            const searchInput = document.getElementById(searchId);
-            const paginationControls = document.getElementById(paginationId);
-            let currentPage = 1;
-            let filteredRows = [...rows];
+        if (!table || !tbody || !paginationControls) return;
 
-            function renderTable() {
-                const start = (currentPage - 1) * rowsPerPage;
-                const end = start + rowsPerPage;
+        function renderPagination(meta) {
+            paginationControls.innerHTML = '';
+            if (!meta || !meta.total_pages || meta.total_pages <= 1) return;
 
-                rows.forEach(r => r.style.display = 'none');
-                filteredRows.slice(start, end).forEach(r => r.style.display = '');
+            const info = document.createElement('span');
+            info.style.fontSize = '12px';
+            info.style.color = 'var(--muted)';
+            info.textContent = `Page ${currentPage} of ${meta.total_pages}`;
+            paginationControls.appendChild(info);
 
-                renderPagination();
-            }
+            const prevBtn = document.createElement('button');
+            prevBtn.className = 'btn-page';
+            prevBtn.innerText = 'Prev';
+            prevBtn.disabled = !meta.has_prev;
+            prevBtn.style.opacity = meta.has_prev ? '1' : '0.5';
+            prevBtn.style.cursor = meta.has_prev ? 'pointer' : 'not-allowed';
+            prevBtn.onclick = function () {
+                if (!meta.has_prev) return;
+                loadPage(currentPage - 1);
+            };
+            paginationControls.appendChild(prevBtn);
 
-            function renderPagination() {
-                if (!paginationControls) return;
-                const totalPages = Math.ceil(filteredRows.length / rowsPerPage);
-                paginationControls.innerHTML = '';
-                if (totalPages <= 1) return;
-
-                for (let i = 1; i <= totalPages; i++) {
-                    const btn = document.createElement('button');
-                    btn.className = `btn-page ${i === currentPage ? 'active' : ''}`;
-                    btn.innerText = i;
-                    btn.onclick = () => { currentPage = i; renderTable(); };
-                    paginationControls.appendChild(btn);
-                }
-            }
-
-            if (searchInput) {
-                // Remove old listeners to avoid duplicates if possible, 
-                // but since we're replacing the whole input it's fine.
-                searchInput.oninput = (e) => {
-                    const query = e.target.value.toLowerCase();
-                    filteredRows = rows.filter(r => r.innerText.toLowerCase().includes(query));
-                    currentPage = 1;
-                    renderTable();
-                };
-            }
-
-            renderTable();
+            const nextBtn = document.createElement('button');
+            nextBtn.className = 'btn-page';
+            nextBtn.innerText = 'Next';
+            nextBtn.disabled = !meta.has_next;
+            nextBtn.style.opacity = meta.has_next ? '1' : '0.5';
+            nextBtn.style.cursor = meta.has_next ? 'pointer' : 'not-allowed';
+            nextBtn.onclick = function () {
+                if (!meta.has_next) return;
+                loadPage(currentPage + 1);
+            };
+            paginationControls.appendChild(nextBtn);
         }
 
-        window.ceoPaginationInit = function () {
-            initPaginatedTable('categoryPerformanceTable', 'catSearchInput', 'catPagination', 10);
-        };
-
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', window.ceoPaginationInit);
-        } else {
-            window.ceoPaginationInit();
+        function buildUrl(page) {
+            const params = new URLSearchParams(window.location.search || '');
+            params.set('page', String(page));
+            params.set('page_size', String(pageSize));
+            const q = searchInput ? String(searchInput.value || '').trim() : '';
+            if (q) params.set('q', q);
+            else params.delete('q');
+            return endpoint + '?' + params.toString();
         }
 
-        document.body.removeEventListener('htmx:afterSettle', window.ceoPaginationInit);
-        document.body.addEventListener('htmx:afterSettle', window.ceoPaginationInit);
+        function loadPage(page) {
+            currentPage = page;
+            tbody.innerHTML = '<tr><td colspan="5" class="empty" style="text-align:center;padding:20px;color:var(--muted);">Loading data...</td></tr>';
+            if (inFlightController) {
+                try { inFlightController.abort(); } catch (e) {}
+            }
+            inFlightController = new AbortController();
+            fetch(buildUrl(page), {
+                headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                signal: inFlightController.signal
+            })
+                .then(function (resp) {
+                    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                    return resp.json();
+                })
+                .then(function (data) {
+                    tbody.innerHTML = data.html || '<tr><td colspan="5" class="empty">No data available</td></tr>';
+                    renderPagination(data.pagination || {});
+                })
+                .catch(function (err) {
+                    if (err && err.name === 'AbortError') return;
+                    tbody.innerHTML = '<tr><td colspan="5" class="empty">Failed to load data. Please retry.</td></tr>';
+                    paginationControls.innerHTML = '';
+                });
+        }
+
+        if (searchInput) {
+            searchInput.oninput = function () {
+                if (debounceId) clearTimeout(debounceId);
+                debounceId = setTimeout(function () { loadPage(1); }, 250);
+            };
+        }
+
+        loadPage(1);
     })();
 </script>
 

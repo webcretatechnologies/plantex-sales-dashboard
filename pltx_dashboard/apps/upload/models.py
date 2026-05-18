@@ -16,9 +16,6 @@ def user_directory_path(instance, filename):
     return f"uploads/{instance.user.id}/{filename}"
 
 
-# UploadedFile model has been removed. Uploads are processed synchronously in-memory.
-
-
 class UploadLog(models.Model):
     STATUS_QUEUED = "queued"
     STATUS_PROCESSING = "processing"

@@ -5,6 +5,9 @@
    ══════════════════════════════════════════════════════════════ */
 
 var charts = {};
+var modalResponseCache = {};
+var MODAL_RESPONSE_CACHE_TTL_MS = 3 * 60 * 1000;
+var MODAL_RESPONSE_CACHE_MAX_ITEMS = 120;
 
 function fmtNum(n) { return new Intl.NumberFormat('en-IN').format(n); }
 function fmtShort(n) {
@@ -76,6 +79,102 @@ function cOpts(extra) {
 
 function destroyChart(id) { if (charts[id]) { charts[id].destroy(); delete charts[id]; } }
 
+function _buildModalDataUrl(modalEl, extraParams) {
+    var lazyUrl = modalEl ? modalEl.getAttribute('data-lazy-url') : '';
+    if (!lazyUrl) return '';
+    var params = new URLSearchParams(window.location.search || '');
+    if (extraParams) {
+        Object.keys(extraParams).forEach(function (k) {
+            var val = extraParams[k];
+            if (val === null || typeof val === 'undefined' || val === '') params.delete(k);
+            else params.set(k, String(val));
+        });
+    }
+    var qs = params.toString();
+    return qs ? (lazyUrl + '?' + qs) : lazyUrl;
+}
+
+function _getModalResponseFromCache(cacheKey) {
+    var record = modalResponseCache[cacheKey];
+    if (!record) return null;
+    if (Date.now() > Number(record.expiresAt || 0)) {
+        delete modalResponseCache[cacheKey];
+        return null;
+    }
+    return record.payload || null;
+}
+
+function _setModalResponseCache(cacheKey, payload) {
+    if (!cacheKey) return;
+    modalResponseCache[cacheKey] = {
+        expiresAt: Date.now() + MODAL_RESPONSE_CACHE_TTL_MS,
+        payload: payload
+    };
+    var keys = Object.keys(modalResponseCache);
+    if (keys.length <= MODAL_RESPONSE_CACHE_MAX_ITEMS) return;
+    keys.sort(function (a, b) {
+        return (modalResponseCache[a].expiresAt || 0) - (modalResponseCache[b].expiresAt || 0);
+    });
+    var trimCount = keys.length - MODAL_RESPONSE_CACHE_MAX_ITEMS;
+    for (var i = 0; i < trimCount; i++) {
+        delete modalResponseCache[keys[i]];
+    }
+}
+
+function _ensureModalExportButtons(modalEl) {
+    if (!modalEl || modalEl.dataset.exportButtonsInit === '1') return;
+    if (!modalEl.getAttribute('data-lazy-url')) return;
+    if (modalEl.querySelector('.inv-health-download')) return; // inventory already has export buttons
+
+    var header = modalEl.querySelector('.tbl-overlay-header');
+    if (!header) return;
+
+    var closeBtn = header.querySelector('.tbl-overlay-close');
+    var actions = document.createElement('div');
+    actions.style.display = 'flex';
+    actions.style.gap = '8px';
+    actions.style.marginLeft = 'auto';
+    actions.style.marginRight = '12px';
+
+    ['csv', 'excel'].forEach(function (format) {
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'ceo-view-all-btn';
+        btn.textContent = format === 'csv' ? 'Download CSV' : 'Download Excel';
+        btn.onclick = function () {
+            var url = _buildModalDataUrl(modalEl, { export: format });
+            if (url) window.location.href = url;
+        };
+        actions.appendChild(btn);
+    });
+
+    if (closeBtn) header.insertBefore(actions, closeBtn);
+    else header.appendChild(actions);
+
+    modalEl.dataset.exportButtonsInit = '1';
+}
+
+function _ensureModalPreviewNotice(modalEl) {
+    if (!modalEl || modalEl.dataset.previewNoticeInit === '1') return;
+    var host = modalEl.querySelector('.tbl-overlay-scroll');
+    if (!host || !host.parentNode) return;
+
+    var note = document.createElement('div');
+    note.className = 'modal-preview-note';
+    note.textContent = 'Showing first 25 rows. Download CSV/Excel for full data.';
+    note.style.margin = '8px 0 10px';
+    note.style.padding = '8px 10px';
+    note.style.borderRadius = '8px';
+    note.style.fontSize = '12px';
+    note.style.fontWeight = '600';
+    note.style.color = 'var(--muted)';
+    note.style.background = 'rgba(148,163,184,0.08)';
+    note.style.border = '1px solid rgba(148,163,184,0.22)';
+
+    host.parentNode.insertBefore(note, host);
+    modalEl.dataset.previewNoticeInit = '1';
+}
+
 /** Destroy every known chart instance to prevent canvas-reuse errors */
 function destroyAllCharts() {
     var allIds = ['salesTrendChart', 'platformSplitChart', 'forecastChart'];
@@ -85,14 +184,77 @@ function destroyAllCharts() {
 }
 
 /* ── Modal Logic ── */
-function _loadModalRowsOnDemand(modalEl) {
+function _renderModalPagination(modalEl, pagination) {
     if (!modalEl) return;
+    var container = modalEl.querySelector('.modal-pagination-controls');
+    if (!container) {
+        var scroll = modalEl.querySelector('.tbl-overlay-scroll');
+        if (!scroll || !scroll.parentNode) return;
+        container = document.createElement('div');
+        container.className = 'modal-pagination-controls';
+        container.style.display = 'flex';
+        container.style.alignItems = 'center';
+        container.style.justifyContent = 'flex-end';
+        container.style.gap = '8px';
+        container.style.padding = '10px 0 0';
+        scroll.parentNode.appendChild(container);
+    }
+
+    if (!pagination || !pagination.total_pages || pagination.total_pages <= 1) {
+        container.innerHTML = '';
+        return;
+    }
+
+    var currentPage = Number(pagination.page || 1);
+    var totalPages = Number(pagination.total_pages || 1);
+
+    container.innerHTML = '';
+    var info = document.createElement('span');
+    info.style.fontSize = '12px';
+    info.style.color = 'var(--muted)';
+    info.textContent = 'Page ' + currentPage + ' of ' + totalPages;
+    container.appendChild(info);
+
+    var prevBtn = document.createElement('button');
+    prevBtn.type = 'button';
+    prevBtn.className = 'btn-page';
+    prevBtn.textContent = 'Prev';
+    prevBtn.disabled = !pagination.has_prev;
+    prevBtn.style.opacity = pagination.has_prev ? '1' : '0.5';
+    prevBtn.style.cursor = pagination.has_prev ? 'pointer' : 'not-allowed';
+    prevBtn.onclick = function () {
+        if (!pagination.has_prev) return;
+        _loadModalRowsOnDemand(modalEl, { page: currentPage - 1, force: true });
+    };
+    container.appendChild(prevBtn);
+
+    var nextBtn = document.createElement('button');
+    nextBtn.type = 'button';
+    nextBtn.className = 'btn-page';
+    nextBtn.textContent = 'Next';
+    nextBtn.disabled = !pagination.has_next;
+    nextBtn.style.opacity = pagination.has_next ? '1' : '0.5';
+    nextBtn.style.cursor = pagination.has_next ? 'pointer' : 'not-allowed';
+    nextBtn.onclick = function () {
+        if (!pagination.has_next) return;
+        _loadModalRowsOnDemand(modalEl, { page: currentPage + 1, force: true });
+    };
+    container.appendChild(nextBtn);
+}
+
+function _loadModalRowsOnDemand(modalEl, opts) {
+    if (!modalEl) return;
+    opts = opts || {};
+    var force = !!opts.force;
     var lazyUrl = modalEl.getAttribute('data-lazy-url');
     if (!lazyUrl) return;
-    if (modalEl.dataset.lazyLoaded === '1' || modalEl.dataset.lazyLoading === '1') return;
+    if (modalEl.dataset.lazyLoading === '1') return;
 
     var tbody = modalEl.querySelector('tbody[data-modal-lazy="1"]');
     if (!tbody) return;
+    var currentPage = Number(modalEl.dataset.modalPage || 1);
+    var targetPage = Number(opts.page || currentPage || 1);
+    if (!force && modalEl.dataset.lazyLoaded === '1' && targetPage === currentPage) return;
 
     var thCount = 3;
     var ths = modalEl.querySelectorAll('thead th');
@@ -101,21 +263,63 @@ function _loadModalRowsOnDemand(modalEl) {
     modalEl.dataset.lazyLoading = '1';
     tbody.innerHTML = '<tr><td colspan="' + thCount + '" class="empty">Loading data...</td></tr>';
 
-    var qs = window.location.search || '';
-    fetch(lazyUrl + qs, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+    var extraParams = { page: targetPage, page_size: 25 };
+    var searchInput = modalEl.querySelector('.inv-health-search');
+    if (searchInput) {
+        var q = String(searchInput.value || '').trim();
+        if (q) extraParams.q = q;
+    }
+    var url = _buildModalDataUrl(modalEl, extraParams);
+    var cacheKey = modalEl.id + "::" + url;
+    var cachedPayload = _getModalResponseFromCache(cacheKey);
+    if (cachedPayload) {
+        tbody.innerHTML = cachedPayload.html || '<tr><td colspan="' + thCount + '" class="empty">No data available.</td></tr>';
+        modalEl.dataset.lazyLoaded = '1';
+        modalEl.dataset.modalPage = String((cachedPayload.pagination && cachedPayload.pagination.page) || targetPage);
+        _renderModalPagination(modalEl, cachedPayload.pagination || null);
+        if (modalEl.classList.contains('inventory-health-modal')) {
+            modalEl.dataset.invHealthInit = '0';
+            initInventoryHealthModals();
+        }
+        modalEl.dataset.lazyLoading = '0';
+        return;
+    }
+    if (modalEl._modalFetchController) {
+        try { modalEl._modalFetchController.abort(); } catch (e) {}
+    }
+    modalEl._modalFetchController = new AbortController();
+    fetch(url, {
+        headers: { 'X-Requested-With': 'XMLHttpRequest' },
+        signal: modalEl._modalFetchController.signal
+    })
         .then(function (resp) {
             if (!resp.ok) throw new Error('HTTP ' + resp.status);
-            return resp.text();
+            var contentType = String(resp.headers.get('content-type') || '').toLowerCase();
+            if (contentType.indexOf('application/json') !== -1) {
+                return resp.json();
+            }
+            return resp.text().then(function (html) {
+                return {
+                    html: html,
+                    pagination: { page: targetPage, total_pages: 1, has_prev: false, has_next: false }
+                };
+            });
         })
-        .then(function (html) {
-            tbody.innerHTML = html;
+        .then(function (payload) {
+            tbody.innerHTML = payload && payload.html ? payload.html : '<tr><td colspan="' + thCount + '" class="empty">No data available.</td></tr>';
             modalEl.dataset.lazyLoaded = '1';
+            modalEl.dataset.modalPage = String((payload && payload.pagination && payload.pagination.page) || targetPage);
+            _renderModalPagination(modalEl, payload ? payload.pagination : null);
+            _setModalResponseCache(cacheKey, payload || {});
             if (modalEl.classList.contains('inventory-health-modal')) {
                 modalEl.dataset.invHealthInit = '0';
                 initInventoryHealthModals();
             }
         })
         .catch(function () {
+            if (modalEl._modalFetchController && modalEl._modalFetchController.signal.aborted) {
+                return;
+            }
             tbody.innerHTML = '<tr><td colspan="' + thCount + '" class="empty">Failed to load data. Please retry.</td></tr>';
         })
         .finally(function () {
@@ -126,7 +330,9 @@ function _loadModalRowsOnDemand(modalEl) {
 function openModal(id) {
     var el = document.getElementById(id);
     if (el) {
-        _loadModalRowsOnDemand(el);
+        _ensureModalExportButtons(el);
+        _ensureModalPreviewNotice(el);
+        _loadModalRowsOnDemand(el, { page: Number(el.dataset.modalPage || 1) || 1 });
         el.classList.add('active');
         document.body.style.overflow = 'hidden';
     }
@@ -152,43 +358,6 @@ document.addEventListener('keydown', function (e) {
     }
 });
 
-function _invCellText(el) {
-    return String(el && el.innerText ? el.innerText : '').replace(/\s+/g, ' ').trim();
-}
-
-function _invCsvEscape(value) {
-    var text = String(value == null ? '' : value);
-    if (/[",\n]/.test(text)) {
-        return '"' + text.replace(/"/g, '""') + '"';
-    }
-    return text;
-}
-
-function _invDownloadBlob(blob, filename) {
-    var url = window.URL.createObjectURL(blob);
-    var a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    window.URL.revokeObjectURL(url);
-}
-
-function _invVisibleRows(tbody) {
-    return Array.from(tbody.querySelectorAll('tr')).filter(function (row) {
-        if (row.querySelector('.empty')) return false;
-        return row.style.display !== 'none';
-    });
-}
-
-/** Return ALL non-empty rows regardless of visibility (for download). */
-function _invAllRows(tbody) {
-    return Array.from(tbody.querySelectorAll('tr')).filter(function (row) {
-        return !row.querySelector('.empty');
-    });
-}
-
 function initInventoryHealthModals() {
     var modals = document.querySelectorAll('.inventory-health-modal');
     modals.forEach(function (modal) {
@@ -199,71 +368,30 @@ function initInventoryHealthModals() {
         var tbody = table ? table.querySelector('tbody') : null;
         if (!table || !tbody) return;
 
-        function allRows() {
-            return Array.from(tbody.querySelectorAll('tr')).filter(function (row) {
-                return !row.querySelector('.empty');
-            });
-        }
-
-
         var searchInput = modal.querySelector('.inv-health-search');
-
+        var debounceId = null;
 
         modal.querySelectorAll('.inv-health-download').forEach(function (btn) {
             btn.onclick = function () {
                 var format = btn.getAttribute('data-format');
-                var headers = Array.from(table.querySelectorAll('thead th')).map(_invCellText);
-                var rows = _invAllRows(tbody).map(function (row) {
-                    return Array.from(row.querySelectorAll('td')).map(_invCellText);
-                });
-                var stamp = new Date().toISOString().slice(0, 10);
-                var baseName = 'inventory_health_breakdown_' + stamp;
-
-                if (format === 'csv') {
-                    var csvLines = [];
-                    csvLines.push(headers.map(_invCsvEscape).join(','));
-                    rows.forEach(function (cols) {
-                        csvLines.push(cols.map(_invCsvEscape).join(','));
-                    });
-                    var csvBlob = new Blob([csvLines.join('\n')], { type: 'text/csv;charset=utf-8;' });
-                    _invDownloadBlob(csvBlob, baseName + '.csv');
-                } else {
-                    var tableHtml = '<table><thead><tr>' + headers.map(function (h) {
-                        return '<th>' + h + '</th>';
-                    }).join('') + '</tr></thead><tbody>' + rows.map(function (cols) {
-                        return '<tr>' + cols.map(function (c) { return '<td>' + c + '</td>'; }).join('') + '</tr>';
-                    }).join('') + '</tbody></table>';
-                    var xlsBlob = new Blob([tableHtml], { type: 'application/vnd.ms-excel;charset=utf-8;' });
-                    _invDownloadBlob(xlsBlob, baseName + '.xls');
+                var q = searchInput ? String(searchInput.value || '').trim() : '';
+                var extra = { export: format };
+                if (q) extra.q = q;
+                var url = _buildModalDataUrl(modal, extra);
+                if (url) {
+                    window.location.href = url;
+                    return;
                 }
             };
         });
 
-        // Limit modal display to first 100 rows; rest stay in DOM for download
-        var INV_MODAL_DISPLAY_LIMIT = 100;
-        if (allRows().length > INV_MODAL_DISPLAY_LIMIT) {
-            allRows().forEach(function (row, idx) {
-                if (idx >= INV_MODAL_DISPLAY_LIMIT) row.style.display = 'none';
-            });
-        }
-
-        // Override search to also respect display limit
+        // Server-side search with pagination
         if (searchInput) {
-            searchInput.oninput = function (e) {
-                var q = String(e.target.value || '').toLowerCase().trim();
-                var rows = allRows();
-                if (!q) {
-                    // Reset: show first 100 only
-                    rows.forEach(function (row, idx) {
-                        row.style.display = idx < INV_MODAL_DISPLAY_LIMIT ? '' : 'none';
-                    });
-                } else {
-                    // Search: show all matching (no limit)
-                    rows.forEach(function (row) {
-                        var match = _invCellText(row).toLowerCase().indexOf(q) !== -1;
-                        row.style.display = match ? '' : 'none';
-                    });
-                }
+            searchInput.oninput = function () {
+                if (debounceId) clearTimeout(debounceId);
+                debounceId = setTimeout(function () {
+                    _loadModalRowsOnDemand(modal, { page: 1, force: true });
+                }, 250);
             };
         }
     });

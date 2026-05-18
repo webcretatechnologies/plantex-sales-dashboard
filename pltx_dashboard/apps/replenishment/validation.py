@@ -1,25 +1,12 @@
 import pandas as pd
-import os
 from datetime import datetime, timedelta
 
-
-def load_data(filepath):
-    _, ext = os.path.splitext(filepath)
-    ext = ext.lower()
-
-    if ext == ".csv":
-        return pd.read_csv(filepath, low_memory=False)
-    elif ext in [".xls", ".xlsx"]:
-        return pd.read_excel(filepath)
-    else:
-        raise ValueError(
-            f"Unsupported file format '{ext}'. Only .csv, .xls, and .xlsx are supported."
-        )
+from .utils import read_tabular_file
 
 
 def validate_sales(filepath, master_data):
     try:
-        df = load_data(filepath)
+        df = read_tabular_file(filepath, low_memory=False)
     except Exception as e:
         return [
             {
@@ -120,7 +107,7 @@ def validate_sales(filepath, master_data):
 
 def validate_shipment(filepath, master_data):
     try:
-        df = load_data(filepath)
+        df = read_tabular_file(filepath)
     except Exception as e:
         return [
             {
@@ -214,7 +201,7 @@ def validate_shipment(filepath, master_data):
 
 def validate_stock(filepath, master_data):
     try:
-        df = load_data(filepath)
+        df = read_tabular_file(filepath)
     except Exception as e:
         return [
             {
@@ -281,7 +268,7 @@ def validate_stock(filepath, master_data):
 
 def validate_lis(filepath, master_data):
     try:
-        df = load_data(filepath)
+        df = read_tabular_file(filepath)
     except Exception as e:
         return [
             {

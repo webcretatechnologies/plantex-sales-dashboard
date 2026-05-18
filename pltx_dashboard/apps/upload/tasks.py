@@ -10,6 +10,8 @@ from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from django.core.cache import cache
 
+from .service_common import upload_batch_key
+
 logger = logging.getLogger(__name__)
 
 
@@ -60,6 +62,44 @@ def _enqueue_dashboard_warmup(data_owner_id):
         )
 
 
+def _enqueue_daily_summary_refresh(data_owner_id, affected_dates=None):
+    try:
+        from django.conf import settings
+
+        if not getattr(settings, "DASHBOARD_DAILY_SUMMARY_ENABLED", True):
+            return
+        from apps.dashboard.tasks import refresh_dashboard_daily_summary_task
+
+        refresh_dashboard_daily_summary_task.delay(
+            data_owner_id=data_owner_id,
+            only_dates=list(affected_dates or []),
+        )
+    except Exception:
+        logger.exception(
+            "[UploadTask] Failed to enqueue daily summary refresh for user=%s",
+            data_owner_id,
+        )
+
+
+def _enqueue_inventory_summary_refresh(data_owner_id, affected_dates=None):
+    try:
+        from django.conf import settings
+
+        if not getattr(settings, "DASHBOARD_INVENTORY_SUMMARY_ENABLED", True):
+            return
+        from apps.dashboard.tasks import refresh_dashboard_inventory_summary_task
+
+        refresh_dashboard_inventory_summary_task.delay(
+            data_owner_id=data_owner_id,
+            only_dates=list(affected_dates or []),
+        )
+    except Exception:
+        logger.exception(
+            "[UploadTask] Failed to enqueue inventory summary refresh for user=%s",
+            data_owner_id,
+        )
+
+
 def _dashboard_refresh_cache_key(data_owner_id):
     return f"dashboard_refresh_status_{data_owner_id}"
 
@@ -74,10 +114,6 @@ def _set_dashboard_refresh_status(data_owner_id, state, message, timeout=3600):
         },
         timeout=timeout,
     )
-
-
-def _upload_batch_key(batch_id, suffix):
-    return f"upload_batch_{batch_id}_{suffix}"
 
 
 def _mark_batch_task_complete(
@@ -95,13 +131,13 @@ def _mark_batch_task_complete(
         return
 
     ttl = 86400
-    expected_key = _upload_batch_key(batch_id, "expected_total")
-    completed_key = _upload_batch_key(batch_id, "completed_total")
-    failed_key = _upload_batch_key(batch_id, "failed_total")
-    finalized_key = _upload_batch_key(batch_id, "finalized")
-    meta_key = _upload_batch_key(batch_id, "meta")
-    file_types_key = _upload_batch_key(batch_id, "file_types")
-    dates_key = _upload_batch_key(batch_id, "affected_dates")
+    expected_key = upload_batch_key(batch_id, "expected_total")
+    completed_key = upload_batch_key(batch_id, "completed_total")
+    failed_key = upload_batch_key(batch_id, "failed_total")
+    finalized_key = upload_batch_key(batch_id, "finalized")
+    meta_key = upload_batch_key(batch_id, "meta")
+    file_types_key = upload_batch_key(batch_id, "file_types")
+    dates_key = upload_batch_key(batch_id, "affected_dates")
 
     # Accumulate file types and affected dates from each task.
     # Note: get-modify-set has a small race window with concurrent workers.
@@ -340,6 +376,12 @@ def _run_dashboard_refresh(
         dashboard_invalidated = True
 
     if dashboard_refreshed or dashboard_invalidated:
+        _enqueue_daily_summary_refresh(
+            data_owner.id, affected_dates=sorted(affected_dates or [])
+        )
+        _enqueue_inventory_summary_refresh(
+            data_owner.id, affected_dates=sorted(affected_dates or [])
+        )
         _enqueue_dashboard_warmup(data_owner.id)
 
 

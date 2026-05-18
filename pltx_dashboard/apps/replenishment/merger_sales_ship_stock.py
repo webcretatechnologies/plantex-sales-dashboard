@@ -1,20 +1,7 @@
 import pandas as pd
 import os
 
-
-def load_data(file_path):
-    """Load data from either CSV or Excel format."""
-    ext = os.path.splitext(file_path)[1].lower()
-    if ext == ".csv":
-        try:
-            return pd.read_csv(file_path)
-        except UnicodeDecodeError:
-            return pd.read_csv(file_path, encoding="latin1")
-    else:
-        try:
-            return pd.read_excel(file_path)
-        except ValueError:
-            return pd.read_excel(file_path, engine="openpyxl")
+from .utils import read_tabular_file as load_data
 
 
 def generate_master_report(

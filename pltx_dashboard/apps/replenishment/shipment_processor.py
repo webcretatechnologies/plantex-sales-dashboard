@@ -2,14 +2,7 @@ import pandas as pd
 import numpy as np
 import os
 
-
-def load_data(file_path):
-    """Load data from either CSV or Excel format."""
-    ext = os.path.splitext(file_path)[1].lower()
-    if ext == ".csv":
-        return pd.read_csv(file_path)
-    else:
-        return pd.read_excel(file_path)
+from .utils import read_tabular_file as load_data
 
 
 def generate_shipment_report(shipment_file, mapping_file, output_file):

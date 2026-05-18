@@ -431,7 +431,7 @@
             {% if request.resolver_match.url_name == 'ceo-dashboard' or request.resolver_match.url_name == 'business-dashboard' or request.resolver_match.url_name == 'category-dashboard' %}
             <form method="GET" action="" class="topbar-filters" style="margin:0;" id="dashboardFilterForm"
                 hx-get="{{ request.path }}" hx-target=".dash-body" hx-push-url="true" hx-swap="innerHTML"
-                hx-trigger="submit">
+                hx-trigger="submit" hx-sync="body:abort">
 
                 <div class="topbar-filter-group filter-group-uniform">
                     <span class="filter-label">Date Range</span>
@@ -481,7 +481,7 @@
                 <div class="topbar-filter-group filter-group-uniform">
                     <span class="filter-label">Platform</span>
                     <select class="filter-select-top" id="platformSelect" name="platform"
-                        onchange="syncFilterVisibility(); htmx.trigger('#dashboardFilterForm', 'submit')">
+                        onchange="syncFilterVisibility(); markFiltersDirty()">
                         <option value="">All</option>
                         <option value="Amazon" {% if request.GET.platform == 'Amazon' %}selected{% endif %}>Amazon
                         </option>
@@ -496,7 +496,7 @@
                             style="font-size:11px;vertical-align:middle;margin-right:3px;">category</span>Category
                     </span>
                     <select id="categorySelect" name="category" class="filter-select-top" multiple
-                        onchange="htmx.trigger('#dashboardFilterForm', 'submit')">
+                        onchange="markFiltersDirty()">
                         {% for c in selected_filters.categories %}
                         <option value="{{ c }}" selected>{{ c }}</option>
                         {% endfor %}
@@ -508,7 +508,7 @@
                             style="font-size:11px;vertical-align:middle;margin-right:3px;">qr_code</span>ASIN
                     </span>
                     <select id="asinSelect" name="asin" class="filter-select-top" multiple
-                        onchange="htmx.trigger('#dashboardFilterForm', 'submit')">
+                        onchange="markFiltersDirty()">
                         {% for a in selected_filters.asins %}
                         <option value="{{ a }}" selected>{{ a }}</option>
                         {% endfor %}
@@ -520,11 +520,17 @@
                             style="font-size:11px;vertical-align:middle;margin-right:3px;">qr_code</span>FSN
                     </span>
                     <select id="fsnSelect" name="fsn" class="filter-select-top" multiple
-                        onchange="htmx.trigger('#dashboardFilterForm', 'submit')">
+                        onchange="markFiltersDirty()">
                         {% for f in selected_filters.fsns %}
                         <option value="{{ f }}" selected>{{ f }}</option>
                         {% endfor %}
                     </select>
+                </div>
+
+                <div class="topbar-filter-group" style="margin-left: 8px;">
+                    <span class="filter-label">&nbsp;</span>
+                    <button type="button" class="ceo-view-all-btn" id="applyFiltersBtn"
+                        onclick="applyDashboardFilters()" title="Apply selected filters">Apply Filters</button>
                 </div>
 
                 <div class="topbar-filter-group" style="margin-left: 8px;">
@@ -782,7 +788,6 @@
         // Listen for custom dashboard content loaded event (from HTMX)
         document.addEventListener('dashboardContentLoaded', function (event) {
             const viewType = event.detail.viewType;
-            console.log('Dashboard content loaded:', viewType);
             updateActiveNav(viewType);
         });
 
@@ -853,7 +858,86 @@
             initRemoteFilterSelects();
             // Set initial platform-dependent filter visibility
             syncFilterVisibility();
+            markFiltersClean();
+            bindFilterFormGuards();
         });
+
+        function markFiltersDirty() {
+            var btn = document.getElementById('applyFiltersBtn');
+            if (!btn) return;
+            if (btn.dataset.loading === '1') return;
+            btn.dataset.pending = '1';
+            btn.style.opacity = '1';
+            btn.style.boxShadow = '0 0 0 2px rgba(37,99,235,0.12)';
+        }
+
+        function markFiltersClean() {
+            var btn = document.getElementById('applyFiltersBtn');
+            if (!btn) return;
+            if (btn.dataset.loading === '1') return;
+            btn.dataset.pending = '0';
+            btn.style.opacity = '0.85';
+            btn.style.boxShadow = 'none';
+        }
+
+        function setApplyFiltersLoading(isLoading) {
+            var btn = document.getElementById('applyFiltersBtn');
+            if (!btn) return;
+            if (!btn.dataset.defaultLabel) {
+                btn.dataset.defaultLabel = btn.textContent || 'Apply Filters';
+            }
+
+            if (isLoading) {
+                btn.dataset.loading = '1';
+                btn.disabled = true;
+                btn.textContent = 'Applying filters...';
+                btn.style.opacity = '0.7';
+                btn.style.cursor = 'not-allowed';
+                btn.style.boxShadow = 'none';
+            } else {
+                btn.dataset.loading = '0';
+                btn.disabled = false;
+                btn.textContent = btn.dataset.defaultLabel || 'Apply Filters';
+                btn.style.cursor = '';
+                // Keep the clean visual state after a successful apply
+                markFiltersClean();
+            }
+        }
+
+        function applyDashboardFilters() {
+            var form = document.getElementById('dashboardFilterForm');
+            if (!form) return;
+            setApplyFiltersLoading(true);
+            window.__dashboardAllowSubmit = true;
+            htmx.trigger(form, 'submit');
+            markFiltersClean();
+        }
+
+        function bindFilterFormGuards() {
+            var form = document.getElementById('dashboardFilterForm');
+            if (!form || form.dataset.guardsBound === '1') return;
+            form.dataset.guardsBound = '1';
+
+            form.addEventListener('submit', function (e) {
+                // Prevent accidental submit via Enter/search inputs; require explicit Apply click.
+                if (!window.__dashboardAllowSubmit) {
+                    e.preventDefault();
+                    return false;
+                }
+                window.__dashboardAllowSubmit = false;
+                return true;
+            });
+
+            form.addEventListener('keydown', function (e) {
+                if (e.key === 'Enter') {
+                    var target = e.target;
+                    var isTextInput = target && target.tagName === 'INPUT' && target.type !== 'button';
+                    if (isTextInput && target.id !== 'flatpickrRange') {
+                        e.preventDefault();
+                    }
+                }
+            });
+        }
 
         function handleDateRangeChange(event, selectElement) {
             if (selectElement.value === 'custom') {
@@ -864,8 +948,7 @@
                 document.getElementById('customDateGroup').style.display = 'none';
                 document.getElementById('customStartDate').value = '';
                 document.getElementById('customEndDate').value = '';
-                // Explicitly trigger form submission to ensure UI updates immediately
-                htmx.trigger('#dashboardFilterForm', 'submit');
+                markFiltersDirty();
             }
         }
 
@@ -892,11 +975,8 @@
                 return;
             }
 
-            // Manually trigger the form submission since hidden input changes don't bubble change events
-            var form = document.getElementById('dashboardFilterForm');
-            if (form) {
-                htmx.trigger(form, 'submit');
-            }
+            markFiltersDirty();
+            applyDashboardFilters();
         }
     </script>
     <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
@@ -910,6 +990,7 @@
             { id: 'asinSelect', field: 'asin', placeholder: 'All ASINs' },
             { id: 'fsnSelect', field: 'fsn', placeholder: 'All FSNs' },
         ];
+        var _remoteFilterAbortControllers = {};
 
         function _buildRemoteFilterQueryString(field, term, page) {
             var query = new URLSearchParams();
@@ -968,16 +1049,25 @@
                             var term = (params.data && params.data.term) || '';
                             var page = (params.data && params.data.page) || 1;
                             var query = _buildRemoteFilterQueryString(def.field, term, page);
+                            if (_remoteFilterAbortControllers[def.field]) {
+                                try { _remoteFilterAbortControllers[def.field].abort(); } catch (e) { }
+                            }
+                            var controller = new AbortController();
+                            _remoteFilterAbortControllers[def.field] = controller;
                             fetch('/api/dashboard/filter-options/?' + query, {
                                 credentials: 'same-origin',
-                                headers: { 'X-Requested-With': 'XMLHttpRequest' }
+                                headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                                signal: controller.signal,
                             })
                                 .then(function (response) {
                                     if (!response.ok) throw new Error('HTTP ' + response.status);
                                     return response.json();
                                 })
                                 .then(success)
-                                .catch(failure);
+                                .catch(function (err) {
+                                    if (err && err.name === 'AbortError') return;
+                                    failure(err);
+                                });
                         },
                         processResults: function (data) {
                             return {
@@ -1026,6 +1116,8 @@
             initRemoteFilterSelects();
             if (typeof initFlatpickr === 'function') initFlatpickr();
             if (typeof syncFilterVisibility === 'function') syncFilterVisibility();
+            if (typeof bindFilterFormGuards === 'function') bindFilterFormGuards();
+            if (typeof setApplyFiltersLoading === 'function') setApplyFiltersLoading(false);
 
             // 2. Restore custom date group visibility if 'custom' date range is selected
             //    After HTMX loads, the customDateGroup is re-rendered with server-side state
@@ -1170,21 +1262,34 @@
         (function () {
             var overlay = document.getElementById('htmxLoadingOverlay');
             if (!overlay) return;
+            window.__dashboardActiveHtmxXhr = null;
 
             document.body.addEventListener('htmx:beforeRequest', function (e) {
                 // Only show overlay for dashboard navigation swaps, not filter form submits
                 // (filter submits still feel fast; navigation to other dashboards can be slow)
                 var target = e.detail && e.detail.target;
+                var xhr = e.detail && e.detail.xhr;
+                // Cancel stale in-flight dashboard requests
+                if (target && target.classList && target.classList.contains('dash-body') && xhr) {
+                    if (window.__dashboardActiveHtmxXhr && window.__dashboardActiveHtmxXhr !== xhr) {
+                        try { window.__dashboardActiveHtmxXhr.abort(); } catch (abortErr) {}
+                    }
+                    window.__dashboardActiveHtmxXhr = xhr;
+                }
                 if (target && target.classList && target.classList.contains('dash-body')) {
                     overlay.style.display = 'flex';
                 }
             });
 
             document.body.addEventListener('htmx:afterSettle', function () {
+                window.__dashboardActiveHtmxXhr = null;
+                setApplyFiltersLoading(false);
                 overlay.style.display = 'none';
             });
 
             document.body.addEventListener('htmx:responseError', function () {
+                window.__dashboardActiveHtmxXhr = null;
+                setApplyFiltersLoading(false);
                 overlay.style.display = 'none';
             });
         })();

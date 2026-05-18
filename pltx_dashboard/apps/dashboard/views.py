@@ -2,6 +2,7 @@ import csv
 import datetime
 import json
 import hashlib
+import math
 import time
 from copy import deepcopy
 from io import BytesIO, StringIO
@@ -10,7 +11,7 @@ import pandas as pd
 from django.conf import settings
 from django.core.cache import cache
 from django.db.models import F
-from django.http import FileResponse, JsonResponse, HttpResponse
+from django.http import FileResponse, JsonResponse
 from django.shortcuts import render, redirect
 from django.template.loader import render_to_string
 
@@ -37,6 +38,11 @@ from apps.dashboard.services.materialized_cache import (
     store_materialized_summary,
 )
 from apps.dashboard.services.cache_config import DASHBOARD_PAYLOAD_CACHE_VERSION
+from apps.dashboard.services.cache_config import (
+    DASHBOARD_CACHE_TTL_FULL_SECONDS,
+    DASHBOARD_CACHE_TTL_LITE_SECONDS,
+    DASHBOARD_CACHE_SCHEMA_VERSION,
+)
 from apps.dashboard.utils import DashboardEncoder
 
 DASHBOARD_FEATURE_BY_VIEW = {
@@ -70,6 +76,12 @@ DASHBOARD_MODAL_ROWS_TEMPLATE_MAP = {
     ("category", "top-products"): ("dashboard/modals/rows/top_products_category_rows.html", "cat_all_top_products"),
     ("category", "declining-products"): ("dashboard/modals/rows/declining_products_rows.html", "cat_all_under_products"),
 }
+MODAL_ROWS_DISPLAY_LIMIT = 25
+
+DASHBOARD_CATEGORY_PERFORMANCE_ROWS_TEMPLATE_MAP = {
+    "business": "dashboard/partials/category_performance_rows_business.html",
+    "ceo": "dashboard/partials/category_performance_rows_ceo.html",
+}
 
 
 def _build_payload_json(payload):
@@ -79,6 +91,50 @@ def _build_payload_json(payload):
     if not payload:
         return "null"
     return json.dumps(payload, cls=DashboardEncoder, separators=(",", ":"))
+
+
+def _resolve_payload_key(payload, payload_key):
+    rows = payload
+    for part in str(payload_key).split("."):
+        if isinstance(rows, dict):
+            rows = rows.get(part)
+        else:
+            return []
+    return rows or []
+
+
+def _clean_export_value(value):
+    if value is None:
+        return ""
+    if isinstance(value, (datetime.datetime, datetime.date)):
+        return value.isoformat()
+    if isinstance(value, (dict, list, tuple, set)):
+        return json.dumps(value, cls=DashboardEncoder)
+    return str(value)
+
+
+def _rows_to_export_table(rows):
+    if not rows:
+        return [], []
+    if isinstance(rows[0], dict):
+        keys = []
+        for row in rows:
+            for key in row.keys():
+                if key not in keys:
+                    keys.append(key)
+        headers = [str(k).replace("_", " ").title() for k in keys]
+        table_rows = [[_clean_export_value(row.get(k)) for k in keys] for row in rows]
+        return headers, table_rows
+    headers = ["Value"]
+    table_rows = [[_clean_export_value(r)] for r in rows]
+    return headers, table_rows
+
+
+def _modal_rows_export_filename(view_name, modal_key, ext):
+    stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_view = str(view_name).strip().replace(" ", "_").lower()
+    safe_modal = str(modal_key).strip().replace(" ", "_").replace("-", "_").lower()
+    return f"{safe_view}_{safe_modal}_{stamp}.{ext}"
 
 
 def _build_template_payload(payload):
@@ -96,6 +152,13 @@ def _trim_payload_for_initial_load(payload):
         return payload
     payload["cat_all_top_products"] = []
     payload["cat_all_under_products"] = []
+    if isinstance(payload.get("category_performance"), list):
+        payload["category_performance"] = payload["category_performance"][:25]
+    if isinstance(payload.get("cluster_performance"), list):
+        payload["cluster_performance"] = payload["cluster_performance"][:25]
+    forecast = payload.get("forecast")
+    if isinstance(forecast, dict) and isinstance(forecast.get("details"), list):
+        forecast["details"] = forecast["details"][:31]
     inventory = payload.get("inventory")
     if isinstance(inventory, dict):
         inventory["details"] = []
@@ -151,6 +214,28 @@ def _payload_needs_refresh(payload):
     if not required_inventory_keys.issubset(inventory.keys()):
         return True
 
+    return False
+
+
+def _is_kpis_only_payload(payload):
+    """
+    Detect KPI-only payloads so analytics sections do not reuse them from
+    materialized summaries.
+    """
+    if not isinstance(payload, dict):
+        return True
+    scope = str(payload.get("_compute_scope") or "").lower()
+    if scope == "kpis":
+        return True
+    if scope == "full":
+        return False
+    # Backward-compatible heuristic for pre-marker payloads.
+    charts = payload.get("charts")
+    if isinstance(charts, dict) and not charts:
+        forecast = payload.get("forecast") or {}
+        if not payload.get("category_performance") and not payload.get("cluster_performance"):
+            if int(forecast.get("days_in_month") or 0) == 0:
+                return True
     return False
 
 
@@ -224,6 +309,8 @@ def get_dashboard_context(
     include_payload=True,
     cache_view_type=None,
     include_full_payload=False,
+    section_scope="all",
+    compute_scope="full",
 ):
     user = get_logged_in_user(request)
     if not user:
@@ -239,6 +326,7 @@ def get_dashboard_context(
         )
 
     filters = build_filters_from_querydict(request.GET)
+    filters.pop("scope", None)
     selected_filters = selected_filter_payload(filters)
 
     if not include_payload:
@@ -313,9 +401,11 @@ def get_dashboard_context(
     data_version = cache.get(f"dashboard_data_version_{data_owner.id}", 0)
     view_type = cache_view_type or request.resolver_match.url_name or "shared"
 
+    cache_mode = "full" if include_full_payload else "lite"
     cache_key = (
         f"dashboard_payload_v{DASHBOARD_PAYLOAD_CACHE_VERSION}_"
-        f"{data_owner.id}_{view_type}_{data_version}_{cache_hash}_{'full' if include_full_payload else 'lite'}"
+        f"s{DASHBOARD_CACHE_SCHEMA_VERSION}_"
+        f"{data_owner.id}_{view_type}_{section_scope}_{data_version}_{cache_hash}_{cache_mode}"
     )
 
     payload = cache.get(cache_key)
@@ -331,39 +421,66 @@ def get_dashboard_context(
         )
         if payload and _payload_needs_refresh(payload):
             payload = None
+        elif str(compute_scope or "full").lower() == "full" and _is_kpis_only_payload(payload):
+            payload = None
 
     if not payload:
-        payload = run_orm_computation(
-            qs,
-            fk_qs,
-            spend_qs,
-            filters,
-            data_owner,
-            cached_filter_metadata=cached_filter_metadata,
-            include_full_payload=include_full_payload,
-        )
-        if not include_full_payload:
+        compute_lock_key = f"{cache_key}:lock"
+        have_lock = cache.add(compute_lock_key, "1", timeout=120)
+        if not have_lock:
+            # Another request is already computing this exact payload.
+            # Wait briefly and reuse the computed result when available.
+            for _ in range(8):
+                time.sleep(0.15)
+                payload = cache.get(cache_key)
+                if payload:
+                    break
+        if not payload:
             try:
-                store_materialized_summary(
-                    user_id=data_owner.id,
-                    view_type=view_type,
-                    data_version=data_version,
-                    filter_hash=cache_hash,
-                    normalized_filters=json.dumps(
-                        normalize_payload_filters(filters), sort_keys=True
-                    ),
-                    payload=payload,
+                payload = run_orm_computation(
+                    qs,
+                    fk_qs,
+                    spend_qs,
+                    filters,
+                    data_owner,
+                    cached_filter_metadata=cached_filter_metadata,
+                    include_full_payload=include_full_payload,
+                    compute_scope=compute_scope,
                 )
-            except Exception:
-                # Materialized summaries are a performance layer; do not fail requests.
-                pass
+                if (not include_full_payload) and str(compute_scope or "full").lower() == "full":
+                    try:
+                        store_materialized_summary(
+                            user_id=data_owner.id,
+                            view_type=view_type,
+                            data_version=data_version,
+                            filter_hash=cache_hash,
+                            normalized_filters=json.dumps(
+                                normalize_payload_filters(filters), sort_keys=True
+                            ),
+                            payload=payload,
+                        )
+                    except Exception:
+                        # Materialized summaries are a performance layer; do not fail requests.
+                        pass
 
-        cache.set(cache_key, payload, timeout=3600 if include_full_payload else 3600 * 24)
+                cache.set(
+                    cache_key,
+                    payload,
+                    timeout=(
+                        DASHBOARD_CACHE_TTL_FULL_SECONDS
+                        if include_full_payload
+                        else DASHBOARD_CACHE_TTL_LITE_SECONDS
+                    ),
+                )
+            finally:
+                if have_lock:
+                    cache.delete(compute_lock_key)
 
     if not include_full_payload:
         payload = _trim_payload_for_initial_load(payload)
 
     template_payload = _build_template_payload(payload)
+    refresh_status = _get_dashboard_refresh_status(data_owner.id)
 
     return {
         "logged_user": user,
@@ -373,10 +490,8 @@ def get_dashboard_context(
         "filters": filters,
         "selected_filters": selected_filters,
         "selected_filters_json": json.dumps(selected_filters),
-        "dashboard_refresh_status": _get_dashboard_refresh_status(data_owner.id),
-        "dashboard_refresh_status_json": json.dumps(
-            _get_dashboard_refresh_status(data_owner.id)
-        ),
+        "dashboard_refresh_status": refresh_status,
+        "dashboard_refresh_status_json": json.dumps(refresh_status),
     }
 
 
@@ -484,11 +599,14 @@ def dashboard_section_view(request, view_name, section):
         request,
         include_payload=True,
         cache_view_type=f"{view_name}-dashboard",
+        section_scope="kpis" if section == "overview" else "analytics",
+        compute_scope="kpis" if section == "overview" else "full",
     )
     if ctx is None:
         return JsonResponse({"error": "Not authenticated"}, status=401)
 
     ctx["dashboard_section_view_type"] = view_name
+    ctx["dashboard_section_name"] = section
     ctx["section_template"] = template_name
     return render(request, "dashboard/sections/section_wrapper.html", ctx)
 
@@ -510,26 +628,176 @@ def dashboard_modal_rows_view(request, view_name, modal_key):
         return JsonResponse({"error": "Invalid modal key."}, status=404)
     template_name, payload_key = modal_tpl
 
+    export_format = (request.GET.get("export") or "").strip().lower()
+    # Modal preview is intentionally capped.
+    # Users can download CSV/Excel for full rows.
+    page = 1
+    page_size = MODAL_ROWS_DISPLAY_LIMIT
+    query = (request.GET.get("q") or "").strip().lower()
+
+    data_owner = user.created_by if user.created_by else user
+    data_version = cache.get(f"dashboard_data_version_{data_owner.id}", 0)
+    filters = build_filters_from_querydict(request.GET)
+    filters.pop("scope", None)
+    filter_hash = hashlib.md5(cache_filter_string(filters).encode("utf-8")).hexdigest()
+
+    modal_rows_cache_key = (
+        "dashboard_modal_rows_v2_"
+        f"{data_owner.id}_{view_name}_{modal_key}_{data_version}_{filter_hash}_"
+        f"{hashlib.md5(query.encode('utf-8')).hexdigest()}"
+    )
+    modal_rows_cache_ttl = int(
+        getattr(settings, "DASHBOARD_MODAL_ROWS_CACHE_TTL_SECONDS", 180)
+    )
+
+    if export_format not in {"csv", "excel", "xlsx"}:
+        cached_modal_payload = cache.get(modal_rows_cache_key)
+        if cached_modal_payload:
+            return JsonResponse(cached_modal_payload)
+
     ctx = get_dashboard_context(
         request,
         include_payload=True,
         cache_view_type=f"{view_name}-dashboard",
         include_full_payload=True,
+        section_scope="modal",
+        compute_scope="full",
     )
     if ctx is None:
         return JsonResponse({"error": "Not authenticated"}, status=401)
 
     payload = ctx.get("payload") or {}
-    rows = payload
-    for part in str(payload_key).split("."):
-        if isinstance(rows, dict):
-            rows = rows.get(part)
-        else:
-            rows = None
-            break
-    rows = rows or []
-    html = render_to_string(template_name, {"rows": rows}, request=request)
-    return HttpResponse(html)
+    rows = _resolve_payload_key(payload, payload_key)
+    if not isinstance(rows, list):
+        rows = []
+
+    if query:
+        def _row_text(row):
+            if isinstance(row, dict):
+                parts = []
+                for value in row.values():
+                    parts.append(_clean_export_value(value).lower())
+                return " ".join(parts)
+            return _clean_export_value(row).lower()
+
+        rows = [row for row in rows if query in _row_text(row)]
+
+    if export_format in {"csv", "excel", "xlsx"}:
+        headers, table_rows = _rows_to_export_table(rows)
+        if export_format == "csv":
+            output = StringIO()
+            writer = csv.writer(output)
+            writer.writerow(headers)
+            writer.writerows(table_rows)
+            buf = BytesIO(output.getvalue().encode("utf-8"))
+            response = FileResponse(buf, content_type="text/csv")
+            response["Content-Disposition"] = (
+                f'attachment; filename="{_modal_rows_export_filename(view_name, modal_key, "csv")}"'
+            )
+            return response
+
+        buf = BytesIO()
+        pd.DataFrame(table_rows, columns=headers).to_excel(buf, index=False)
+        buf.seek(0)
+        response = FileResponse(
+            buf,
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        response["Content-Disposition"] = (
+            f'attachment; filename="{_modal_rows_export_filename(view_name, modal_key, "xlsx")}"'
+        )
+        return response
+
+    rows_total = len(rows)
+    total_pages = 1 if rows_total > 0 else 0
+    rows_page = rows[:page_size]
+    rows_shown = len(rows_page)
+
+    html = render_to_string(
+        template_name,
+        {
+            "rows": rows_page,
+            "rows_total": rows_total,
+            "rows_shown": rows_shown,
+            "rows_truncated": rows_total > page_size,
+        },
+        request=request,
+    )
+    payload = {
+        "html": html,
+        "pagination": {
+            "page": 1,
+            "page_size": page_size,
+            "total": rows_total,
+            "total_pages": total_pages,
+            "has_prev": False,
+            "has_next": False,
+        },
+    }
+    cache.set(modal_rows_cache_key, payload, timeout=modal_rows_cache_ttl)
+    return JsonResponse(payload)
+
+
+@no_cache_for_htmx
+def dashboard_category_performance_rows_view(request, view_name):
+    user = get_logged_in_user(request)
+    if not user:
+        return JsonResponse({"error": "Not authenticated"}, status=401)
+
+    feature_code = DASHBOARD_FEATURE_BY_VIEW.get(view_name)
+    if not feature_code:
+        return JsonResponse({"error": "Invalid dashboard view."}, status=404)
+    if not _user_has_feature(user, feature_code):
+        return JsonResponse({"error": "Permission denied."}, status=403)
+
+    template_name = DASHBOARD_CATEGORY_PERFORMANCE_ROWS_TEMPLATE_MAP.get(view_name)
+    if not template_name:
+        return JsonResponse({"error": "Invalid dashboard view."}, status=404)
+
+    page = _parse_positive_int(request.GET.get("page"), default=1, minimum=1, maximum=10_000)
+    page_size = _parse_positive_int(
+        request.GET.get("page_size"), default=10, minimum=1, maximum=50
+    )
+    query = (request.GET.get("q") or "").strip().lower()
+
+    ctx = get_dashboard_context(
+        request,
+        include_payload=True,
+        cache_view_type=f"{view_name}-dashboard",
+    )
+    if ctx is None:
+        return JsonResponse({"error": "Not authenticated"}, status=401)
+
+    rows = (ctx.get("payload") or {}).get("category_performance") or []
+    if query:
+        rows = [r for r in rows if query in str(r.get("category", "")).lower()]
+
+    total = len(rows)
+    start = (page - 1) * page_size
+    page_rows = rows[start : start + page_size]
+    total_pages = math.ceil(total / page_size) if total > 0 else 0
+
+    html = render_to_string(
+        template_name,
+        {
+            "rows": page_rows,
+            "start_index": start,
+        },
+        request=request,
+    )
+    return JsonResponse(
+        {
+            "html": html,
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total": total,
+                "total_pages": total_pages,
+                "has_prev": page > 1,
+                "has_next": page < total_pages,
+            },
+        }
+    )
 
 
 @require_feature("upload_data")

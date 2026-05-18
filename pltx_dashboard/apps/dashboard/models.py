@@ -28,6 +28,12 @@ class SpendData(models.Model):
 
     class Meta:
         unique_together = ("user", "date", "asin", "ad_account", "ad_type")
+        indexes = [
+            models.Index(
+                fields=["user", "date", "asin", "ad_type"],
+                name="idx_spend_u_d_a_t",
+            ),
+        ]
 
 
 class CategoryMapping(models.Model):
@@ -377,4 +383,92 @@ class DashboardMaterializedSummary(models.Model):
                 name="idx_dms_u_v_dv",
             ),
             models.Index(fields=["user", "updated_at"], name="idx_dms_u_upd"),
+        ]
+
+
+class DashboardDailySummary(models.Model):
+    """
+    Pre-aggregated day-level metrics for faster dashboard reads.
+    Dimensions intentionally exclude ASIN/FSN so table stays compact.
+    """
+
+    user = models.ForeignKey(
+        "accounts.Users",
+        on_delete=models.CASCADE,
+        related_name="dashboard_daily_summaries",
+    )
+    date = models.DateField(db_index=True)
+    platform = models.CharField(max_length=20, db_index=True)  # Amazon / Flipkart
+    category = models.CharField(max_length=100, null=True, blank=True, db_index=True)
+    portfolio = models.CharField(max_length=100, null=True, blank=True, db_index=True)
+    subcategory = models.CharField(max_length=100, null=True, blank=True, db_index=True)
+
+    revenue = models.FloatField(default=0.0)
+    orders = models.IntegerField(default=0)
+    units = models.IntegerField(default=0)
+    pageviews = models.IntegerField(default=0)
+    total_spend = models.FloatField(default=0.0)
+    spend_sp = models.FloatField(default=0.0)
+    spend_sb = models.FloatField(default=0.0)
+    spend_sd = models.FloatField(default=0.0)
+
+    class Meta:
+        unique_together = (
+            "user",
+            "date",
+            "platform",
+            "category",
+            "portfolio",
+            "subcategory",
+        )
+        indexes = [
+            models.Index(fields=["user", "date", "platform"], name="idx_dds_u_d_plat"),
+            models.Index(fields=["user", "platform", "date"], name="idx_dds_u_plat_d"),
+            models.Index(fields=["user", "category", "date"], name="idx_dds_u_cat_d"),
+            models.Index(fields=["user", "portfolio", "date"], name="idx_dds_u_port_d"),
+            models.Index(fields=["user", "subcategory", "date"], name="idx_dds_u_sub_d"),
+        ]
+
+
+class DashboardInventoryHealthSummary(models.Model):
+    """
+    Precomputed inventory-health rows used by dashboard requests.
+    One row per user/platform/date/sku.
+    """
+
+    user = models.ForeignKey(
+        "accounts.Users",
+        on_delete=models.CASCADE,
+        related_name="dashboard_inventory_health_summaries",
+    )
+    date = models.DateField(db_index=True)
+    platform = models.CharField(max_length=20, db_index=True)  # Amazon / Flipkart
+    sku = models.CharField(max_length=80, db_index=True)
+
+    category = models.CharField(max_length=120, null=True, blank=True, db_index=True)
+    portfolio = models.CharField(max_length=120, null=True, blank=True, db_index=True)
+    subcategory = models.CharField(max_length=120, null=True, blank=True, db_index=True)
+
+    stock_qty = models.IntegerField(default=0)
+    fba_qty = models.IntegerField(default=0)
+    flex_qty = models.IntegerField(default=0)
+    sale_qty = models.IntegerField(default=0)
+    total_sales_window = models.IntegerField(default=0)
+    drr = models.FloatField(default=0.0)
+    doc = models.FloatField(default=0.0)
+    revenue = models.FloatField(default=0.0)
+
+    status = models.CharField(max_length=50, db_index=True)
+    status_class = models.CharField(max_length=30, db_index=True)
+    reason = models.TextField(blank=True, default="")
+
+    class Meta:
+        unique_together = ("user", "date", "platform", "sku")
+        indexes = [
+            models.Index(fields=["user", "platform", "date"], name="idx_dihs_u_p_d"),
+            models.Index(fields=["user", "platform", "sku", "date"], name="idx_dihs_u_p_s_d"),
+            models.Index(fields=["user", "platform", "category"], name="idx_dihs_u_p_cat"),
+            models.Index(fields=["user", "platform", "portfolio"], name="idx_dihs_u_p_port"),
+            models.Index(fields=["user", "platform", "subcategory"], name="idx_dihs_u_p_sub"),
+            models.Index(fields=["user", "platform", "status"], name="idx_dihs_u_p_status"),
         ]

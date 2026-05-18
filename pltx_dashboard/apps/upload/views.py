@@ -16,6 +16,7 @@ from apps.accounts.authentication import SessionUserIdAuthentication
 from apps.accounts.utils import get_logged_in_user
 from .models import UploadLog
 from .schema import parse_sales_upload_date, validate_file_type
+from .service_common import upload_batch_key
 from .tasks import process_upload_file_task
 
 
@@ -90,17 +91,13 @@ def _get_upload_dir(file_type):
     return upload_dir
 
 
-def _upload_batch_key(batch_id, suffix):
-    return f"upload_batch_{batch_id}_{suffix}"
-
-
 def _register_upload_batch(batch_id, *, batch_total, user_id, data_owner_id, is_flipkart):
     ttl = 86400
-    meta_key = _upload_batch_key(batch_id, "meta")
-    expected_key = _upload_batch_key(batch_id, "expected_total")
-    completed_key = _upload_batch_key(batch_id, "completed_total")
-    failed_key = _upload_batch_key(batch_id, "failed_total")
-    finalized_key = _upload_batch_key(batch_id, "finalized")
+    meta_key = upload_batch_key(batch_id, "meta")
+    expected_key = upload_batch_key(batch_id, "expected_total")
+    completed_key = upload_batch_key(batch_id, "completed_total")
+    failed_key = upload_batch_key(batch_id, "failed_total")
+    finalized_key = upload_batch_key(batch_id, "finalized")
 
     existing_expected = cache.get(expected_key)
     if existing_expected is not None and int(existing_expected) != int(batch_total):
@@ -327,84 +324,3 @@ class UploadTaskStatusView(APIView):
             )
         else:
             return Response({"status": "processing", "state": task.state})
-
-
-class BatchFinalizeView(APIView):
-    """
-    Called by the frontend after its upload loop finishes.
-
-    If some files were silently lost (network error, Nginx timeout, browser
-    crash) the batch counter will be stuck at completed < expected.  This
-    endpoint detects that and force-marks the missing files as failures so
-    the batch can finalize (with an error notification to the user) instead
-    of hanging forever.
-    """
-
-    authentication_classes = [SessionUserIdAuthentication]
-
-    def post(self, request, *args, **kwargs):
-        import logging
-        import time as _time
-
-        logger = logging.getLogger(__name__)
-
-        user = get_logged_in_user(request)
-        if not user:
-            return Response({"error": "Not authenticated"}, status=401)
-
-        batch_id = str(request.data.get("batch_id") or "").strip()
-        sent_count = request.data.get("sent_count")
-        failed_count = request.data.get("failed_count", 0)
-
-        if not batch_id:
-            return Response({"error": "batch_id is required"}, status=400)
-
-        expected_key = _upload_batch_key(batch_id, "expected_total")
-        completed_key = _upload_batch_key(batch_id, "completed_total")
-        finalized_key = _upload_batch_key(batch_id, "finalized")
-
-        expected = cache.get(expected_key)
-        completed = cache.get(completed_key)
-
-        if expected is None:
-            return Response({"status": "unknown", "message": "Batch not found or expired."})
-
-        expected = int(expected)
-        completed = int(completed or 0)
-
-        # Already finalized — nothing to do.
-        if cache.get(finalized_key):
-            return Response({"status": "already_finalized", "completed": completed, "expected": expected})
-
-        if completed >= expected:
-            return Response({"status": "ok", "completed": completed, "expected": expected})
-
-        # The frontend finished its loop but the batch isn't complete.
-        # Some files were lost in transit. Force-mark the missing as failures.
-        missing = expected - completed
-        logger.warning(
-            "[BatchFinalize] batch=%s completed=%d/%d — %d file(s) never reached "
-            "the worker. Force-failing them.",
-            batch_id, completed, expected, missing,
-        )
-
-        data_owner = user.created_by if user.created_by else user
-        is_flipkart = bool(request.data.get("is_flipkart"))
-
-        from .tasks import _mark_batch_task_complete
-        for _ in range(missing):
-            _mark_batch_task_complete(
-                batch_id=batch_id,
-                batch_total=expected,
-                user_id=user.id,
-                data_owner_id=data_owner.id,
-                is_flipkart=is_flipkart,
-                success=False,
-            )
-
-        return Response({
-            "status": "force_finalized",
-            "completed": completed,
-            "expected": expected,
-            "missing": missing,
-        })

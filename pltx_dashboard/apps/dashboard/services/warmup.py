@@ -16,6 +16,8 @@ from apps.dashboard.services.analytics_services_orm_pipeline import (
     run_orm_computation,
 )
 from apps.dashboard.services.cache_config import (
+    DASHBOARD_CACHE_SCHEMA_VERSION,
+    DASHBOARD_CACHE_TTL_LITE_SECONDS,
     DASHBOARD_PAYLOAD_CACHE_VERSION,
     DEFAULT_DASHBOARD_VIEW_TYPES,
     DEFAULT_WARMUP_FILTER_SETS,
@@ -45,10 +47,11 @@ def _apply_spend_filters(spend_qs, filters):
     return spend_qs
 
 
-def _cache_key(user_id, view_type, data_version, cache_hash):
+def _cache_key(user_id, view_type, data_version, cache_hash, section_scope="all", mode="lite"):
     return (
         f"dashboard_payload_v{DASHBOARD_PAYLOAD_CACHE_VERSION}_"
-        f"{user_id}_{view_type}_{data_version}_{cache_hash}"
+        f"s{DASHBOARD_CACHE_SCHEMA_VERSION}_"
+        f"{user_id}_{view_type}_{section_scope}_{data_version}_{cache_hash}_{mode}"
     )
 
 
@@ -120,7 +123,7 @@ def prime_dashboard_payloads_for_user(
         # key differs), so compute ONCE and reuse for all.
         views_needing_compute = []
         for view_type in resolved_view_types:
-            key = _cache_key(user.id, view_type, data_version, cache_hash)
+            key = _cache_key(user.id, view_type, data_version, cache_hash, section_scope="all", mode="lite")
             payload = cache.get(key)
             if payload is not None:
                 reused_memory += 1
@@ -133,7 +136,7 @@ def prime_dashboard_payloads_for_user(
                 filter_hash=cache_hash,
             )
             if payload is not None:
-                cache.set(key, payload, timeout=3600 * 24)
+                cache.set(key, payload, timeout=DASHBOARD_CACHE_TTL_LITE_SECONDS)
                 reused_materialized += 1
                 continue
 
@@ -158,7 +161,7 @@ def prime_dashboard_payloads_for_user(
             len(views_needing_compute), _elapsed, filter_key_str[:80],
         )
         for view_type in views_needing_compute:
-            key = _cache_key(user.id, view_type, data_version, cache_hash)
+            key = _cache_key(user.id, view_type, data_version, cache_hash, section_scope="all", mode="lite")
             store_materialized_summary(
                 user_id=user.id,
                 view_type=view_type,
@@ -167,7 +170,7 @@ def prime_dashboard_payloads_for_user(
                 normalized_filters=normalized,
                 payload=payload,
             )
-            cache.set(key, payload, timeout=3600 * 24)
+            cache.set(key, payload, timeout=DASHBOARD_CACHE_TTL_LITE_SECONDS)
             computed += 1
 
     return {
