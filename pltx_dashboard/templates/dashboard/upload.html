@@ -211,29 +211,119 @@
     .file-list {
         margin-top: 20px;
         display: flex;
-        flex-wrap: wrap;
-        gap: 10px;
+        flex-direction: column;
+        gap: 8px;
     }
 
-    .file-pill {
-        display: inline-flex;
+    .file-item {
+        display: flex;
         align-items: center;
+        gap: 12px;
         background: #ffffff;
-        color: #0f172a;
-        font-weight: 500;
-        border: 1px solid #cbd5e1;
-        padding: 8px 14px;
-        border-radius: 24px;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 12px 16px;
         font-size: 13px;
-        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
+        font-weight: 500;
+        color: #0f172a;
+        transition: all 0.25s ease;
     }
 
-    .file-pill::before {
-        content: 'description';
-        font-family: 'Material Icons Round';
-        font-size: 16px;
+    .file-item .file-icon {
+        font-size: 20px;
+        color: #94a3b8;
+    }
+
+    .file-item .file-info {
+        flex: 1;
+        min-width: 0;
+    }
+
+    .file-item .file-name {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        font-weight: 600;
+        font-size: 13px;
+    }
+
+    .file-item .file-size {
+        font-size: 11px;
+        color: #94a3b8;
+        margin-top: 2px;
+    }
+
+    .file-item .file-progress-bar {
+        height: 4px;
+        background: #e2e8f0;
+        border-radius: 4px;
+        overflow: hidden;
+        margin-top: 6px;
+    }
+
+    .file-item .file-progress-fill {
+        height: 100%;
+        background: linear-gradient(90deg, #3b82f6, #6366f1);
+        border-radius: 4px;
+        width: 0%;
+        transition: width 0.3s ease;
+    }
+
+    .file-item .file-status-icon {
+        font-size: 20px;
+        flex-shrink: 0;
+    }
+
+    .file-item.uploading {
+        border-color: #93c5fd;
+        background: #f0f7ff;
+    }
+
+    .file-item.uploading .file-icon {
         color: #3b82f6;
-        margin-right: 6px;
+    }
+
+    .file-item.staged {
+        border-color: #86efac;
+        background: #f0fdf4;
+    }
+
+    .file-item.staged .file-icon {
+        color: #22c55e;
+    }
+
+    .file-item.error {
+        border-color: #fca5a5;
+        background: #fef2f2;
+    }
+
+    .file-item.error .file-icon {
+        color: #ef4444;
+    }
+
+    .file-item .file-remove-btn {
+        background: none;
+        border: none;
+        cursor: pointer;
+        color: #94a3b8;
+        font-size: 18px;
+        padding: 0;
+        line-height: 1;
+        transition: color 0.2s;
+    }
+
+    .file-item .file-remove-btn:hover {
+        color: #ef4444;
+    }
+
+    .staged-count-badge {
+        background: #22c55e;
+        color: white;
+        font-size: 12px;
+        font-weight: 700;
+        padding: 2px 10px;
+        border-radius: 999px;
+        margin-left: 8px;
     }
 
     /* Actions */
@@ -618,9 +708,10 @@
     </div>
 
     <div class="upload-actions">
-        <button id="loadBtn" class="btn-process" onclick="loadDashboard()" disabled>
+        <button id="loadBtn" class="btn-process" onclick="processAndUpload()" disabled>
             <span class="material-icons-round">auto_awesome</span>
             Process Data & Update Dashboard
+            <span id="stagedCountBadge" class="staged-count-badge" style="display:none;"></span>
         </button>
         <div id="statusMsg"></div>
     </div>
@@ -673,5 +764,5 @@
 <script>
 window.UPLOAD_TASK_TIMEOUT_MS = {{ upload_task_timeout_ms|default:1800000 }};
 </script>
-<script src="/static/js/upload.js?v=13"></script>
+<script src="/static/js/upload.js?v=16"></script>
 {% endblock %}

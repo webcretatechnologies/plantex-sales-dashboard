@@ -47,11 +47,20 @@ def _send_ws(user_id, message, status):
         logger.warning("[UploadTask] WebSocket send failed: %s", exc)
 
 
-def _enqueue_dashboard_warmup(data_owner_id):
+def _enqueue_dashboard_warmup(data_owner_id, *, skip_during_upload=True):
     try:
         from django.conf import settings
 
         if not getattr(settings, "DASHBOARD_WARMUP_ENABLED", True):
+            return
+        # During uploads the warmup is skipped by default — it computes up to
+        # 21 expensive dashboard payloads that are rarely needed immediately.
+        # The first dashboard page-load will compute and cache on demand.
+        if skip_during_upload:
+            logger.info(
+                "[UploadTask] Skipping warmup for user=%s (skip_during_upload=True)",
+                data_owner_id,
+            )
             return
         from apps.dashboard.tasks import warmup_dashboard_payloads_task
 
@@ -320,6 +329,7 @@ def _run_dashboard_refresh(
 
     affected_dates = set(affected_dates or [])
     dashboard_invalidated = False
+    _t_start = time.monotonic()
 
     def _dashboard_progress(message):
         _send_ws(user_id, message, "processing")
@@ -375,14 +385,53 @@ def _run_dashboard_refresh(
         invalidate_dashboard_cache_for_user(data_owner.id, clear_materialized=True)
         dashboard_invalidated = True
 
+    _t_dashboard = time.monotonic()
+    logger.info(
+        "[DashboardRefreshTask] Dashboard rebuild completed in %.1fs for owner=%s",
+        _t_dashboard - _t_start, data_owner.id,
+    )
+
     if dashboard_refreshed or dashboard_invalidated:
-        _enqueue_daily_summary_refresh(
-            data_owner.id, affected_dates=sorted(affected_dates or [])
-        )
-        _enqueue_inventory_summary_refresh(
-            data_owner.id, affected_dates=sorted(affected_dates or [])
-        )
-        _enqueue_dashboard_warmup(data_owner.id)
+        # Fire daily-summary and inventory-summary as a parallel Celery group
+        # so they run concurrently instead of sequentially.
+        sorted_dates = sorted(affected_dates or [])
+        try:
+            from celery import group as celery_group
+            from apps.dashboard.tasks import (
+                refresh_dashboard_daily_summary_task,
+                refresh_dashboard_inventory_summary_task,
+            )
+
+            summary_group = celery_group(
+                refresh_dashboard_daily_summary_task.si(
+                    data_owner_id=data_owner.id,
+                    only_dates=list(sorted_dates),
+                ),
+                refresh_dashboard_inventory_summary_task.si(
+                    data_owner_id=data_owner.id,
+                    only_dates=list(sorted_dates),
+                ),
+            )
+            summary_group.apply_async()
+            logger.info(
+                "[DashboardRefreshTask] Dispatched daily+inventory summary tasks "
+                "in parallel for owner=%s (%d dates)",
+                data_owner.id, len(sorted_dates),
+            )
+        except Exception:
+            logger.exception(
+                "[DashboardRefreshTask] Parallel summary dispatch failed, "
+                "falling back to sequential for owner=%s", data_owner.id,
+            )
+            _enqueue_daily_summary_refresh(
+                data_owner.id, affected_dates=sorted_dates
+            )
+            _enqueue_inventory_summary_refresh(
+                data_owner.id, affected_dates=sorted_dates
+            )
+        # Skip warmup during upload — too expensive (up to 21 payloads).
+        # The first dashboard page-load will compute and cache on demand.
+        _enqueue_dashboard_warmup(data_owner.id, skip_during_upload=True)
 
 
 @shared_task(bind=True)
@@ -434,9 +483,11 @@ def refresh_dashboard_after_upload_task(
         cache.set(f"{lock_key}_ts", str(time.time()), timeout=1800)
 
         data_owner = Users.objects.get(pk=data_owner_id)
+        _refresh_t0 = time.time()
+        _dates_count = len(affected_dates or [])
         logger.info(
-            "[DashboardRefreshTask] Starting refresh for owner=%s flipkart=%s file_type=%s",
-            data_owner_id, is_flipkart, file_type,
+            "[DashboardRefreshTask] Starting refresh for owner=%s flipkart=%s file_type=%s dates=%d",
+            data_owner_id, is_flipkart, file_type, _dates_count,
         )
         _set_dashboard_refresh_status(
             data_owner_id,
@@ -459,6 +510,7 @@ def refresh_dashboard_after_upload_task(
             dashboard_refreshed=dashboard_refreshed,
         )
 
+        _refresh_elapsed = time.time() - _refresh_t0
         _set_dashboard_refresh_status(
             data_owner_id,
             "success",
@@ -466,7 +518,10 @@ def refresh_dashboard_after_upload_task(
             timeout=300,
         )
         _send_ws(user_id, "Dashboard updated with the new updated data.", "complete")
-        logger.info("[DashboardRefreshTask] Completed successfully for owner=%s", data_owner_id)
+        logger.info(
+            "[DashboardRefreshTask] Completed successfully for owner=%s in %.1fs (dates=%d)",
+            data_owner_id, _refresh_elapsed, _dates_count,
+        )
         return {"status": "success"}
     except Retry:
         raise
@@ -578,6 +633,7 @@ def process_upload_file_task(
         Whether this file belongs to the Flipkart pipeline.
     """
     from apps.accounts.models import Users  # noqa: F401
+    from django.conf import settings
     from apps.upload.models import UploadLog
     from apps.upload.amazon import (
         process_category_file,
@@ -600,7 +656,8 @@ def process_upload_file_task(
 
     try:
         data_owner = Users.objects.get(pk=data_owner_id)
-        files_to_cleanup = [file_path]
+        files_to_cleanup = []
+        keep_uploaded_files = bool(getattr(settings, "UPLOAD_KEEP_FILES", True))
         affected_dates = set()
         upload_log = None
         if upload_log_id:
@@ -612,6 +669,7 @@ def process_upload_file_task(
 
         processing_path = _convert_excel_to_csv_if_possible(file_path, file_type)
         if processing_path != file_path:
+            # CSV converted from Excel is only an internal processing artifact.
             files_to_cleanup.append(processing_path)
 
         # Open the file from disk
@@ -645,7 +703,9 @@ def process_upload_file_task(
             else:
                 raise ValueError(f"Unsupported file_type: {file_type}")
 
-        # Clean up uploaded files after processing
+        # Clean up generated processing artifacts. Keep original uploads by default.
+        if not keep_uploaded_files:
+            files_to_cleanup.append(file_path)
         for path in files_to_cleanup:
             try:
                 os.remove(path)
@@ -744,8 +804,10 @@ def process_upload_file_task(
             except Exception:
                 logger.exception("[UploadTask] Failed updating UploadLog status.")
 
-        # Clean up uploaded files on error too
-        cleanup_candidates = [file_path, f"{os.path.splitext(file_path)[0]}.csv"]
+        # Clean up generated CSV artifact and optionally original upload on failure.
+        cleanup_candidates = [f"{os.path.splitext(file_path)[0]}.csv"]
+        if not bool(getattr(settings, "UPLOAD_KEEP_FILES", True)):
+            cleanup_candidates.append(file_path)
         for path in cleanup_candidates:
             try:
                 os.remove(path)

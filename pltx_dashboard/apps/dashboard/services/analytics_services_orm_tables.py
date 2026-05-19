@@ -1,7 +1,7 @@
 from django.db.models import Sum
 
 
-def generate_bi_data_orm(qs, fk_qs):
+def generate_bi_data_orm(qs, fk_qs, user=None):
     az_asins = {}
     if qs is not None:
         # Group by asin only to avoid duplicates from varying category/portfolio values
@@ -16,16 +16,13 @@ def generate_bi_data_orm(qs, fk_qs):
             spend_sd=Sum("spend_sd"),
         )
         # Build a separate lookup for the best category/portfolio per ASIN
-        # (pick from the row with the most revenue to get the most relevant mapping)
+        from apps.dashboard.models import CategoryMapping
         asin_meta = {}
-        for r in qs.values("asin", "category", "portfolio").annotate(
-            rev=Sum("revenue")
-        ).order_by("-rev"):
-            a = r["asin"]
-            if a not in asin_meta:
-                asin_meta[a] = {
-                    "category": r["category"] or "",
-                    "portfolio": r["portfolio"] or "",
+        if user:
+            for row in CategoryMapping.objects.filter(user=user).values("asin", "category", "portfolio"):
+                asin_meta[row["asin"]] = {
+                    "category": row["category"] or "",
+                    "portfolio": row["portfolio"] or "",
                 }
 
         for r in agg:
@@ -62,16 +59,13 @@ def generate_bi_data_orm(qs, fk_qs):
             pageviews=Sum("pageviews"),
             units=Sum("units"),
         )
-        # Best category/portfolio per FSN
+        from apps.dashboard.models import FlipkartCategoryMap
         fsn_meta = {}
-        for r in fk_qs.values("fsn", "category", "portfolio").annotate(
-            rev=Sum("revenue")
-        ).order_by("-rev"):
-            f = r["fsn"]
-            if f not in fsn_meta:
-                fsn_meta[f] = {
-                    "category": r["category"] or "",
-                    "portfolio": r["portfolio"] or "",
+        if user:
+            for row in FlipkartCategoryMap.objects.filter(user=user).values("fsn", "category", "portfolio"):
+                fsn_meta[row["fsn"]] = {
+                    "category": row["category"] or "",
+                    "portfolio": row["portfolio"] or "",
                 }
 
         for r in agg_fk:

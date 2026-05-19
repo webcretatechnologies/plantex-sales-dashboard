@@ -2,7 +2,7 @@ import datetime
 import logging
 import time
 
-from django.db import connection, transaction
+from django.db import connection
 from django.db.models import Sum
 
 from apps.dashboard.models import (
@@ -71,7 +71,8 @@ def _invalidate_user_dashboard_cache(user_id):
 def _mysql_insert_processed_dashboard_rows(user_id, target_dates):
     """
     Build ProcessedDashboardData fully in MySQL using INSERT...SELECT joins.
-    This is materially faster than Python row-by-row object construction.
+    This uses an upsert strategy: first insert sales data, then upsert spend 
+    aggregates. This avoids slow materializing subqueries and grouping.
     """
     sales_table = SalesData._meta.db_table
     spend_table = SpendData._meta.db_table
@@ -80,25 +81,9 @@ def _mysql_insert_processed_dashboard_rows(user_id, target_dates):
     processed_table = ProcessedDashboardData._meta.db_table
 
     target_dates = sorted(target_dates or [])
-    date_placeholders = ", ".join(["%s"] * len(target_dates))
+    date_placeholders = ", ".join(["%s"] * len(target_dates)) if target_dates else ""
     sales_date_filter = f" AND s.date IN ({date_placeholders})" if target_dates else ""
-    spend_date_filter = (
-        f" AND date IN ({date_placeholders})"
-        if target_dates
-        else ""
-    )
-
-    spend_agg_sql = f"""
-        SELECT
-            date,
-            asin,
-            SUM(CASE WHEN UPPER(ad_type) = 'SP' THEN spend ELSE 0 END) AS spend_sp,
-            SUM(CASE WHEN UPPER(ad_type) = 'SB' THEN spend ELSE 0 END) AS spend_sb,
-            SUM(CASE WHEN UPPER(ad_type) = 'SD' THEN spend ELSE 0 END) AS spend_sd
-        FROM {spend_table}
-        WHERE user_id = %s {spend_date_filter}
-        GROUP BY date, asin
-    """
+    spend_date_filter = f" AND date IN ({date_placeholders})" if target_dates else ""
 
     insert_sales_sql = f"""
         INSERT INTO {processed_table} (
@@ -113,29 +98,23 @@ def _mysql_insert_processed_dashboard_rows(user_id, target_dates):
             COALESCE(cm.category, '') AS category,
             COALESCE(cm.subcategory, '') AS subcategory,
             COALESCE(pd.price, 0) AS price,
-            SUM(COALESCE(s.pageviews, 0)) AS pageviews,
-            SUM(COALESCE(s.units, 0)) AS units,
-            SUM(COALESCE(s.orders, 0)) AS orders,
-            SUM(COALESCE(s.revenue, 0)) AS revenue,
-            COALESCE(sp.spend_sp, 0) AS spend_sp,
-            COALESCE(sp.spend_sb, 0) AS spend_sb,
-            COALESCE(sp.spend_sd, 0) AS spend_sd,
-            COALESCE(sp.spend_sp, 0) + COALESCE(sp.spend_sb, 0) + COALESCE(sp.spend_sd, 0) AS total_spend
+            COALESCE(s.pageviews, 0) AS pageviews,
+            COALESCE(s.units, 0) AS units,
+            COALESCE(s.orders, 0) AS orders,
+            COALESCE(s.revenue, 0) AS revenue,
+            0 AS spend_sp,
+            0 AS spend_sb,
+            0 AS spend_sd,
+            0 AS total_spend
         FROM {sales_table} s
-        LEFT JOIN ({spend_agg_sql}) sp
-            ON sp.date = s.date AND sp.asin = s.asin
         LEFT JOIN {category_table} cm
             ON cm.user_id = %s AND cm.asin = s.asin
         LEFT JOIN {price_table} pd
             ON pd.user_id = %s AND pd.asin = s.asin
         WHERE s.user_id = %s {sales_date_filter}
-        GROUP BY
-            s.date, s.asin,
-            cm.portfolio, cm.category, cm.subcategory, pd.price,
-            sp.spend_sp, sp.spend_sb, sp.spend_sd
     """
 
-    insert_spend_only_sql = f"""
+    upsert_spend_sql = f"""
         INSERT INTO {processed_table} (
             user_id, date, asin, portfolio, category, subcategory, price,
             pageviews, units, orders, revenue, spend_sp, spend_sb, spend_sd, total_spend
@@ -152,34 +131,48 @@ def _mysql_insert_processed_dashboard_rows(user_id, target_dates):
             0 AS units,
             0 AS orders,
             0 AS revenue,
-            COALESCE(sp.spend_sp, 0) AS spend_sp,
-            COALESCE(sp.spend_sb, 0) AS spend_sb,
-            COALESCE(sp.spend_sd, 0) AS spend_sd,
-            COALESCE(sp.spend_sp, 0) + COALESCE(sp.spend_sb, 0) + COALESCE(sp.spend_sd, 0) AS total_spend
-        FROM ({spend_agg_sql}) sp
-        LEFT JOIN {sales_table} s
-            ON s.user_id = %s AND s.date = sp.date AND s.asin = sp.asin
+            sp.spend_sp,
+            sp.spend_sb,
+            sp.spend_sd,
+            sp.spend_sp + sp.spend_sb + sp.spend_sd AS total_spend
+        FROM (
+            SELECT
+                date,
+                asin,
+                SUM(CASE WHEN UPPER(ad_type) = 'SP' THEN spend ELSE 0 END) AS spend_sp,
+                SUM(CASE WHEN UPPER(ad_type) = 'SB' THEN spend ELSE 0 END) AS spend_sb,
+                SUM(CASE WHEN UPPER(ad_type) = 'SD' THEN spend ELSE 0 END) AS spend_sd
+            FROM {spend_table}
+            WHERE user_id = %s {spend_date_filter}
+            GROUP BY date, asin
+        ) sp
         LEFT JOIN {category_table} cm
             ON cm.user_id = %s AND cm.asin = sp.asin
         LEFT JOIN {price_table} pd
             ON pd.user_id = %s AND pd.asin = sp.asin
-        WHERE s.id IS NULL
+        ON DUPLICATE KEY UPDATE
+            spend_sp = VALUES(spend_sp),
+            spend_sb = VALUES(spend_sb),
+            spend_sd = VALUES(spend_sd),
+            total_spend = VALUES(total_spend)
     """
 
-    sales_params = [user_id, user_id]
-    sales_params.extend(target_dates)
-    sales_params.extend([user_id, user_id, user_id])
-    sales_params.extend(target_dates)
+    sales_params = [user_id, user_id, user_id, user_id]
+    if target_dates:
+        sales_params.extend(target_dates)
 
-    spend_only_params = [user_id, user_id]
-    spend_only_params.extend(target_dates)
-    spend_only_params.extend([user_id, user_id, user_id])
+    spend_params = [user_id, user_id]
+    if target_dates:
+        spend_params.extend(target_dates)
+    spend_params.extend([user_id, user_id])
 
     rows_written = 0
     with connection.cursor() as cursor:
         cursor.execute(insert_sales_sql, sales_params)
         rows_written += max(int(cursor.rowcount or 0), 0)
-        cursor.execute(insert_spend_only_sql, spend_only_params)
+        cursor.execute(upsert_spend_sql, spend_params)
+        # Note: ON DUPLICATE KEY UPDATE might return 2 for updated rows, 
+        # so rowcount isn't purely "new rows". We return it for logging.
         rows_written += max(int(cursor.rowcount or 0), 0)
 
     return rows_written
@@ -351,25 +344,41 @@ def generate_dashboard_data(user, progress_callback=None, only_dates=None):
         sales_qs = sales_qs.filter(date__in=target_dates)
         spend_qs = spend_qs.filter(date__in=target_dates)
 
-    with transaction.atomic():
-        processed_qs.delete()
+    # Check data availability BEFORE deleting anything (avoid unnecessary
+    # delete + empty insert cycles).
+    has_sales = sales_qs.exists()
+    has_spend = spend_qs.exists()
+    if not has_sales and not has_spend:
+        # Still delete stale processed rows for the scoped dates.
+        processed_qs._raw_delete(processed_qs.db)
+        _invalidate_user_dashboard_cache(user.id)
+        return
 
-        has_sales = sales_qs.exists()
-        has_spend = spend_qs.exists()
-        if not has_sales and not has_spend:
-            _invalidate_user_dashboard_cache(user.id)
-            return
+    # For incremental mode: delete only the scoped date rows OUTSIDE the heavy
+    # insert transaction so the table lock window is minimised.
+    _notify_progress(progress_callback, "Clearing stale dashboard rows...")
+    _t_del = time.monotonic()
+    processed_qs._raw_delete(processed_qs.db)
+    logger.info(
+        "[Dashboard] delete phase user=%s mode=%s elapsed=%.1fs",
+        user.id, mode, time.monotonic() - _t_del,
+    )
 
-        total_rows = 0
-        if connection.vendor == "mysql":
-            _notify_progress(progress_callback, "Building processed dashboard rows...")
-            total_rows = _mysql_insert_processed_dashboard_rows(
-                user.id, sorted(target_dates)
-            )
-        else:
-            total_rows = _generate_dashboard_data_python(
-                user, sales_qs, spend_qs, progress_callback
-            )
+    total_rows = 0
+    _t_ins = time.monotonic()
+    if connection.vendor == "mysql":
+        _notify_progress(progress_callback, "Building processed dashboard rows...")
+        total_rows = _mysql_insert_processed_dashboard_rows(
+            user.id, sorted(target_dates)
+        )
+    else:
+        total_rows = _generate_dashboard_data_python(
+            user, sales_qs, spend_qs, progress_callback
+        )
+    logger.info(
+        "[Dashboard] insert phase user=%s mode=%s rows=%d elapsed=%.1fs",
+        user.id, mode, total_rows, time.monotonic() - _t_ins,
+    )
 
     _notify_progress(progress_callback, f"Processed {total_rows} dashboard rows.")
     _invalidate_user_dashboard_cache(user.id)
@@ -420,13 +429,19 @@ def generate_flipkart_dashboard_data(user, progress_callback=None, only_dates=No
         traffic_qs = traffic_qs.filter(date__in=target_dates)
         pla_qs = pla_qs.filter(date__in=target_dates)
 
-
-    processed_qs.delete()
-
+    # Check data availability BEFORE deleting to avoid unnecessary work.
     if not traffic_qs.exists() and not pla_qs.exists():
+        processed_qs._raw_delete(processed_qs.db)
         _invalidate_user_dashboard_cache(user.id)
         logger.info("[FK Dashboard] No search traffic or PLA data - skipping.")
         return
+
+    _t_del = time.monotonic()
+    processed_qs._raw_delete(processed_qs.db)
+    logger.info(
+        "[FK Dashboard] delete phase user=%s mode=%s elapsed=%.1fs",
+        user.id, mode, time.monotonic() - _t_del,
+    )
 
     _notify_progress(progress_callback, "Loading Flipkart category and price mappings...")
     category_by_fsn = {}

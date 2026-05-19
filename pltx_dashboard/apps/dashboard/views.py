@@ -168,23 +168,113 @@ def _trim_payload_for_initial_load(payload):
 
 
 def _get_dashboard_refresh_status(data_owner_id):
-    status = cache.get(f"dashboard_refresh_status_{data_owner_id}")
+    cache_key = f"dashboard_refresh_status_{data_owner_id}"
+    status = cache.get(cache_key)
     if not isinstance(status, dict):
         return {"state": "idle", "message": ""}
     state = str(status.get("state") or "idle").lower()
     if state not in {"idle", "processing", "success", "error"}:
         state = "idle"
     message = str(status.get("message") or "")
+    now = time.time()
+
+    if state == "processing":
+        # Guard against stale "processing" banners when no real work remains.
+        # Three independent signals indicate genuine activity:
+        #   1. A refresh lock held by an active Celery task
+        #   2. A recent cache "ping" from _set_dashboard_refresh_status (≤120s)
+        #   3. Recently-updated UploadLog entries in QUEUED/PROCESSING state (≤30m)
+        # If ALL three are absent/stale, the banner is a leftover from a
+        # crashed/killed worker and should be reset to idle.
+
+        # -- Signal 1: Refresh lock --
+        lock_key = f"dashboard_refresh_lock_{data_owner_id}"
+        lock_ts_key = f"{lock_key}_ts"
+        has_refresh_lock = bool(cache.get(lock_key))
+
+        # Detect stale locks from crashed workers. The lock itself has a
+        # 1800s Redis TTL, but the worker may have died without cleanup.
+        # If the lock's timestamp is missing or older than 15 minutes,
+        # treat it as abandoned and clear it.
+        if has_refresh_lock:
+            lock_ts = cache.get(lock_ts_key)
+            lock_is_stale = True
+            if lock_ts:
+                try:
+                    lock_age = now - float(lock_ts)
+                    lock_is_stale = lock_age > 900  # 15 minutes
+                except (ValueError, TypeError):
+                    lock_is_stale = True
+            if lock_is_stale:
+                cache.delete(lock_key)
+                cache.delete(lock_ts_key)
+                has_refresh_lock = False
+
+        # -- Signal 2: Recent processing ping --
+        has_recent_processing_ping = False
+        ts = status.get("updated_at_ts")
+        if isinstance(ts, (int, float)):
+            has_recent_processing_ping = (now - float(ts)) <= 120
+
+        # -- Signal 3: Active UploadLog entries --
+        has_active_upload_logs = False
+        try:
+            from apps.upload.models import UploadLog
+
+            # Only consider upload logs updated within the last 30 minutes
+            # as genuinely active. Entries stuck longer than that are stale
+            # from crashed/interrupted workers and should not keep the
+            # banner visible indefinitely.
+            stale_cutoff = datetime.datetime.now() - datetime.timedelta(minutes=30)
+            active_logs_qs = UploadLog.objects.filter(
+                data_owner_id=data_owner_id,
+                status__in=[
+                    UploadLog.STATUS_QUEUED,
+                    UploadLog.STATUS_PROCESSING,
+                ],
+                updated_at__gte=stale_cutoff,
+            )
+            has_active_upload_logs = active_logs_qs.exists()
+
+            # Auto-cleanup: mark truly stale entries as error so they
+            # don't keep triggering the banner on subsequent checks.
+            stale_count = UploadLog.objects.filter(
+                data_owner_id=data_owner_id,
+                status__in=[
+                    UploadLog.STATUS_QUEUED,
+                    UploadLog.STATUS_PROCESSING,
+                ],
+                updated_at__lt=stale_cutoff,
+            ).update(
+                status=UploadLog.STATUS_ERROR,
+                message="Automatically marked as failed — task did not complete within 30 minutes.",
+            )
+            if stale_count:
+                import logging
+                logging.getLogger(__name__).info(
+                    "[DashboardRefreshStatus] Auto-cleaned %d stale UploadLog entries "
+                    "for owner=%s", stale_count, data_owner_id,
+                )
+        except Exception:
+            has_active_upload_logs = False
+
+        if not (has_refresh_lock or has_active_upload_logs or has_recent_processing_ping):
+            cache.set(
+                cache_key,
+                {"state": "idle", "message": "", "updated_at_ts": now},
+                timeout=300,
+            )
+            return {"state": "idle", "message": ""}
+
     # Prevent stale terminal banners from persisting across page refreshes.
     # Keep only recent success/error updates visible.
     if state in {"success", "error"}:
         ts = status.get("updated_at_ts")
-        now = time.time()
         # Backward compatibility: older cache entries without timestamp are stale.
         is_stale = (not isinstance(ts, (int, float))) or ((now - float(ts)) > 45)
         if is_stale:
             cache.set(
-                f"dashboard_refresh_status_{data_owner_id}",
+                cache_key,
                 {"state": "idle", "message": "", "updated_at_ts": now},
                 timeout=300,
             )
@@ -629,10 +719,7 @@ def dashboard_modal_rows_view(request, view_name, modal_key):
     template_name, payload_key = modal_tpl
 
     export_format = (request.GET.get("export") or "").strip().lower()
-    # Modal preview is intentionally capped.
-    # Users can download CSV/Excel for full rows.
-    page = 1
-    page_size = MODAL_ROWS_DISPLAY_LIMIT
+    # All rows are returned; DataTables handles client-side pagination.
     query = (request.GET.get("q") or "").strip().lower()
 
     data_owner = user.created_by if user.created_by else user
@@ -709,17 +796,14 @@ def dashboard_modal_rows_view(request, view_name, modal_key):
         return response
 
     rows_total = len(rows)
-    total_pages = 1 if rows_total > 0 else 0
-    rows_page = rows[:page_size]
-    rows_shown = len(rows_page)
 
     html = render_to_string(
         template_name,
         {
-            "rows": rows_page,
+            "rows": rows,
             "rows_total": rows_total,
-            "rows_shown": rows_shown,
-            "rows_truncated": rows_total > page_size,
+            "rows_shown": rows_total,
+            "rows_truncated": False,
         },
         request=request,
     )
@@ -727,9 +811,9 @@ def dashboard_modal_rows_view(request, view_name, modal_key):
         "html": html,
         "pagination": {
             "page": 1,
-            "page_size": page_size,
+            "page_size": rows_total,
             "total": rows_total,
-            "total_pages": total_pages,
+            "total_pages": 1,
             "has_prev": False,
             "has_next": False,
         },
