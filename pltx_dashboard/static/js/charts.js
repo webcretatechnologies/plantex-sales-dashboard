@@ -155,24 +155,7 @@ function _ensureModalExportButtons(modalEl) {
 }
 
 function _ensureModalPreviewNotice(modalEl) {
-    if (!modalEl || modalEl.dataset.previewNoticeInit === '1') return;
-    var host = modalEl.querySelector('.tbl-overlay-scroll');
-    if (!host || !host.parentNode) return;
-
-    var note = document.createElement('div');
-    note.className = 'modal-preview-note';
-    note.textContent = 'Showing first 25 rows. Download CSV/Excel for full data.';
-    note.style.margin = '8px 0 10px';
-    note.style.padding = '8px 10px';
-    note.style.borderRadius = '8px';
-    note.style.fontSize = '12px';
-    note.style.fontWeight = '600';
-    note.style.color = 'var(--muted)';
-    note.style.background = 'rgba(148,163,184,0.08)';
-    note.style.border = '1px solid rgba(148,163,184,0.22)';
-
-    host.parentNode.insertBefore(note, host);
-    modalEl.dataset.previewNoticeInit = '1';
+    // DataTables provides built-in search, pagination, and sorting.
 }
 
 /** Destroy every known chart instance to prevent canvas-reuse errors */
@@ -242,6 +225,47 @@ function _renderModalPagination(modalEl, pagination) {
     container.appendChild(nextBtn);
 }
 
+function _initializeDataTable(modalEl) {
+    if (!window.jQuery || !$.fn.DataTable) return;
+    var table = modalEl.querySelector('table');
+    if (!table) return;
+
+    // Destroy existing DataTable instance if any
+    if ($.fn.DataTable.isDataTable(table)) {
+        $(table).DataTable().destroy();
+    }
+
+    // Hide the inv-health-search since DataTables has its own search
+    var invSearch = modalEl.querySelector('.inv-health-search');
+    if (invSearch) invSearch.style.display = 'none';
+
+    // Hide custom pagination controls since DataTables handles it
+    var paginationBox = modalEl.querySelector('.modal-pagination-controls');
+    if (paginationBox) paginationBox.style.display = 'none';
+
+    $(table).DataTable({
+        pageLength: 25,
+        lengthChange: true,
+        lengthMenu: [10, 25, 50, 100],
+        searching: true,
+        ordering: true,
+        info: true,
+        autoWidth: false,
+        responsive: true,
+        dom: '<"dt-top"lf>rt<"dt-bottom"ip>',
+        language: {
+            search: "",
+            searchPlaceholder: "Search records...",
+            lengthMenu: "Show _MENU_ entries",
+            info: "Showing _START_ to _END_ of _TOTAL_ entries",
+            paginate: {
+                previous: "Prev",
+                next: "Next"
+            }
+        }
+    });
+}
+
 function _loadModalRowsOnDemand(modalEl, opts) {
     if (!modalEl) return;
     opts = opts || {};
@@ -252,38 +276,42 @@ function _loadModalRowsOnDemand(modalEl, opts) {
 
     var tbody = modalEl.querySelector('tbody[data-modal-lazy="1"]');
     if (!tbody) return;
-    var currentPage = Number(modalEl.dataset.modalPage || 1);
-    var targetPage = Number(opts.page || currentPage || 1);
-    if (!force && modalEl.dataset.lazyLoaded === '1' && targetPage === currentPage) return;
+    
+    if (!force && modalEl.dataset.lazyLoaded === '1') return;
 
     var thCount = 3;
     var ths = modalEl.querySelectorAll('thead th');
     if (ths && ths.length) thCount = ths.length;
 
     modalEl.dataset.lazyLoading = '1';
+    
+    // Destroy existing DataTable before modifying innerHTML
+    if (window.jQuery && $.fn.DataTable && modalEl.querySelector('table')) {
+        var existingTable = modalEl.querySelector('table');
+        if ($.fn.DataTable.isDataTable(existingTable)) {
+            $(existingTable).DataTable().destroy();
+        }
+    }
+    
     tbody.innerHTML = '<tr><td colspan="' + thCount + '" class="empty">Loading data...</td></tr>';
 
-    var extraParams = { page: targetPage, page_size: 25 };
-    var searchInput = modalEl.querySelector('.inv-health-search');
-    if (searchInput) {
-        var q = String(searchInput.value || '').trim();
-        if (q) extraParams.q = q;
-    }
-    var url = _buildModalDataUrl(modalEl, extraParams);
+    // Load all rows; DataTables handles client-side pagination/search/sorting
+    var url = _buildModalDataUrl(modalEl);
     var cacheKey = modalEl.id + "::" + url;
     var cachedPayload = _getModalResponseFromCache(cacheKey);
-    if (cachedPayload) {
-        tbody.innerHTML = cachedPayload.html || '<tr><td colspan="' + thCount + '" class="empty">No data available.</td></tr>';
+    
+    function applyLoadedHTML(html) {
+        tbody.innerHTML = html || '<tr><td colspan="' + thCount + '" class="empty">No data available.</td></tr>';
         modalEl.dataset.lazyLoaded = '1';
-        modalEl.dataset.modalPage = String((cachedPayload.pagination && cachedPayload.pagination.page) || targetPage);
-        _renderModalPagination(modalEl, cachedPayload.pagination || null);
-        if (modalEl.classList.contains('inventory-health-modal')) {
-            modalEl.dataset.invHealthInit = '0';
-            initInventoryHealthModals();
-        }
+        _initializeDataTable(modalEl);
+    }
+    
+    if (cachedPayload) {
+        applyLoadedHTML(cachedPayload.html);
         modalEl.dataset.lazyLoading = '0';
         return;
     }
+    
     if (modalEl._modalFetchController) {
         try { modalEl._modalFetchController.abort(); } catch (e) {}
     }
@@ -299,24 +327,14 @@ function _loadModalRowsOnDemand(modalEl, opts) {
                 return resp.json();
             }
             return resp.text().then(function (html) {
-                return {
-                    html: html,
-                    pagination: { page: targetPage, total_pages: 1, has_prev: false, has_next: false }
-                };
+                return { html: html };
             });
         })
         .then(function (payload) {
-            tbody.innerHTML = payload && payload.html ? payload.html : '<tr><td colspan="' + thCount + '" class="empty">No data available.</td></tr>';
-            modalEl.dataset.lazyLoaded = '1';
-            modalEl.dataset.modalPage = String((payload && payload.pagination && payload.pagination.page) || targetPage);
-            _renderModalPagination(modalEl, payload ? payload.pagination : null);
+            applyLoadedHTML(payload && payload.html ? payload.html : null);
             _setModalResponseCache(cacheKey, payload || {});
-            if (modalEl.classList.contains('inventory-health-modal')) {
-                modalEl.dataset.invHealthInit = '0';
-                initInventoryHealthModals();
-            }
         })
-        .catch(function () {
+        .catch(function (e) {
             if (modalEl._modalFetchController && modalEl._modalFetchController.signal.aborted) {
                 return;
             }
@@ -332,7 +350,7 @@ function openModal(id) {
     if (el) {
         _ensureModalExportButtons(el);
         _ensureModalPreviewNotice(el);
-        _loadModalRowsOnDemand(el, { page: Number(el.dataset.modalPage || 1) || 1 });
+        _loadModalRowsOnDemand(el);
         el.classList.add('active');
         document.body.style.overflow = 'hidden';
     }

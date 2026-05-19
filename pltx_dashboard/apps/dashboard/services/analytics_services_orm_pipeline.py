@@ -285,11 +285,11 @@ def run_orm_computation(
     fk_prev_f = apply_global_filters_orm(fk_prev, {}) if fk_prev is not None else None
 
     # ── Master table data (used to eliminate duplicate DB hits) ──
-    table_data = generate_bi_data_orm(qs_f, fk_qs_f)
+    table_data = generate_bi_data_orm(qs_f, fk_qs_f, user=user)
     
     # ── Master prev table data for growth calculations ──
     if qs_prev_f is not None or fk_prev_f is not None:
-        table_data_prev = generate_bi_data_orm(qs_prev_f, fk_prev_f)
+        table_data_prev = generate_bi_data_orm(qs_prev_f, fk_prev_f, user=user)
     else:
         table_data_prev = []
         

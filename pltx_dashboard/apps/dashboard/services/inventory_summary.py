@@ -24,104 +24,138 @@ def _safe_doc(stock_qty, sale_qty):
 
 def _build_amazon_rows(user, only_dates=None):
     only_dates = {str(d) for d in (only_dates or []) if str(d).strip()}
-    sales_qs = SalesData.objects.filter(user=user)
-    fba_qs = FBAStockData.objects.filter(user=user)
-    flex_qs = FlexStockData.objects.filter(user=user)
-    rev_qs = ProcessedDashboardData.objects.filter(user=user)
-    meta_qs = CategoryMapping.objects.filter(user=user)
-
+    
+    inv_table = DashboardInventoryHealthSummary._meta.db_table
+    fba_table = FBAStockData._meta.db_table
+    flex_table = FlexStockData._meta.db_table
+    sales_table = ProcessedDashboardData._meta.db_table
+    cm_table = CategoryMapping._meta.db_table
+    
+    date_filter = ""
     if only_dates:
-        sales_qs = sales_qs.filter(date__in=only_dates)
-        fba_qs = fba_qs.filter(date__in=only_dates)
-        flex_qs = flex_qs.filter(date__in=only_dates)
-        rev_qs = rev_qs.filter(date__in=only_dates)
+        placeholders = ", ".join(["%s"] * len(only_dates))
+        date_filter = f" AND date IN ({placeholders})"
 
-    sales_by_key = {
-        (str(r["asin"]), r["date"]): int(r["u"] or 0)
-        for r in sales_qs.values("asin", "date").annotate(u=Sum("units"))
-    }
-    fba_by_key = {
-        (str(r["asin"]), r["date"]): int(r["q"] or 0)
-        for r in fba_qs.values("asin", "date").annotate(q=Sum("ending_warehouse_balance"))
-    }
-    flex_by_key = {
-        (str(r["asin"]), r["date"]): int(r["q"] or 0)
-        for r in flex_qs.values("asin", "date").annotate(q=Sum("qty"))
-    }
-    rev_by_key = {
-        (str(r["asin"]), r["date"]): float(r["r"] or 0)
-        for r in rev_qs.values("asin", "date").annotate(r=Sum("revenue"))
-    }
-    meta_by_sku = {
-        str(r["asin"]): (
-            str(r.get("category") or "Unknown"),
-            str(r.get("portfolio") or ""),
-            str(r.get("subcategory") or ""),
+    # The intersection of stock dates and sales dates
+    date_join_condition = "1=1"
+    
+    sql = f"""
+        INSERT INTO {inv_table} (
+            user_id, date, platform, sku, category, portfolio, subcategory,
+            status, status_class, stock_qty, fba_qty, flex_qty, sale_qty, 
+            total_sales_window, drr, doc, reason, revenue
         )
-        for r in meta_qs.values("asin", "category", "portfolio", "subcategory")
-    }
+        SELECT 
+            %s AS user_id,
+            k.date,
+            'Amazon' AS platform,
+            k.asin AS sku,
+            COALESCE(cm.category, 'Unknown') AS category,
+            COALESCE(cm.portfolio, '') AS portfolio,
+            COALESCE(cm.subcategory, '') AS subcategory,
+            
+            CASE 
+                WHEN COALESCE(fba.qty, 0) + COALESCE(flex.qty, 0) <= 0 THEN 'OOS'
+                WHEN COALESCE(sales.units, 0) <= 0 THEN 'Overstock'
+                WHEN (COALESCE(fba.qty, 0) + COALESCE(flex.qty, 0)) / COALESCE(sales.units, 0) <= 15 THEN 'Low Stock'
+                WHEN (COALESCE(fba.qty, 0) + COALESCE(flex.qty, 0)) / COALESCE(sales.units, 0) > 60 THEN 'Overstock'
+                ELSE 'In Stock'
+            END AS status,
+            
+            CASE 
+                WHEN COALESCE(fba.qty, 0) + COALESCE(flex.qty, 0) <= 0 THEN 'danger'
+                WHEN COALESCE(sales.units, 0) <= 0 THEN 'neutral'
+                WHEN (COALESCE(fba.qty, 0) + COALESCE(flex.qty, 0)) / COALESCE(sales.units, 0) <= 15 THEN 'warn'
+                WHEN (COALESCE(fba.qty, 0) + COALESCE(flex.qty, 0)) / COALESCE(sales.units, 0) > 60 THEN 'neutral'
+                ELSE 'good'
+            END AS status_class,
+            
+            COALESCE(fba.qty, 0) + COALESCE(flex.qty, 0) AS stock_qty,
+            COALESCE(fba.qty, 0) AS fba_qty,
+            COALESCE(flex.qty, 0) AS flex_qty,
+            COALESCE(sales.units, 0) AS sale_qty,
+            COALESCE(sales.units, 0) AS total_sales_window,
+            COALESCE(sales.units, 0) AS drr,
+            
+            CASE 
+                WHEN COALESCE(sales.units, 0) > 0 THEN ROUND((COALESCE(fba.qty, 0) + COALESCE(flex.qty, 0)) / COALESCE(sales.units, 0), 1)
+                WHEN COALESCE(fba.qty, 0) + COALESCE(flex.qty, 0) > 0 THEN 999.0
+                ELSE 0.0
+            END AS doc,
+            
+            CASE 
+                WHEN COALESCE(fba.qty, 0) + COALESCE(flex.qty, 0) <= 0 THEN CONCAT('Stock Qty = 0 (FBA: ', COALESCE(fba.qty, 0), ', Flex: ', COALESCE(flex.qty, 0), ')')
+                WHEN COALESCE(sales.units, 0) <= 0 THEN CONCAT('DOC = ∞ (Stock: ', COALESCE(fba.qty, 0) + COALESCE(flex.qty, 0), ', No sales)')
+                ELSE CONCAT('DOC = ', 
+                     ROUND((COALESCE(fba.qty, 0) + COALESCE(flex.qty, 0)) / COALESCE(sales.units, 0), 1),
+                     ' days (Stock: ', COALESCE(fba.qty, 0) + COALESCE(flex.qty, 0), 
+                     ' / Same-Day Sales: ', ROUND(COALESCE(sales.units, 0), 1), ')')
+            END AS reason,
+            
+            COALESCE(sales.revenue, 0) AS revenue
 
-    stock_keys = set(fba_by_key.keys()) | set(flex_by_key.keys())
-    sales_keys = set(sales_by_key.keys())
-    stock_dates = {d for _sku, d in stock_keys if d}
-    sales_dates = {d for _sku, d in sales_keys if d}
-    aligned_dates = stock_dates & sales_dates
-    keys = ({k for k in stock_keys if k[1] in aligned_dates} | {k for k in sales_keys if k[1] in aligned_dates}) if aligned_dates else set()
-
-    rows = []
-    for sku, row_date in keys:
-        sale_qty = int(sales_by_key.get((sku, row_date), 0))
-        fba_qty = int(fba_by_key.get((sku, row_date), 0))
-        flex_qty = int(flex_by_key.get((sku, row_date), 0))
-        stock_qty = fba_qty + flex_qty
-        doc = _safe_doc(stock_qty, sale_qty)
-        category, portfolio, subcategory = meta_by_sku.get(sku, ("Unknown", "", ""))
-        rev = float(rev_by_key.get((sku, row_date), 0.0) or 0.0)
-
-        if stock_qty <= 0:
-            status = "OOS"
-            status_class = "danger"
-            reason = f"Stock Qty = 0 (FBA: {fba_qty}, Flex: {flex_qty})"
-        elif sale_qty <= 0:
-            status = "Overstock"
-            status_class = "neutral"
-            reason = f"DOC = ∞ (Stock: {stock_qty}, No sales)"
-        elif doc <= 15:
-            status = "Low Stock"
-            status_class = "warn"
-            reason = f"DOC = {doc} days (Stock: {stock_qty} / Same-Day Sales: {sale_qty:.1f})"
-        elif doc > 60:
-            status = "Overstock"
-            status_class = "neutral"
-            reason = f"DOC = {doc} days (Stock: {stock_qty} / Same-Day Sales: {sale_qty:.1f})"
-        else:
-            status = "In Stock"
-            status_class = "good"
-            reason = f"DOC = {doc} days (Stock: {stock_qty} / Same-Day Sales: {sale_qty:.1f})"
-
-        rows.append(
-            DashboardInventoryHealthSummary(
-                user=user,
-                date=row_date,
-                platform="Amazon",
-                sku=sku,
-                category=category,
-                portfolio=portfolio,
-                subcategory=subcategory,
-                stock_qty=stock_qty,
-                fba_qty=fba_qty,
-                flex_qty=flex_qty,
-                sale_qty=sale_qty,
-                total_sales_window=sale_qty,
-                drr=float(sale_qty),
-                doc=float(doc),
-                revenue=round(rev, 2),
-                status=status,
-                status_class=status_class,
-                reason=reason,
-            )
+        FROM (
+            SELECT date, asin FROM {fba_table} WHERE user_id = %s {date_filter}
+            UNION
+            SELECT date, asin FROM {flex_table} WHERE user_id = %s {date_filter}
+            UNION
+            SELECT date, asin FROM {sales_table} WHERE user_id = %s {date_filter}
+        ) k
+        LEFT JOIN (
+            SELECT date, asin, SUM(ending_warehouse_balance) as qty 
+            FROM {fba_table} WHERE user_id = %s {date_filter} GROUP BY date, asin
+        ) fba ON fba.date = k.date AND fba.asin = k.asin
+        LEFT JOIN (
+            SELECT date, asin, SUM(qty) as qty 
+            FROM {flex_table} WHERE user_id = %s {date_filter} GROUP BY date, asin
+        ) flex ON flex.date = k.date AND flex.asin = k.asin
+        LEFT JOIN (
+            SELECT date, asin, SUM(units) as units, SUM(revenue) as revenue
+            FROM {sales_table} WHERE user_id = %s {date_filter} GROUP BY date, asin
+        ) sales ON sales.date = k.date AND sales.asin = k.asin
+        LEFT JOIN {cm_table} cm ON cm.user_id = %s AND cm.asin = k.asin
+        
+        -- Equivalent to aligned_dates in Python (only output where date exists in both stock and sales across the user)
+        WHERE k.date IN (
+            SELECT DISTINCT s_date FROM (
+                SELECT date AS s_date FROM {fba_table} WHERE user_id = %s {date_filter}
+                UNION 
+                SELECT date AS s_date FROM {flex_table} WHERE user_id = %s {date_filter}
+            ) stock_d
         )
-    return rows
+        AND k.date IN (
+            SELECT DISTINCT date FROM {sales_table} WHERE user_id = %s {date_filter}
+        )
+    """
+
+    params = [user.id]
+    # UNION keys
+    for _ in range(3):
+        params.append(user.id)
+        if only_dates: params.extend(list(only_dates))
+    # JOIN aggregations
+    for _ in range(3):
+        params.append(user.id)
+        if only_dates: params.extend(list(only_dates))
+    # CM join
+    params.append(user.id)
+    # WHERE stock date exists
+    for _ in range(2):
+        params.append(user.id)
+        if only_dates: params.extend(list(only_dates))
+    # WHERE sales date exists
+    params.append(user.id)
+    if only_dates: params.extend(list(only_dates))
+
+    from django.db import connection
+    with connection.cursor() as cursor:
+        cursor.execute(sql, params)
+        rows_written = max(cursor.rowcount, 0)
+        
+    # Return empty list because the caller handles the return differently now if it's raw SQL
+    # Wait, the caller is `refresh_dashboard_inventory_summary_task`, it expects a list to bulk_create.
+    # Since we already wrote to DB, we can just return an empty list, so bulk_create does nothing.
+    return []
 
 
 def _build_flipkart_rows(user, only_dates=None):

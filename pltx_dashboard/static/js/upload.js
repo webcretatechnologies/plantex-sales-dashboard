@@ -1,4 +1,12 @@
-// Get CSRF token from cookie (Django sets this automatically)
+// =============================================================================
+// Two-Phase Upload Flow
+// Phase 1: Files upload to tmp/ with per-file progress bars (button disabled)
+// Phase 2: User clicks "Process" → files move from tmp/ to uploads/ → Celery
+// =============================================================================
+
+// ---------------------------------------------------------------------------
+// CSRF Helper
+// ---------------------------------------------------------------------------
 function getCookie(name) {
     let v = null;
     document.cookie.split(';').forEach(c => {
@@ -8,10 +16,22 @@ function getCookie(name) {
     return v;
 }
 
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
 let uploadFlowPlatform = null;
 let uploadFlowStarted = false;
 let uploadFlowCompleted = false;
+let isProcessingBatch = false;
 
+// Staged files registry: { uniqueId: { staged_path, file_type, date_str, original_name, inputId } }
+const stagedFiles = new Map();
+// Track files currently uploading (to disable button)
+let activeUploads = 0;
+
+// ---------------------------------------------------------------------------
+// WebSocket / Global Progress Integration
+// ---------------------------------------------------------------------------
 function syncInlineUploadStatusFromState(state) {
     const statusEl = document.getElementById('statusMsg');
     if (!statusEl) return;
@@ -36,17 +56,16 @@ function handleGlobalUploadProgressEvent(event) {
         statusEl.textContent = "✅ All files processed successfully!";
         if (uploadFlowStarted && uploadFlowPlatform) {
             if (uploadFlowPlatform === 'amazon') {
-                uploadFlowCompleted = true;
                 setTimeout(() => { window.location.href = '/dashboard/business/'; }, 500);
             } else if (uploadFlowPlatform === 'flipkart') {
-                uploadFlowCompleted = true;
                 setTimeout(() => { window.location.href = '/dashboard/business/?platform=Flipkart'; }, 500);
             }
         }
     } else if (status === "error") {
         uploadFlowCompleted = true;
-        const btn = document.getElementById('loadBtn');
-        if (btn) btn.disabled = false;
+        isProcessingBatch = false;
+        setUploadControlsDisabled(false);
+        updateProcessButton();
     }
 }
 
@@ -59,18 +78,16 @@ function getSelectedPlatform() {
 
 document.querySelectorAll('input[name="platform"]').forEach(radio => {
     radio.addEventListener('change', () => {
-        let platform = getSelectedPlatform();
+        const platform = getSelectedPlatform();
         document.getElementById('amazonSection').classList.toggle('active', platform === 'amazon');
         document.getElementById('flipkartSection').classList.toggle('active', platform === 'flipkart');
-
-        // Reset file inputs and lists when switching
         clearAllFiles();
-        document.getElementById('loadBtn').disabled = true;
+        updateProcessButton();
     });
 });
 
 // ---------------------------------------------------------------------------
-// File input IDs and list IDs — grouped by platform
+// File input IDs and list IDs
 // ---------------------------------------------------------------------------
 const AMAZON_IDS = ['csvInput', 'catFile', 'spendFile', 'priceFile', 'fbaStockFile', 'flexStockFile'];
 const AMAZON_LISTS = ['fileList', 'catFileList', 'spendFileList', 'priceFileList', 'fbaStockFileList', 'flexStockFileList'];
@@ -83,6 +100,38 @@ const FK_LISTS = [
     'fkSearchTrafficFileList', 'fkCategoryFileList', 'fkPriceFileList',
     'fkPlaNewFileList', 'fkFbaStockFileList', 'fkInventoryFileList'
 ];
+
+// Map input IDs to file_type values for the API
+const INPUT_TO_FILE_TYPE = {
+    csvInput: 'sales',
+    catFile: 'category',
+    spendFile: 'spend',
+    priceFile: 'price',
+    fbaStockFile: 'fba_stock',
+    flexStockFile: 'flex_stock',
+    fkSearchTrafficFile: 'fk_search_traffic',
+    fkCategoryFile: 'fk_category',
+    fkPriceFile: 'fk_price',
+    fkPlaNewFile: 'fk_pla',
+    fkFbaStockFile: 'fk_fba_stock',
+    fkInventoryFile: 'fk_inventory',
+};
+
+// Map input IDs to their file list container IDs
+const INPUT_TO_LIST = {
+    csvInput: 'fileList',
+    catFile: 'catFileList',
+    spendFile: 'spendFileList',
+    priceFile: 'priceFileList',
+    fbaStockFile: 'fbaStockFileList',
+    flexStockFile: 'flexStockFileList',
+    fkSearchTrafficFile: 'fkSearchTrafficFileList',
+    fkCategoryFile: 'fkCategoryFileList',
+    fkPriceFile: 'fkPriceFileList',
+    fkPlaNewFile: 'fkPlaNewFileList',
+    fkFbaStockFile: 'fkFbaStockFileList',
+    fkInventoryFile: 'fkInventoryFileList',
+};
 
 const DEMO_TEMPLATE_MAP = {
     csvInput: 'upload_sales',
@@ -99,6 +148,387 @@ const DEMO_TEMPLATE_MAP = {
     fkInventoryFile: 'fk_inventory',
 };
 
+// ---------------------------------------------------------------------------
+// Utility Helpers
+// ---------------------------------------------------------------------------
+function formatFileSize(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / 1048576).toFixed(1) + ' MB';
+}
+
+function generateUniqueId() {
+    return `file_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function generateBatchId() {
+    if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+        return window.crypto.randomUUID().replace(/-/g, '');
+    }
+    return `batch_${Date.now()}_${Math.random().toString(16).slice(2, 10)}`;
+}
+
+// ---------------------------------------------------------------------------
+// Clear All
+// ---------------------------------------------------------------------------
+function clearAllFiles() {
+    AMAZON_IDS.forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+    AMAZON_LISTS.forEach(id => { const el = document.getElementById(id); if (el) el.innerHTML = ''; });
+    FK_IDS.forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+    FK_LISTS.forEach(id => { const el = document.getElementById(id); if (el) el.innerHTML = ''; });
+    stagedFiles.clear();
+    activeUploads = 0;
+    isProcessingBatch = false;
+    setUploadControlsDisabled(false);
+    updateProcessButton();
+}
+
+// ---------------------------------------------------------------------------
+// Process Button State
+// ---------------------------------------------------------------------------
+function updateProcessButton() {
+    const btn = document.getElementById('loadBtn');
+    const badge = document.getElementById('stagedCountBadge');
+    if (!btn) return;
+
+    const stagedCount = stagedFiles.size;
+    const isUploading = activeUploads > 0 || isProcessingBatch;
+
+    // Disable during uploads OR if no staged files
+    btn.disabled = isUploading || stagedCount === 0;
+
+    if (badge) {
+        if (stagedCount > 0) {
+            badge.textContent = `${stagedCount} file${stagedCount > 1 ? 's' : ''} ready`;
+            badge.style.display = 'inline-block';
+        } else {
+            badge.style.display = 'none';
+        }
+    }
+}
+
+function setUploadControlsDisabled(disabled) {
+    Object.keys(INPUT_TO_LIST).forEach((inputId) => {
+        const inputEl = document.getElementById(inputId);
+        if (inputEl) inputEl.disabled = !!disabled;
+    });
+    document.querySelectorAll('input[name="platform"]').forEach((radio) => {
+        radio.disabled = !!disabled;
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Create File Item UI Element
+// ---------------------------------------------------------------------------
+function createFileItemElement(file, uniqueId) {
+    const div = document.createElement('div');
+    div.className = 'file-item';
+    div.id = `file-item-${uniqueId}`;
+    div.innerHTML = `
+        <span class="material-icons-round file-icon">description</span>
+        <div class="file-info">
+            <div class="file-name">${file.name}</div>
+            <div class="file-size">${formatFileSize(file.size)}</div>
+            <div class="file-progress-bar">
+                <div class="file-progress-fill" id="progress-${uniqueId}"></div>
+            </div>
+        </div>
+        <span class="material-icons-round file-status-icon" id="status-icon-${uniqueId}" style="display:none;"></span>
+        <button class="file-remove-btn" id="remove-${uniqueId}" title="Remove file" style="display:none;">
+            <span class="material-icons-round">close</span>
+        </button>
+    `;
+    return div;
+}
+
+function updateFileItemStatus(uniqueId, status, errorMsg) {
+    const item = document.getElementById(`file-item-${uniqueId}`);
+    const progressFill = document.getElementById(`progress-${uniqueId}`);
+    const statusIcon = document.getElementById(`status-icon-${uniqueId}`);
+    const removeBtn = document.getElementById(`remove-${uniqueId}`);
+    if (!item) return;
+
+    item.className = `file-item ${status}`;
+
+    if (status === 'uploading') {
+        if (statusIcon) { statusIcon.style.display = 'none'; }
+        if (removeBtn) { removeBtn.style.display = 'none'; }
+    } else if (status === 'staged') {
+        if (progressFill) { progressFill.style.width = '100%'; }
+        if (statusIcon) {
+            statusIcon.textContent = 'check_circle';
+            statusIcon.style.color = '#22c55e';
+            statusIcon.style.display = 'inline';
+        }
+        if (removeBtn) {
+            removeBtn.style.display = 'inline-flex';
+            removeBtn.onclick = () => removeStagedFile(uniqueId);
+        }
+    } else if (status === 'error') {
+        if (progressFill) {
+            progressFill.style.width = '100%';
+            progressFill.style.background = '#ef4444';
+        }
+        if (statusIcon) {
+            statusIcon.textContent = 'error';
+            statusIcon.style.color = '#ef4444';
+            statusIcon.style.display = 'inline';
+        }
+        if (removeBtn) {
+            removeBtn.style.display = 'inline-flex';
+            removeBtn.onclick = () => {
+                item.remove();
+            };
+        }
+        // Show error tooltip
+        const fileInfo = item.querySelector('.file-info');
+        if (fileInfo && errorMsg) {
+            const errEl = document.createElement('div');
+            errEl.style.cssText = 'font-size:11px;color:#ef4444;margin-top:4px;';
+            errEl.textContent = errorMsg;
+            fileInfo.appendChild(errEl);
+        }
+    }
+}
+
+async function removeStagedFile(uniqueId) {
+    const fileInfo = stagedFiles.get(uniqueId);
+    stagedFiles.delete(uniqueId);
+    const item = document.getElementById(`file-item-${uniqueId}`);
+    if (item) item.remove();
+    updateProcessButton();
+
+    if (!fileInfo || !fileInfo.staged_path) return;
+    try {
+        const form = new FormData();
+        form.append('staged_path', fileInfo.staged_path);
+        await fetch('/api/upload/stage/delete/', {
+            method: 'POST',
+            body: form,
+            headers: { 'X-CSRFToken': getCookie('csrftoken') },
+            credentials: 'same-origin',
+        });
+    } catch (err) {
+        console.warn('Failed to delete staged file from tmp:', err);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 1: Upload file to tmp/ with XHR progress
+// ---------------------------------------------------------------------------
+function stageFileUpload(file, inputId) {
+    const uniqueId = generateUniqueId();
+    const listId = INPUT_TO_LIST[inputId];
+    const fileType = INPUT_TO_FILE_TYPE[inputId];
+    const listEl = document.getElementById(listId);
+    if (!listEl) return;
+
+    // Create the file item UI
+    const fileItem = createFileItemElement(file, uniqueId);
+    listEl.appendChild(fileItem);
+
+    // Start uploading
+    updateFileItemStatus(uniqueId, 'uploading');
+    activeUploads++;
+    updateProcessButton();
+
+    const form = new FormData();
+    form.append('file', file);
+    form.append('file_type', fileType);
+
+    // For sales files, extract date from filename
+    if (fileType === 'sales') {
+        const dateStr = file.name.replace(/\.(csv|xlsx|xls|xlsm)$/i, '').substring(0, 10);
+        form.append('date', dateStr);
+    }
+
+    const xhr = new XMLHttpRequest();
+
+    // Progress handler
+    xhr.upload.addEventListener('progress', (e) => {
+        if (e.lengthComputable) {
+            const pct = Math.round((e.loaded / e.total) * 100);
+            const progressFill = document.getElementById(`progress-${uniqueId}`);
+            if (progressFill) {
+                progressFill.style.width = `${pct}%`;
+            }
+        }
+    });
+
+    // Load handler (upload complete, waiting for server response)
+    xhr.addEventListener('load', () => {
+        activeUploads--;
+        try {
+            const resp = JSON.parse(xhr.responseText);
+            if (xhr.status >= 200 && xhr.status < 300 && resp.staged_path) {
+                // Success — file staged in tmp/
+                stagedFiles.set(uniqueId, {
+                    staged_path: resp.staged_path,
+                    file_type: fileType,
+                    date_str: resp.date_str || '',
+                    original_name: resp.original_name || file.name,
+                    inputId: inputId,
+                });
+                updateFileItemStatus(uniqueId, 'staged');
+            } else {
+                updateFileItemStatus(uniqueId, 'error', resp.error || 'Upload failed');
+            }
+        } catch (e) {
+            updateFileItemStatus(uniqueId, 'error', 'Server error');
+        }
+        updateProcessButton();
+    });
+
+    // Error handler
+    xhr.addEventListener('error', () => {
+        activeUploads--;
+        updateFileItemStatus(uniqueId, 'error', 'Network error');
+        updateProcessButton();
+    });
+
+    // Abort handler
+    xhr.addEventListener('abort', () => {
+        activeUploads--;
+        updateFileItemStatus(uniqueId, 'error', 'Upload cancelled');
+        updateProcessButton();
+    });
+
+    xhr.open('POST', '/api/upload/stage/');
+    xhr.setRequestHeader('X-CSRFToken', getCookie('csrftoken'));
+    xhr.withCredentials = true;
+    xhr.send(form);
+}
+
+// ---------------------------------------------------------------------------
+// File Input Change Handlers — trigger Phase 1 upload immediately
+// ---------------------------------------------------------------------------
+Object.entries(INPUT_TO_LIST).forEach(([inputId, listId]) => {
+    const el = document.getElementById(inputId);
+    if (!el) return;
+    el.addEventListener('change', (e) => {
+        const files = Array.from(e.target.files);
+        files.forEach(file => {
+            stageFileUpload(file, inputId);
+        });
+        // Reset the input so the same file can be re-selected
+        e.target.value = '';
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 2: Process staged files (move from tmp/ to uploads/ + Celery)
+// ---------------------------------------------------------------------------
+async function processAndUpload() {
+    const btn = document.getElementById('loadBtn');
+    const status = document.getElementById('statusMsg');
+    const platform = getSelectedPlatform();
+    uploadFlowPlatform = platform;
+    uploadFlowStarted = true;
+    uploadFlowCompleted = false;
+
+    if (stagedFiles.size === 0) {
+        alert('No files staged for processing. Please upload files first.');
+        return;
+    }
+    if (activeUploads > 0) {
+        alert('Please wait until all files finish uploading to tmp.');
+        return;
+    }
+
+    isProcessingBatch = true;
+    setUploadControlsDisabled(true);
+    updateProcessButton();
+    status.textContent = '⏳ Processing files...';
+
+    if (typeof window.setGlobalUploadProgress === "function") {
+        window.setGlobalUploadProgress({
+            status: "processing",
+            message: "Files are being processed.",
+            active: true,
+        });
+    }
+
+    try {
+        const totalFiles = stagedFiles.size;
+        const batchId = generateBatchId();
+        const payload = {
+            batch_id: batchId,
+            staged_files: Array.from(stagedFiles.values()).map((fileInfo) => ({
+                staged_path: fileInfo.staged_path,
+                file_type: fileInfo.file_type,
+                original_name: fileInfo.original_name,
+                date_str: fileInfo.date_str || '',
+            })),
+        };
+
+        status.textContent = `⏳ Queuing ${totalFiles} file(s) for background processing...`;
+        const resp = await fetch('/api/upload/process-batch/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken'),
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify(payload),
+        });
+
+        const respData = await resp.json();
+
+        if (!resp.ok) {
+            status.textContent = `❌ Processing failed: ${respData.error || 'Unknown error'}`;
+            if (typeof window.setGlobalUploadProgress === "function") {
+                window.setGlobalUploadProgress({
+                    status: "error",
+                    message: `Processing failed: ${respData.error || 'Unknown error'}`,
+                    active: false,
+                    visible_until: Date.now() + 12000,
+                });
+            }
+            isProcessingBatch = false;
+            setUploadControlsDisabled(false);
+            updateProcessButton();
+            return;
+        }
+
+        // All files sent to processing
+        stagedFiles.clear();
+        isProcessingBatch = false;
+        setUploadControlsDisabled(false);
+        updateProcessButton();
+        if (respData.failed_count > 0) {
+            status.textContent = `⚠️ ${respData.queued_count} queued, ${respData.failed_count} failed. Check Upload Log Notes.`;
+        } else {
+            status.textContent = "✅ All files queued. Dashboard update continues in background.";
+        }
+
+        if (typeof window.setGlobalUploadProgress === "function") {
+            window.setGlobalUploadProgress({
+                status: "processing",
+                message: "All files uploaded. Processing and dashboard update continue in background.",
+                active: true,
+            });
+        }
+
+    } catch (err) {
+        uploadFlowCompleted = true;
+        isProcessingBatch = false;
+        setUploadControlsDisabled(false);
+        status.textContent = "❌ " + err.message;
+        if (typeof window.setGlobalUploadProgress === "function") {
+            window.setGlobalUploadProgress({
+                status: "error",
+                message: err.message || "Processing failed.",
+                active: false,
+                visible_until: Date.now() + 12000,
+            });
+        }
+        updateProcessButton();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Demo Template Buttons
+// ---------------------------------------------------------------------------
 function initDemoTemplateButtons() {
     Object.entries(DEMO_TEMPLATE_MAP).forEach(([inputId, templateKey]) => {
         const input = document.getElementById(inputId);
@@ -124,235 +554,13 @@ function initDemoTemplateButtons() {
     });
 }
 
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initDemoTemplateButtons);
-} else {
-    initDemoTemplateButtons();
-}
-
-function clearAllFiles() {
-    // Amazon inputs
-    AMAZON_IDS.forEach(id => { let el = document.getElementById(id); if (el) el.value = ''; });
-    AMAZON_LISTS.forEach(id => { let el = document.getElementById(id); if (el) el.innerHTML = ''; });
-    // Flipkart inputs
-    FK_IDS.forEach(id => { let el = document.getElementById(id); if (el) el.value = ''; });
-    FK_LISTS.forEach(id => { let el = document.getElementById(id); if (el) el.innerHTML = ''; });
-}
-
 // ---------------------------------------------------------------------------
-// Enable/disable Process button based on whether any file is selected
+// Init
 // ---------------------------------------------------------------------------
-function updateProcessButton() {
-    let platform = getSelectedPlatform();
-    let hasFiles = false;
-
-    if (platform === 'amazon') {
-        AMAZON_IDS.forEach(id => {
-            let el = document.getElementById(id);
-            if (el && el.files.length > 0) hasFiles = true;
-        });
-    } else {
-        FK_IDS.forEach(id => {
-            let el = document.getElementById(id);
-            if (el && el.files.length > 0) hasFiles = true;
-        });
-    }
-
-    document.getElementById('loadBtn').disabled = !hasFiles;
-}
-
-// ---------------------------------------------------------------------------
-// File input → render file pills + enable button
-// ---------------------------------------------------------------------------
-[
-    { id: 'csvInput', listId: 'fileList' },
-    { id: 'catFile', listId: 'catFileList' },
-    { id: 'spendFile', listId: 'spendFileList' },
-    { id: 'priceFile', listId: 'priceFileList' },
-    // Flipkart
-    { id: 'fkSearchTrafficFile', listId: 'fkSearchTrafficFileList' },
-    { id: 'fkCategoryFile', listId: 'fkCategoryFileList' },
-    { id: 'fkPriceFile', listId: 'fkPriceFileList' },
-    { id: 'fkPlaNewFile', listId: 'fkPlaNewFileList' },
-    { id: 'fkFbaStockFile', listId: 'fkFbaStockFileList' },
-    { id: 'fkInventoryFile', listId: 'fkInventoryFileList' },
-    // Amazon stock files
-    { id: 'fbaStockFile', listId: 'fbaStockFileList' },
-    { id: 'flexStockFile', listId: 'flexStockFileList' },
-].forEach(cfg => {
-    let el = document.getElementById(cfg.id);
-    if (!el) return;
-    el.addEventListener('change', (e) => {
-        let listEl = document.getElementById(cfg.listId);
-        listEl.innerHTML = Array.from(e.target.files)
-            .map(f => `<span class="file-pill">${f.name}</span>`)
-            .join('');
-        updateProcessButton();
-    });
-});
-
-function generateBatchId() {
-    if (window.crypto && typeof window.crypto.randomUUID === 'function') {
-        return window.crypto.randomUUID().replace(/-/g, '');
-    }
-    return `batch_${Date.now()}_${Math.random().toString(16).slice(2, 10)}`;
-}
-
-async function loadDashboard() {
-    let btn = document.getElementById('loadBtn');
-    let status = document.getElementById('statusMsg');
-    let platform = getSelectedPlatform();
-    uploadFlowPlatform = platform;
-    uploadFlowStarted = true;
-    uploadFlowCompleted = false;
-
-    btn.disabled = true;
-
-    try {
-        status.textContent = '⏳ Queuing files...';
-        if (typeof window.setGlobalUploadProgress === "function") {
-            window.setGlobalUploadProgress({
-                status: "processing",
-                message: "Files are queued for upload.",
-                active: true,
-            });
-        }
-
-        // Collect all file-type pairs based on platform
-        let fileQueue = [];
-
-        if (platform === 'amazon') {
-            let csvFiles = document.getElementById('csvInput').files;
-            let catFiles = document.getElementById('catFile').files;
-            let spendFiles = document.getElementById('spendFile').files;
-            let priceFiles = document.getElementById('priceFile').files;
-
-            for (let i = 0; i < csvFiles.length; i++) fileQueue.push({ file: csvFiles[i], type: 'sales' });
-            for (let i = 0; i < catFiles.length; i++) fileQueue.push({ file: catFiles[i], type: 'category' });
-            for (let i = 0; i < spendFiles.length; i++) fileQueue.push({ file: spendFiles[i], type: 'spend' });
-            for (let i = 0; i < priceFiles.length; i++) fileQueue.push({ file: priceFiles[i], type: 'price' });
-
-            let fbaStockFiles = document.getElementById('fbaStockFile').files;
-            let flexStockFiles = document.getElementById('flexStockFile').files;
-            for (let i = 0; i < fbaStockFiles.length; i++) fileQueue.push({ file: fbaStockFiles[i], type: 'fba_stock' });
-            for (let i = 0; i < flexStockFiles.length; i++) fileQueue.push({ file: flexStockFiles[i], type: 'flex_stock' });
-
-            if (fileQueue.length === 0) {
-                uploadFlowStarted = false;
-                alert("Please upload at least one Amazon file.");
-                btn.disabled = false;
-                return;
-            }
-
-        } else {
-            // Flipkart file types mapped to slim pipeline
-            const fkFileMap = [
-                { inputId: 'fkSearchTrafficFile', type: 'fk_search_traffic' },
-                { inputId: 'fkCategoryFile', type: 'fk_category' },
-                { inputId: 'fkPriceFile', type: 'fk_price' },
-                { inputId: 'fkPlaNewFile', type: 'fk_pla' },
-                { inputId: 'fkFbaStockFile', type: 'fk_fba_stock' },
-                { inputId: 'fkInventoryFile', type: 'fk_inventory' },
-            ];
-
-            const missingFlipkartInputs = fkFileMap.filter(m => {
-                const el = document.getElementById(m.inputId);
-                return !el || !el.files || el.files.length === 0;
-            });
-            if (missingFlipkartInputs.length > 0) {
-                uploadFlowStarted = false;
-                alert("Please upload all Flipkart required files: Search Traffic, Category, PLA, Price, FK FBA Stock, and FK Inventory.");
-                btn.disabled = false;
-                return;
-            }
-
-            fkFileMap.forEach(m => {
-                let el = document.getElementById(m.inputId);
-                if (el) {
-                    for (let i = 0; i < el.files.length; i++) {
-                        fileQueue.push({ file: el.files[i], type: m.type });
-                    }
-                }
-            });
-        }
-
-        let totalFiles = fileQueue.length;
-        let batchId = generateBatchId();
-
-        for (let idx = 0; idx < fileQueue.length; idx++) {
-            let item = fileQueue[idx];
-
-            status.textContent = `⏳ Uploading ${item.file.name} (${idx + 1}/${totalFiles})...`;
-            if (typeof window.setGlobalUploadProgress === "function") {
-                window.setGlobalUploadProgress({
-                    status: "processing",
-                    message: `Uploading ${item.file.name} (${idx + 1}/${totalFiles})...`,
-                    active: true,
-                });
-            }
-
-            let form = new FormData();
-            form.append("file", item.file);
-            form.append("file_type", item.type);
-            form.append("batch_id", batchId);
-            form.append("batch_total", String(totalFiles));
-
-            // For Amazon sales, extract date from filename
-            if (item.type === 'sales') {
-                let filename = item.file.name;
-                let dateStr = filename.replace(/\.(csv|xlsx|xls|xlsm)$/i, '').substring(0, 10);
-                form.append("date", dateStr);
-            }
-
-            let resp = await fetch("/api/upload/", {
-                method: "POST",
-                body: form,
-                headers: { "X-CSRFToken": getCookie("csrftoken") },
-                credentials: "same-origin"
-            });
-
-            let respData = await resp.json();
-
-            if (!resp.ok) {
-                status.textContent = `❌ Upload failed: ${respData.error || 'Unknown error'}`;
-                if (typeof window.setGlobalUploadProgress === "function") {
-                    window.setGlobalUploadProgress({
-                        status: "error",
-                        message: `Upload failed: ${respData.error || 'Unknown error'}`,
-                        active: false,
-                        visible_until: Date.now() + 12000,
-                    });
-                }
-                btn.disabled = false;
-                return;
-            }
-        }
-
-        status.textContent = "✅ All files uploaded. Processing continues in background. You can navigate safely.";
-        if (typeof window.setGlobalUploadProgress === "function") {
-            window.setGlobalUploadProgress({
-                status: "processing",
-                message: "All files uploaded. Processing and dashboard update continue in background.",
-                active: true,
-            });
-        }
-
-    } catch (err) {
-        uploadFlowCompleted = true;
-        status.textContent = "❌ " + err.message;
-        if (typeof window.setGlobalUploadProgress === "function") {
-            window.setGlobalUploadProgress({
-                status: "error",
-                message: err.message || "Upload failed.",
-                active: false,
-                visible_until: Date.now() + 12000,
-            });
-        }
-        btn.disabled = false;
-    }
-}
-
 document.addEventListener('DOMContentLoaded', function () {
+    initDemoTemplateButtons();
+    updateProcessButton();
+
     if (typeof window.readUploadProgressState === "function") {
         syncInlineUploadStatusFromState(window.readUploadProgressState());
     }
