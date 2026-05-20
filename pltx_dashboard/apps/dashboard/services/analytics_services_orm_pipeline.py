@@ -542,40 +542,39 @@ def _distinct_value_count(qs, field_name, extra_filter=None):
 
 
 def _compute_sku_activity_combined(qs, sku_field):
-    """Single GROUP BY replacing both _active_and_selling_counts and _compute_zero_selling_metrics.
-
-    Returns (active, selling, zero_selling_count, zero_sales_pageviews).
-    Saves one full-table COUNT DISTINCT query per platform call.
-    """
-    if qs is None:
-        return 0, 0, 0, 0
-
-    active = selling = zero_selling_count = zero_sales_pv = 0
-    for row in (
+    rows = (
         qs.exclude(**{f"{sku_field}__isnull": True})
         .exclude(**{sku_field: ""})
+        .filter(Q(pageviews__gt=0) | Q(revenue__gt=0) | Q(orders__gt=0))
         .values(sku_field)
         .annotate(
-            total_units=Sum("units"),
+            has_units=Sum(Case(When(units__gt=0, then=Value(1)), default=Value(0))),
             total_pv=Sum("pageviews"),
-            total_rev=Sum("revenue"),
-            total_orders=Sum("orders"),
         )
         .iterator(chunk_size=2000)
-    ):
-        active += 1
-        has_units = (row.get("total_units") or 0) > 0
-        has_activity = (
-            (row.get("total_pv") or 0) > 0
-            or (row.get("total_rev") or 0) > 0
-            or (row.get("total_orders") or 0) > 0
+    )
+    zero_selling_sku_count = 0
+    zero_sales_pageviews = 0
+    for row in rows:
+        if not row["has_units"]:
+            zero_selling_sku_count += 1
+            zero_sales_pageviews += int(row["total_pv"] or 0)
+    return zero_selling_sku_count, zero_sales_pageviews
+
+
+def _active_and_selling_counts(qs, sku_field):
+    """Return (active_count, selling_count) in a single aggregate query."""
+    if qs is None:
+        return 0, 0
+    result = (
+        qs.exclude(**{f"{sku_field}__isnull": True})
+        .exclude(**{sku_field: ""})
+        .aggregate(
+            active=Count(sku_field, distinct=True),
+            selling=Count(sku_field, distinct=True, filter=Q(units__gt=0)),
         )
-        if has_units:
-            selling += 1
-        elif has_activity:
-            zero_selling_count += 1
-            zero_sales_pv += int(row.get("total_pv") or 0)
-    return active, selling, zero_selling_count, zero_sales_pv
+    )
+    return int(result["active"] or 0), int(result["selling"] or 0)
 
 
 def _get_fsn_meta_cached(user):
@@ -617,10 +616,13 @@ def _get_asin_meta_cached(user):
 
 
 def _compute_activity_metrics(qs_f, fk_qs_f, filters, user, fsn_meta=None):
-    az_active, az_selling, az_zero_sku_count, az_zero_pageviews = _compute_sku_activity_combined(qs_f, "asin")
-    fk_active, fk_selling, fk_zero_sku_count, fk_zero_pageviews = _compute_sku_activity_combined(fk_qs_f, "fsn")
+    az_active, az_selling = _active_and_selling_counts(qs_f, "asin")
+    fk_active, fk_selling = _active_and_selling_counts(fk_qs_f, "fsn")
     active_sku_count = az_active + fk_active
     selling_sku_count = az_selling + fk_selling
+
+    az_zero_sku_count, az_zero_pageviews = _compute_zero_selling_metrics(qs_f, "asin")
+    fk_zero_sku_count, fk_zero_pageviews = _compute_zero_selling_metrics(fk_qs_f, "fsn")
 
     status_counts = {"Continued": 0, "Discontinued": 0}
     status_revenue = {"Continued": 0.0, "Discontinued": 0.0}

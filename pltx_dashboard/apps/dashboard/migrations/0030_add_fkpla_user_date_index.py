@@ -3,6 +3,47 @@
 from django.db import migrations, models
 
 
+def add_index_if_not_exists(apps, schema_editor):
+    """Add index only if it doesn't already exist."""
+    db_table = 'dashboard_flipkartpla'
+    index_name = 'idx_fkpla_u_date'
+    
+    with schema_editor.connection.cursor() as cursor:
+        # Check if index already exists
+        cursor.execute(f"""
+            SELECT 1 FROM information_schema.STATISTICS 
+            WHERE TABLE_SCHEMA = DATABASE() 
+            AND TABLE_NAME = %s 
+            AND INDEX_NAME = %s
+        """, [db_table, index_name])
+        
+        if not cursor.fetchone():
+            # Index doesn't exist, create it
+            cursor.execute(f"""
+                ALTER TABLE {db_table} 
+                ADD INDEX {index_name} (user_id, date)
+            """)
+
+
+def reverse_index(apps, schema_editor):
+    """Remove the index if it exists."""
+    db_table = 'dashboard_flipkartpla'
+    index_name = 'idx_fkpla_u_date'
+    
+    with schema_editor.connection.cursor() as cursor:
+        # Check if index exists before dropping
+        cursor.execute(f"""
+            SELECT 1 FROM information_schema.STATISTICS 
+            WHERE TABLE_SCHEMA = DATABASE() 
+            AND TABLE_NAME = %s 
+            AND INDEX_NAME = %s
+        """, [db_table, index_name])
+        
+        if cursor.fetchone():
+            # Index exists, drop it
+            cursor.execute(f"ALTER TABLE {db_table} DROP INDEX {index_name}")
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -11,8 +52,5 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AddIndex(
-            model_name='flipkartpla',
-            index=models.Index(fields=['user', 'date'], name='idx_fkpla_u_date'),
-        ),
+        migrations.RunPython(add_index_if_not_exists, reverse_index),
     ]
