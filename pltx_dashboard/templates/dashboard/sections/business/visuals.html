@@ -116,31 +116,14 @@
                             <th class="num">Growth</th>
                         </tr>
                     </thead>
-                    <tbody>
-                        {% for prod in payload.cat_top_products|slice:":5" %}
-                        <tr>
-                            <td>
-                                <div class="ceo-sku-cell">
-                                    <div class="ceo-sku-thumb">📦</div>
-                                    <span>{{ prod.sku }}</span>
-                                </div>
-                            </td>
-                            <td class="num">{{ prod.revenue|fmt_rupee }}</td>
-                            <td class="num {% if prod.growth >= 0 %}growth-up{% else %}growth-down{% endif %}">
-                                {% if prod.growth >= 0 %}▲{% else %}▼{% endif %} {{ prod.growth|abs_val }}%
-                            </td>
-                        </tr>
-                        {% empty %}
-                        <tr>
-                            <td colspan="3" class="empty">No data available</td>
-                        </tr>
-                        {% endfor %}
+                    <tbody
+                        hx-get="{% url 'dashboard-product-card-rows' 'business' 'top-products' %}?{{ request.GET.urlencode }}"
+                        hx-trigger="load"
+                        hx-swap="innerHTML">
+                        <tr><td colspan="3">Loading products...</td></tr>
                     </tbody>
                 </table>
             </div>
-            {% if payload.cat_top_products|length > 5 %}
-            <div class="biz-more-link">+ {{ payload.cat_top_products|length|add:"-5" }} more products</div>
-            {% endif %}
         </div>
     </div>
 
@@ -160,23 +143,11 @@
                         <th class="num">Impact (₹)</th>
                     </tr>
                 </thead>
-                <tbody>
-                    {% for prod in payload.cat_under_products %}
-                    <tr>
-                        <td>
-                            <div class="ceo-sku-cell">
-                                <div class="ceo-sku-thumb">📦</div>
-                                <span>{{ prod.sku }}</span>
-                            </div>
-                        </td>
-                        <td class="num growth-down">▼ {{ prod.drop_pct|abs_val }}%</td>
-                        <td class="num" style="color:var(--danger);">-{{ prod.impact|fmt_rupee }}</td>
-                    </tr>
-                    {% empty %}
-                    <tr>
-                        <td colspan="3" class="empty">No data available</td>
-                    </tr>
-                    {% endfor %}
+                <tbody
+                    hx-get="{% url 'dashboard-product-card-rows' 'business' 'declining-products' %}?{{ request.GET.urlencode }}"
+                    hx-trigger="load"
+                    hx-swap="innerHTML">
+                    <tr><td colspan="3">Loading products...</td></tr>
                 </tbody>
             </table>
         </div>

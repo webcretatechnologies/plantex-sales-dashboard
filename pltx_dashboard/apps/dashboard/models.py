@@ -164,6 +164,14 @@ class ProcessedDashboardData(models.Model):
             models.Index(fields=["user", "category", "asin"], name="idx_pdd_u_cat_asn"),
             models.Index(fields=["user", "portfolio", "asin"], name="idx_pdd_u_prt_asn"),
             models.Index(fields=["user", "subcategory", "asin"], name="idx_pdd_u_sub_asn"),
+            models.Index(
+                fields=["user", "date", "asin", "revenue", "units"],
+                name="idx_pdd_u_d_a_r_u",
+            ),
+            models.Index(
+                fields=["user", "date", "asin", "units", "pageviews"],
+                name="idx_pdd_u_d_a_u_pv",
+            ),
         ]
 
 
@@ -353,6 +361,14 @@ class FlipkartProcessedDashboardData(models.Model):
             models.Index(fields=["user", "category", "fsn"], name="idx_fkpd_u_cat_fsn"),
             models.Index(fields=["user", "portfolio", "fsn"], name="idx_fkpd_u_prt_fsn"),
             models.Index(fields=["user", "subcategory", "fsn"], name="idx_fkpd_u_sub_fsn"),
+            models.Index(
+                fields=["user", "date", "fsn", "revenue", "units"],
+                name="idx_fkpd_u_d_f_r_u",
+            ),
+            models.Index(
+                fields=["user", "date", "fsn", "units", "pageviews"],
+                name="idx_fkpd_u_d_f_u_pv",
+            ),
         ]
 
 

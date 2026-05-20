@@ -12,7 +12,6 @@ from apps.dashboard.models import (
     FlipkartSearchTraffic,
     Flipkartfba,
     ProcessedDashboardData,
-    SalesData,
 )
 
 
@@ -36,9 +35,6 @@ def _build_amazon_rows(user, only_dates=None):
         placeholders = ", ".join(["%s"] * len(only_dates))
         date_filter = f" AND date IN ({placeholders})"
 
-    # The intersection of stock dates and sales dates
-    date_join_condition = "1=1"
-    
     sql = f"""
         INSERT INTO {inv_table} (
             user_id, date, platform, sku, category, portfolio, subcategory,
@@ -132,30 +128,31 @@ def _build_amazon_rows(user, only_dates=None):
     # UNION keys
     for _ in range(3):
         params.append(user.id)
-        if only_dates: params.extend(list(only_dates))
+        if only_dates:
+            params.extend(list(only_dates))
     # JOIN aggregations
     for _ in range(3):
         params.append(user.id)
-        if only_dates: params.extend(list(only_dates))
+        if only_dates:
+            params.extend(list(only_dates))
     # CM join
     params.append(user.id)
     # WHERE stock date exists
     for _ in range(2):
         params.append(user.id)
-        if only_dates: params.extend(list(only_dates))
+        if only_dates:
+            params.extend(list(only_dates))
     # WHERE sales date exists
     params.append(user.id)
-    if only_dates: params.extend(list(only_dates))
+    if only_dates:
+        params.extend(list(only_dates))
 
     from django.db import connection
     with connection.cursor() as cursor:
         cursor.execute(sql, params)
         rows_written = max(cursor.rowcount, 0)
-        
-    # Return empty list because the caller handles the return differently now if it's raw SQL
-    # Wait, the caller is `refresh_dashboard_inventory_summary_task`, it expects a list to bulk_create.
-    # Since we already wrote to DB, we can just return an empty list, so bulk_create does nothing.
-    return []
+
+    return rows_written
 
 
 def _build_flipkart_rows(user, only_dates=None):
@@ -288,10 +285,11 @@ def rebuild_inventory_summary_for_user(user, *, only_dates=None):
             scoped = scoped.filter(date__in=only_dates)
         scoped.delete()
 
+        rows_written = _build_amazon_rows(user, only_dates=only_dates)
         inserts = []
-        inserts.extend(_build_amazon_rows(user, only_dates=only_dates))
         inserts.extend(_build_flipkart_rows(user, only_dates=only_dates))
         if inserts:
             DashboardInventoryHealthSummary.objects.bulk_create(inserts, batch_size=2000)
+            rows_written += len(inserts)
 
-    return {"rows_written": len(inserts), "dates_scoped": sorted(only_dates)}
+    return {"rows_written": rows_written, "dates_scoped": sorted(only_dates)}

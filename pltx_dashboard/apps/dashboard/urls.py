@@ -10,6 +10,7 @@ from .views import (
     download_demo_template,
     dashboard_section_view,
     dashboard_modal_rows_view,
+    dashboard_product_card_rows_view,
     dashboard_category_performance_rows_view,
     filter_dropdown_options,
     dashboard_refresh_status,
@@ -35,6 +36,11 @@ urlpatterns = [
         "dashboard/modal-rows/<str:view_name>/<str:modal_key>/",
         dashboard_modal_rows_view,
         name="dashboard-modal-rows",
+    ),
+    path(
+        "dashboard/product-card-rows/<str:view_name>/<str:card_key>/",
+        dashboard_product_card_rows_view,
+        name="dashboard-product-card-rows",
     ),
     path(
         "dashboard/category-performance-rows/<str:view_name>/",

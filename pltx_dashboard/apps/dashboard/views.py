@@ -10,10 +10,11 @@ from io import BytesIO, StringIO
 import pandas as pd
 from django.conf import settings
 from django.core.cache import cache
-from django.db.models import F
-from django.http import FileResponse, JsonResponse
+from django.db.models import F, Max, Q
+from django.http import FileResponse, HttpResponse, JsonResponse
 from django.shortcuts import render, redirect
 from django.template.loader import render_to_string
+from django.utils import timezone
 
 from apps.accounts.decorators import require_feature, _first_allowed_dashboard_for
 from apps.accounts.models import Feature
@@ -25,6 +26,9 @@ from apps.dashboard.models import (
     FlipkartProcessedDashboardData,
     FlipkartSearchTraffic,
     FlipkartPLA,
+    DashboardInventoryHealthSummary,
+    CategoryMapping,
+    FlipkartCategoryMap,
 )
 from apps.dashboard.services.filters import (
     apply_dashboard_entity_filters,
@@ -77,6 +81,20 @@ DASHBOARD_MODAL_ROWS_TEMPLATE_MAP = {
     ("category", "declining-products"): ("dashboard/modals/rows/declining_products_rows.html", "cat_all_under_products"),
 }
 MODAL_ROWS_DISPLAY_LIMIT = 25
+
+DASHBOARD_PRODUCT_CARD_TEMPLATE_MAP = {
+    ("business", "top-products"): "dashboard/partials/product_cards/top_products_business_rows.html",
+    ("business", "declining-products"): "dashboard/partials/product_cards/declining_products_rows.html",
+    ("ceo", "top-products"): "dashboard/partials/product_cards/top_products_simple_rows.html",
+    ("ceo", "declining-products"): "dashboard/partials/product_cards/declining_products_rows.html",
+    ("category", "top-products"): "dashboard/partials/product_cards/top_products_category_rows.html",
+    ("category", "declining-products"): "dashboard/partials/product_cards/declining_products_rows.html",
+}
+
+DASHBOARD_PRODUCT_CARD_PAYLOAD_KEY_MAP = {
+    "top-products": "cat_all_top_products",
+    "declining-products": "cat_all_under_products",
+}
 
 DASHBOARD_CATEGORY_PERFORMANCE_ROWS_TEMPLATE_MAP = {
     "business": "dashboard/partials/category_performance_rows_business.html",
@@ -137,6 +155,205 @@ def _modal_rows_export_filename(view_name, modal_key, ext):
     return f"{safe_view}_{safe_modal}_{stamp}.{ext}"
 
 
+def _strip_non_dashboard_filters(filters):
+    cleaned = dict(filters or {})
+    for key in ("scope", "q", "page", "page_size", "export"):
+        cleaned.pop(key, None)
+    return cleaned
+
+
+def _list_or_scalar_filter(qs, field_name, value):
+    if not value:
+        return qs
+    if isinstance(value, (list, tuple, set)):
+        values = [str(item) for item in value if str(item).strip()]
+        return qs.filter(**{f"{field_name}__in": values}) if values else qs
+    return qs.filter(**{field_name: value})
+
+
+def _modal_row_text(row):
+    if isinstance(row, dict):
+        return " ".join(_clean_export_value(value).lower() for value in row.values())
+    return _clean_export_value(row).lower()
+
+
+def _filter_rows_by_query(rows, query):
+    if not query:
+        return rows
+    needle = str(query).strip().lower()
+    if not needle:
+        return rows
+    return [row for row in rows if needle in _modal_row_text(row)]
+
+
+def _paginate_rows(rows, page, page_size):
+    total = len(rows)
+    start = (page - 1) * page_size
+    return total, rows[start : start + page_size]
+
+
+def _get_filtered_processed_querysets(data_owner, filters):
+    qs = ProcessedDashboardData.objects.filter(user=data_owner)
+    fk_qs = FlipkartProcessedDashboardData.objects.filter(user=data_owner)
+    return apply_dashboard_entity_filters(qs, fk_qs, filters)
+
+
+def _get_light_filter_metadata(data_owner_id, data_version):
+    """
+    Main dashboard payloads do not need full dropdown option lists.
+    Remote Select2 endpoints provide paginated options on demand.
+    """
+    cache_key = f"dashboard_light_filter_metadata_{data_owner_id}_{data_version}"
+    metadata = cache.get(cache_key)
+    if metadata:
+        return metadata
+
+    platforms = []
+    if ProcessedDashboardData.objects.filter(user_id=data_owner_id).exists():
+        platforms.append("Amazon")
+    if FlipkartProcessedDashboardData.objects.filter(user_id=data_owner_id).exists():
+        platforms.append("Flipkart")
+
+    metadata = {
+        "asins": [],
+        "fsns": [],
+        "categories": [],
+        "portfolios": [],
+        "subcategories": [],
+        "platforms": platforms,
+        "dates": [],
+    }
+    cache.set(cache_key, metadata, timeout=3600)
+    return metadata
+
+
+def _get_top_product_modal_rows(data_owner, filters):
+    from apps.dashboard.services.analytics_services_orm_pipeline import (
+        apply_global_filters_orm,
+        _build_top_product_rows,
+        get_prev_period_qs,
+    )
+
+    qs, fk_qs = _get_filtered_processed_querysets(data_owner, filters)
+    qs_f = apply_global_filters_orm(qs, filters)
+    fk_qs_f = apply_global_filters_orm(fk_qs, filters)
+    qs_prev = get_prev_period_qs(qs, filters)
+    fk_prev = get_prev_period_qs(fk_qs, filters)
+    asin_meta = {
+        row["asin"]: {"portfolio": row["portfolio"] or ""}
+        for row in CategoryMapping.objects.filter(user=data_owner).values("asin", "portfolio")
+    }
+    fsn_meta = {
+        row["fsn"]: {"portfolio": row["portfolio"] or ""}
+        for row in FlipkartCategoryMap.objects.filter(user=data_owner).values("fsn", "portfolio")
+    }
+
+    return _build_top_product_rows(
+        qs_f,
+        fk_qs_f,
+        qs_prev,
+        fk_prev,
+        asin_meta=asin_meta,
+        fsn_meta=fsn_meta,
+        include_full_payload=True,
+    )
+
+
+def _get_declining_product_modal_rows(data_owner, filters):
+    from apps.dashboard.services.analytics_services_orm_pipeline import (
+        _build_declining_product_rows,
+        resolve_growth_period,
+        safe_shift_month,
+    )
+
+    qs, fk_qs = _get_filtered_processed_querysets(data_owner, filters)
+    max_az = qs.aggregate(m=Max("date"))
+    max_fk = fk_qs.aggregate(m=Max("date"))
+    latest_dates = [item.get("m") for item in (max_az, max_fk) if item.get("m")]
+    has_explicit_period = bool(
+        filters.get("date_range") or filters.get("start_date") or filters.get("end_date")
+    )
+    if has_explicit_period:
+        reference_date = timezone.localdate()
+    else:
+        reference_date = max(latest_dates) if latest_dates else datetime.date.today()
+    cm_start, cm_end = resolve_growth_period(filters, reference_date)
+    pm_start = safe_shift_month(cm_start, -1)
+    pm_end = safe_shift_month(cm_end, -1)
+    period_start = min(cm_start, pm_start)
+    period_end = max(cm_end, pm_end)
+
+    return _build_declining_product_rows(
+        qs,
+        fk_qs,
+        cm_start,
+        cm_end,
+        pm_start,
+        pm_end,
+        include_full_payload=True,
+    )
+
+
+def _inventory_summary_platform(filters):
+    platform = (filters.get("platform") or "").strip()
+    asin_filter = filters.get("asin")
+    fsn_filter = filters.get("fsn")
+    if platform == "Flipkart" or (fsn_filter and not asin_filter):
+        return "Flipkart"
+    return "Amazon"
+
+
+def _get_inventory_modal_queryset(data_owner, filters, query):
+    from apps.dashboard.services.analytics_services_orm_pipeline import (
+        apply_global_filters_orm,
+    )
+
+    platform = _inventory_summary_platform(filters)
+    qs = DashboardInventoryHealthSummary.objects.filter(
+        user=data_owner,
+        platform=platform,
+    )
+    qs = apply_global_filters_orm(qs, filters)
+    qs = _list_or_scalar_filter(qs, "category", filters.get("category"))
+    qs = _list_or_scalar_filter(qs, "portfolio", filters.get("portfolio"))
+    qs = _list_or_scalar_filter(qs, "subcategory", filters.get("subcategory"))
+
+    sku_filter = filters.get("fsn") if platform == "Flipkart" else filters.get("asin")
+    qs = _list_or_scalar_filter(qs, "sku", sku_filter)
+
+    if query:
+        needle = str(query).strip()
+        qs = qs.filter(
+            Q(sku__icontains=needle)
+            | Q(category__icontains=needle)
+            | Q(portfolio__icontains=needle)
+            | Q(subcategory__icontains=needle)
+            | Q(status__icontains=needle)
+            | Q(reason__icontains=needle)
+        )
+    return qs.order_by("-date", "-revenue", "sku")
+
+
+def _inventory_summary_row_dict(row):
+    return {
+        "date": row.date,
+        "sku": row.sku,
+        "category": row.category or "Unknown",
+        "stock_qty": int(row.stock_qty or 0),
+        "fba_qty": int(row.fba_qty or 0),
+        "flex_qty": int(row.flex_qty or 0),
+        "sale_qty": int(row.sale_qty or 0),
+        "total_sales_30d": int(row.total_sales_window or 0),
+        "drr": round(float(row.drr or 0), 2),
+        "doc": float(row.doc or 0),
+        "units": int(row.sale_qty or 0),
+        "revenue": round(float(row.revenue or 0), 2),
+        "status": row.status,
+        "status_class": row.status_class,
+        "reason": row.reason,
+    }
+
+
 def _build_template_payload(payload):
     """
     Keep template payload separate from cached payload mutation.
@@ -150,6 +367,7 @@ def _trim_payload_for_initial_load(payload):
     """
     if not isinstance(payload, dict):
         return payload
+    payload = deepcopy(payload)
     payload["cat_all_top_products"] = []
     payload["cat_all_under_products"] = []
     if isinstance(payload.get("category_performance"), list):
@@ -440,27 +658,22 @@ def get_dashboard_context(
     qs = ProcessedDashboardData.objects.filter(user=data_owner)
     fk_qs = FlipkartProcessedDashboardData.objects.filter(user=data_owner)
 
-    # Apply platform filter
-    platform = filters.get("platform")
-    show_amazon = True
-    show_flipkart = True
-    if platform == "Amazon":
-        show_flipkart = False
-    elif platform == "Flipkart":
-        show_amazon = False
-
-    # Extract all available options BEFORE applying entity filters
-    from apps.dashboard.services.analytics_services_orm_pipeline import (
-        get_available_filters_orm_cached,
-    )
-
-    cached_filter_metadata = get_available_filters_orm_cached(
-        qs if show_amazon else qs.none(), fk_qs if show_flipkart else fk_qs.none(), data_owner.id, show_amazon, show_flipkart
-    )
+    data_version = cache.get(f"dashboard_data_version_{data_owner.id}", 0)
+    cached_filter_metadata = _get_light_filter_metadata(data_owner.id, data_version)
+    filter_key_str = cache_filter_string(filters)
+    cache_hash = hashlib.md5(filter_key_str.encode("utf-8")).hexdigest()
 
     qs, fk_qs = apply_dashboard_entity_filters(qs, fk_qs, filters)
 
-    if not qs.exists() and not fk_qs.exists():
+    presence_cache_key = (
+        f"dashboard_presence_v1_{data_owner.id}_{data_version}_{cache_hash}"
+    )
+    has_filtered_rows = cache.get(presence_cache_key)
+    if has_filtered_rows is None:
+        has_filtered_rows = qs.exists() or fk_qs.exists()
+        cache.set(presence_cache_key, has_filtered_rows, timeout=300)
+
+    if not has_filtered_rows:
         refresh_status = _get_dashboard_refresh_status(data_owner.id)
         return {
             "logged_user": user,
@@ -486,9 +699,6 @@ def get_dashboard_context(
     from apps.dashboard.services.analytics_services_orm_pipeline import run_orm_computation
 
     # Normalize filters once; reuse in memory cache + materialized summary table.
-    filter_key_str = cache_filter_string(filters)
-    cache_hash = hashlib.md5(filter_key_str.encode("utf-8")).hexdigest()
-    data_version = cache.get(f"dashboard_data_version_{data_owner.id}", 0)
     view_type = cache_view_type or request.resolver_match.url_name or "shared"
 
     cache_mode = "full" if include_full_payload else "lite"
@@ -536,6 +746,12 @@ def get_dashboard_context(
                     cached_filter_metadata=cached_filter_metadata,
                     include_full_payload=include_full_payload,
                     compute_scope=compute_scope,
+                    cache_identity={
+                        "data_version": data_version,
+                        "filter_hash": cache_hash,
+                    },
+                    section_scope=section_scope,
+                    dashboard_view=(request.resolver_match.kwargs.get("view_name") if request.resolver_match else None),
                 )
                 if (not include_full_payload) and str(compute_scope or "full").lower() == "full":
                     try:
@@ -689,7 +905,7 @@ def dashboard_section_view(request, view_name, section):
         request,
         include_payload=True,
         cache_view_type=f"{view_name}-dashboard",
-        section_scope="kpis" if section == "overview" else "analytics",
+        section_scope=section,
         compute_scope="kpis" if section == "overview" else "full",
     )
     if ctx is None:
@@ -719,19 +935,21 @@ def dashboard_modal_rows_view(request, view_name, modal_key):
     template_name, payload_key = modal_tpl
 
     export_format = (request.GET.get("export") or "").strip().lower()
-    # All rows are returned; DataTables handles client-side pagination.
     query = (request.GET.get("q") or "").strip().lower()
+    page = _parse_positive_int(request.GET.get("page"), default=1, minimum=1, maximum=10_000)
+    page_size = _parse_positive_int(
+        request.GET.get("page_size"), default=50, minimum=10, maximum=200
+    )
 
     data_owner = user.created_by if user.created_by else user
     data_version = cache.get(f"dashboard_data_version_{data_owner.id}", 0)
-    filters = build_filters_from_querydict(request.GET)
-    filters.pop("scope", None)
+    filters = _strip_non_dashboard_filters(build_filters_from_querydict(request.GET))
     filter_hash = hashlib.md5(cache_filter_string(filters).encode("utf-8")).hexdigest()
 
     modal_rows_cache_key = (
         "dashboard_modal_rows_v2_"
         f"{data_owner.id}_{view_name}_{modal_key}_{data_version}_{filter_hash}_"
-        f"{hashlib.md5(query.encode('utf-8')).hexdigest()}"
+        f"{hashlib.md5(query.encode('utf-8')).hexdigest()}_{page}_{page_size}"
     )
     modal_rows_cache_ttl = int(
         getattr(settings, "DASHBOARD_MODAL_ROWS_CACHE_TTL_SECONDS", 180)
@@ -742,32 +960,41 @@ def dashboard_modal_rows_view(request, view_name, modal_key):
         if cached_modal_payload:
             return JsonResponse(cached_modal_payload)
 
-    ctx = get_dashboard_context(
-        request,
-        include_payload=True,
-        cache_view_type=f"{view_name}-dashboard",
-        include_full_payload=True,
-        section_scope="modal",
-        compute_scope="full",
-    )
-    if ctx is None:
-        return JsonResponse({"error": "Not authenticated"}, status=401)
+    total = 0
+    if modal_key == "inventory-health":
+        inventory_qs = _get_inventory_modal_queryset(data_owner, filters, query)
+        total = inventory_qs.count()
+        row_qs = (
+            inventory_qs
+            if export_format in {"csv", "excel", "xlsx"}
+            else inventory_qs[(page - 1) * page_size : page * page_size]
+        )
+        rows = [_inventory_summary_row_dict(row) for row in row_qs]
+    elif modal_key == "top-products":
+        rows = _filter_rows_by_query(_get_top_product_modal_rows(data_owner, filters), query)
+    elif modal_key == "declining-products":
+        rows = _filter_rows_by_query(
+            _get_declining_product_modal_rows(data_owner, filters), query
+        )
+    else:
+        ctx = get_dashboard_context(
+            request,
+            include_payload=True,
+            cache_view_type=f"{view_name}-dashboard",
+            section_scope="analytics",
+            compute_scope="full",
+        )
+        if ctx is None:
+            return JsonResponse({"error": "Not authenticated"}, status=401)
 
-    payload = ctx.get("payload") or {}
-    rows = _resolve_payload_key(payload, payload_key)
-    if not isinstance(rows, list):
-        rows = []
+        payload = ctx.get("payload") or {}
+        rows = _resolve_payload_key(payload, payload_key)
+        if not isinstance(rows, list):
+            rows = []
+        rows = _filter_rows_by_query(rows, query)
 
-    if query:
-        def _row_text(row):
-            if isinstance(row, dict):
-                parts = []
-                for value in row.values():
-                    parts.append(_clean_export_value(value).lower())
-                return " ".join(parts)
-            return _clean_export_value(row).lower()
-
-        rows = [row for row in rows if query in _row_text(row)]
+    if modal_key != "inventory-health":
+        total = len(rows)
 
     if export_format in {"csv", "excel", "xlsx"}:
         headers, table_rows = _rows_to_export_table(rows)
@@ -795,31 +1022,92 @@ def dashboard_modal_rows_view(request, view_name, modal_key):
         )
         return response
 
-    rows_total = len(rows)
+    if modal_key != "inventory-health":
+        rows_total, page_rows = _paginate_rows(rows, page, page_size)
+    else:
+        rows_total, page_rows = total, rows
+    total_pages = math.ceil(rows_total / page_size) if rows_total > 0 else 0
 
     html = render_to_string(
         template_name,
         {
-            "rows": rows,
+            "rows": page_rows,
             "rows_total": rows_total,
-            "rows_shown": rows_total,
-            "rows_truncated": False,
+            "rows_shown": len(page_rows),
+            "rows_truncated": len(page_rows) < rows_total,
         },
         request=request,
     )
     payload = {
         "html": html,
         "pagination": {
-            "page": 1,
-            "page_size": rows_total,
+            "page": page,
+            "page_size": page_size,
             "total": rows_total,
-            "total_pages": 1,
-            "has_prev": False,
-            "has_next": False,
+            "total_pages": total_pages,
+            "has_prev": page > 1,
+            "has_next": page < total_pages,
         },
     }
     cache.set(modal_rows_cache_key, payload, timeout=modal_rows_cache_ttl)
     return JsonResponse(payload)
+
+
+@no_cache_for_htmx
+def dashboard_product_card_rows_view(request, view_name, card_key):
+    user = get_logged_in_user(request)
+    if not user:
+        return JsonResponse({"error": "Not authenticated"}, status=401)
+
+    feature_code = DASHBOARD_FEATURE_BY_VIEW.get(view_name)
+    if not feature_code:
+        return JsonResponse({"error": "Invalid dashboard view."}, status=404)
+    if not _user_has_feature(user, feature_code):
+        return JsonResponse({"error": "Permission denied."}, status=403)
+
+    template_name = DASHBOARD_PRODUCT_CARD_TEMPLATE_MAP.get((view_name, card_key))
+    if not template_name:
+        return JsonResponse({"error": "Invalid product card."}, status=404)
+    payload_key = DASHBOARD_PRODUCT_CARD_PAYLOAD_KEY_MAP.get(card_key)
+    if not payload_key:
+        return JsonResponse({"error": "Invalid product card."}, status=404)
+
+    data_owner = user.created_by if user.created_by else user
+    data_version = cache.get(f"dashboard_data_version_{data_owner.id}", 0)
+    filters = _strip_non_dashboard_filters(build_filters_from_querydict(request.GET))
+    filter_hash = hashlib.md5(cache_filter_string(filters).encode("utf-8")).hexdigest()
+    cache_key = (
+        "dashboard_product_card_rows_v1_"
+        f"{data_owner.id}_{view_name}_{card_key}_{data_version}_{filter_hash}"
+    )
+
+    cached_html = cache.get(cache_key)
+    if cached_html:
+        return HttpResponse(cached_html)
+
+    if card_key == "top-products":
+        rows = _get_top_product_modal_rows(data_owner, filters)[:5]
+    elif card_key == "declining-products":
+        rows = _get_declining_product_modal_rows(data_owner, filters)[:5]
+    else:
+        ctx = get_dashboard_context(
+            request,
+            include_payload=True,
+            cache_view_type=f"{view_name}-dashboard",
+            section_scope="analytics",
+            compute_scope="full",
+        )
+        if ctx is None:
+            return JsonResponse({"error": "Not authenticated"}, status=401)
+
+        rows = _resolve_payload_key((ctx.get("payload") or {}), payload_key)
+        if not isinstance(rows, list):
+            rows = []
+        rows = rows[:5]
+
+    html = render_to_string(template_name, {"rows": rows}, request=request)
+    cache.set(cache_key, html, timeout=300)
+    return HttpResponse(html)
 
 
 @no_cache_for_htmx
@@ -848,6 +1136,8 @@ def dashboard_category_performance_rows_view(request, view_name):
         request,
         include_payload=True,
         cache_view_type=f"{view_name}-dashboard",
+        section_scope="analytics",
+        compute_scope="full",
     )
     if ctx is None:
         return JsonResponse({"error": "Not authenticated"}, status=401)

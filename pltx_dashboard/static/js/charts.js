@@ -155,7 +155,7 @@ function _ensureModalExportButtons(modalEl) {
 }
 
 function _ensureModalPreviewNotice(modalEl) {
-    // DataTables provides built-in search, pagination, and sorting.
+    // Modal rows are server-paginated so large detail tables do not block the page.
 }
 
 /** Destroy every known chart instance to prevent canvas-reuse errors */
@@ -182,6 +182,8 @@ function _renderModalPagination(modalEl, pagination) {
         container.style.padding = '10px 0 0';
         scroll.parentNode.appendChild(container);
     }
+
+    container.style.display = 'flex';
 
     if (!pagination || !pagination.total_pages || pagination.total_pages <= 1) {
         container.innerHTML = '';
@@ -295,19 +297,34 @@ function _loadModalRowsOnDemand(modalEl, opts) {
     
     tbody.innerHTML = '<tr><td colspan="' + thCount + '" class="empty">Loading data...</td></tr>';
 
-    // Load all rows; DataTables handles client-side pagination/search/sorting
-    var url = _buildModalDataUrl(modalEl);
+    var page = Number(opts.page || modalEl.dataset.currentPage || 1) || 1;
+    var pageSize = Number(opts.pageSize || modalEl.dataset.pageSize || 50) || 50;
+    modalEl.dataset.pageSize = String(pageSize);
+
+    var extraParams = {
+        page: page,
+        page_size: pageSize
+    };
+    var searchInput = modalEl.querySelector('.inv-health-search');
+    var searchTerm = searchInput ? String(searchInput.value || '').trim() : '';
+    if (searchTerm) extraParams.q = searchTerm;
+    else extraParams.q = null;
+
+    var url = _buildModalDataUrl(modalEl, extraParams);
     var cacheKey = modalEl.id + "::" + url;
     var cachedPayload = _getModalResponseFromCache(cacheKey);
     
-    function applyLoadedHTML(html) {
+    function applyLoadedHTML(html, pagination) {
         tbody.innerHTML = html || '<tr><td colspan="' + thCount + '" class="empty">No data available.</td></tr>';
         modalEl.dataset.lazyLoaded = '1';
-        _initializeDataTable(modalEl);
+        if (pagination && pagination.page) {
+            modalEl.dataset.currentPage = String(pagination.page);
+        }
+        _renderModalPagination(modalEl, pagination || null);
     }
     
     if (cachedPayload) {
-        applyLoadedHTML(cachedPayload.html);
+        applyLoadedHTML(cachedPayload.html, cachedPayload.pagination);
         modalEl.dataset.lazyLoading = '0';
         return;
     }
@@ -331,7 +348,10 @@ function _loadModalRowsOnDemand(modalEl, opts) {
             });
         })
         .then(function (payload) {
-            applyLoadedHTML(payload && payload.html ? payload.html : null);
+            applyLoadedHTML(
+                payload && payload.html ? payload.html : null,
+                payload ? payload.pagination : null
+            );
             _setModalResponseCache(cacheKey, payload || {});
         })
         .catch(function (e) {

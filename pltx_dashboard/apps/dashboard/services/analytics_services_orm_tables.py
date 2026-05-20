@@ -1,7 +1,7 @@
 from django.db.models import Sum
 
 
-def generate_bi_data_orm(qs, fk_qs, user=None):
+def generate_bi_data_orm(qs, fk_qs, user=None, asin_meta=None, fsn_meta=None):
     az_asins = {}
     if qs is not None:
         # Group by asin only to avoid duplicates from varying category/portfolio values
@@ -15,15 +15,17 @@ def generate_bi_data_orm(qs, fk_qs, user=None):
             spend_sb=Sum("spend_sb"),
             spend_sd=Sum("spend_sd"),
         )
-        # Build a separate lookup for the best category/portfolio per ASIN
-        from apps.dashboard.models import CategoryMapping
-        asin_meta = {}
-        if user:
-            for row in CategoryMapping.objects.filter(user=user).values("asin", "category", "portfolio"):
-                asin_meta[row["asin"]] = {
-                    "category": row["category"] or "",
-                    "portfolio": row["portfolio"] or "",
-                }
+        # Build a separate lookup for the best category/portfolio per ASIN.
+        # Use pre-fetched metadata if provided by the caller to avoid duplicate DB queries.
+        if asin_meta is None:
+            from apps.dashboard.models import CategoryMapping
+            asin_meta = {}
+            if user:
+                for row in CategoryMapping.objects.filter(user=user).values("asin", "category", "portfolio"):
+                    asin_meta[row["asin"]] = {
+                        "category": row["category"] or "",
+                        "portfolio": row["portfolio"] or "",
+                    }
 
         for r in agg:
             a = r["asin"]
@@ -59,14 +61,16 @@ def generate_bi_data_orm(qs, fk_qs, user=None):
             pageviews=Sum("pageviews"),
             units=Sum("units"),
         )
-        from apps.dashboard.models import FlipkartCategoryMap
-        fsn_meta = {}
-        if user:
-            for row in FlipkartCategoryMap.objects.filter(user=user).values("fsn", "category", "portfolio"):
-                fsn_meta[row["fsn"]] = {
-                    "category": row["category"] or "",
-                    "portfolio": row["portfolio"] or "",
-                }
+        # Use pre-fetched metadata if provided by the caller to avoid duplicate DB queries.
+        if fsn_meta is None:
+            from apps.dashboard.models import FlipkartCategoryMap
+            fsn_meta = {}
+            if user:
+                for row in FlipkartCategoryMap.objects.filter(user=user).values("fsn", "category", "portfolio"):
+                    fsn_meta[row["fsn"]] = {
+                        "category": row["category"] or "",
+                        "portfolio": row["portfolio"] or "",
+                    }
 
         for r in agg_fk:
             fsn = r["fsn"]
