@@ -47,7 +47,13 @@ def _send_ws(user_id, message, status):
         logger.warning("[UploadTask] WebSocket send failed: %s", exc)
 
 
-def _enqueue_dashboard_warmup(data_owner_id, *, skip_during_upload=True):
+def _enqueue_dashboard_warmup(
+    data_owner_id,
+    *,
+    skip_during_upload=True,
+    filter_sets=None,
+    view_types=None,
+):
     try:
         from django.conf import settings
 
@@ -64,7 +70,11 @@ def _enqueue_dashboard_warmup(data_owner_id, *, skip_during_upload=True):
             return
         from apps.dashboard.tasks import warmup_dashboard_payloads_task
 
-        warmup_dashboard_payloads_task.delay(data_owner_id=data_owner_id)
+        warmup_dashboard_payloads_task.delay(
+            data_owner_id=data_owner_id,
+            filter_sets=filter_sets,
+            view_types=view_types,
+        )
     except Exception:
         logger.exception(
             "[UploadTask] Failed to enqueue dashboard warmup for user=%s", data_owner_id
@@ -429,9 +439,13 @@ def _run_dashboard_refresh(
             _enqueue_inventory_summary_refresh(
                 data_owner.id, affected_dates=sorted_dates
             )
-        # Skip warmup during upload — too expensive (up to 21 payloads).
-        # The first dashboard page-load will compute and cache on demand.
-        _enqueue_dashboard_warmup(data_owner.id, skip_during_upload=True)
+        # Prime the default dashboard payload right after refresh so the first
+        # post-upload page open can reuse cache instead of recomputing from scratch.
+        _enqueue_dashboard_warmup(
+            data_owner.id,
+            skip_during_upload=False,
+            filter_sets=[{}],
+        )
 
 
 @shared_task(bind=True)
@@ -683,9 +697,9 @@ def process_upload_file_task(
             elif file_type == "sales":
                 affected_dates = process_sales_file(fh, date_str, data_owner) or set()
             elif file_type == "fba_stock":
-                process_fba_stock_file(fh, data_owner)
+                affected_dates = process_fba_stock_file(fh, data_owner) or set()
             elif file_type == "flex_stock":
-                process_flex_stock_file(fh, data_owner)
+                affected_dates = process_flex_stock_file(fh, data_owner) or set()
             elif file_type == "fk_search_traffic":
                 affected_dates = process_fk_search_traffic(fh, data_owner) or set()
             elif file_type == "fk_category":
@@ -699,7 +713,7 @@ def process_upload_file_task(
             elif file_type == "fk_flex_stock":
                 affected_dates = process_fk_flex_stock_file(fh, data_owner) or set()
             elif file_type == "fk_inventory":
-                process_fk_inventory_file(fh, data_owner)
+                affected_dates = process_fk_inventory_file(fh, data_owner) or set()
             else:
                 raise ValueError(f"Unsupported file_type: {file_type}")
 
