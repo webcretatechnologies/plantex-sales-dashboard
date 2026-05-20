@@ -583,10 +583,15 @@ def _ensure_processed_tables_if_missing(data_owner):
     if refresh_status.get("state") == "processing":
         return
 
+    presence_key = f"processed_tables_present_{data_owner.id}"
+    if cache.get(presence_key):
+        return
+
     has_amz_processed = ProcessedDashboardData.objects.filter(user=data_owner).exists()
     has_fk_processed = FlipkartProcessedDashboardData.objects.filter(user=data_owner).exists()
 
     if has_amz_processed or has_fk_processed:
+        cache.set(presence_key, True, timeout=300)
         return
 
     has_amz_raw = (
@@ -651,9 +656,6 @@ def get_dashboard_context(
             "dashboard_refresh_status_json": json.dumps(refresh_status),
         }
 
-    # Build the queryset with DB-level entity filters
-    qs = ProcessedDashboardData.objects.filter(user=data_owner)
-    fk_qs = FlipkartProcessedDashboardData.objects.filter(user=data_owner)
     _ensure_processed_tables_if_missing(data_owner)
     qs = ProcessedDashboardData.objects.filter(user=data_owner)
     fk_qs = FlipkartProcessedDashboardData.objects.filter(user=data_owner)
@@ -1085,25 +1087,20 @@ def dashboard_product_card_rows_view(request, view_name, card_key):
     if cached_html:
         return HttpResponse(cached_html)
 
-    if card_key == "top-products":
-        rows = _get_top_product_modal_rows(data_owner, filters)[:5]
-    elif card_key == "declining-products":
-        rows = _get_declining_product_modal_rows(data_owner, filters)[:5]
-    else:
-        ctx = get_dashboard_context(
-            request,
-            include_payload=True,
-            cache_view_type=f"{view_name}-dashboard",
-            section_scope="analytics",
-            compute_scope="full",
-        )
-        if ctx is None:
-            return JsonResponse({"error": "Not authenticated"}, status=401)
+    ctx = get_dashboard_context(
+        request,
+        include_payload=True,
+        cache_view_type=f"{view_name}-dashboard",
+        section_scope="analytics",
+        compute_scope="full",
+    )
+    if ctx is None:
+        return JsonResponse({"error": "Not authenticated"}, status=401)
 
-        rows = _resolve_payload_key((ctx.get("payload") or {}), payload_key)
-        if not isinstance(rows, list):
-            rows = []
-        rows = rows[:5]
+    rows = _resolve_payload_key((ctx.get("payload") or {}), payload_key)
+    if not isinstance(rows, list):
+        rows = []
+    rows = rows[:5]
 
     html = render_to_string(template_name, {"rows": rows}, request=request)
     cache.set(cache_key, html, timeout=300)
