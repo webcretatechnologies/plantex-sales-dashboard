@@ -26,6 +26,11 @@ def invalidate_dashboard_cache_for_user(user_id, *, clear_materialized=True):
         for flp in (True, False):
             cache.delete(f"dashboard_filters_{user_id}_{amz}_{flp}")
 
+    # Bust the per-user category mapping caches so the next request reloads
+    # fresh data after an upload changes CategoryMapping / FlipkartCategoryMap.
+    cache.delete(f"asin_meta_v1_{user_id}")
+    cache.delete(f"fsn_meta_v1_{user_id}")
+
     if clear_materialized:
         try:
             clear_materialized_summaries_for_user(user_id)

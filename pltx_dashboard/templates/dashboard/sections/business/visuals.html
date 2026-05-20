@@ -116,11 +116,8 @@
                             <th class="num">Growth</th>
                         </tr>
                     </thead>
-                    <tbody
-                        hx-get="{% url 'dashboard-product-card-rows' 'business' 'top-products' %}?{{ request.GET.urlencode }}"
-                        hx-trigger="load"
-                        hx-swap="innerHTML">
-                        <tr><td colspan="3">Loading products...</td></tr>
+                    <tbody>
+                        {% include "dashboard/partials/product_cards/top_products_business_rows.html" with rows=payload.cat_top_products %}
                     </tbody>
                 </table>
             </div>
@@ -143,11 +140,8 @@
                         <th class="num">Impact (₹)</th>
                     </tr>
                 </thead>
-                <tbody
-                    hx-get="{% url 'dashboard-product-card-rows' 'business' 'declining-products' %}?{{ request.GET.urlencode }}"
-                    hx-trigger="load"
-                    hx-swap="innerHTML">
-                    <tr><td colspan="3">Loading products...</td></tr>
+                <tbody>
+                    {% include "dashboard/partials/product_cards/declining_products_rows.html" with rows=payload.cat_under_products %}
                 </tbody>
             </table>
         </div>
