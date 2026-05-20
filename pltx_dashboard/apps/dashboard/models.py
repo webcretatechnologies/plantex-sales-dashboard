@@ -246,6 +246,7 @@ class FlipkartPLA(models.Model):
         unique_together = ("user", "campaign_id", "fsn_id", "date")
         indexes = [
             models.Index(fields=["user", "fsn_id", "date"], name="idx_fkpla_u_fsn_date"),
+            models.Index(fields=["user", "date"], name="idx_fkpla_u_date"),
         ]
 
 

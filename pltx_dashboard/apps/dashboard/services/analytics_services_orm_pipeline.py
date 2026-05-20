@@ -541,12 +541,7 @@ def _distinct_value_count(qs, field_name, extra_filter=None):
     return int(qs.aggregate(total=Count(field_name, distinct=True)).get("total") or 0)
 
 
-def _compute_zero_selling_metrics(qs, sku_field):
-    if qs is None:
-        return 0, 0
-
-    # Single GROUP BY query with conditional aggregation avoids the MySQL
-    # NOT IN (subquery) anti-pattern which caused O(n*m) scans on large tables.
+def _compute_sku_activity_combined(qs, sku_field):
     rows = (
         qs.exclude(**{f"{sku_field}__isnull": True})
         .exclude(**{sku_field: ""})

@@ -11,7 +11,7 @@
      hx-get="{% url 'dashboard-section' view_name='ceo' section='overview' %}?scope=kpis"
      hx-include="#dashboardFilterForm"
      hx-trigger="load once"
-     hx-sync="body:abort"
+     hx-sync="this:replace"
      hx-swap="innerHTML">
     {% include "dashboard/partials/kpi_skeleton_cards.html" %}
 </div>
@@ -19,8 +19,8 @@
 <div id="ceo-section-visuals"
      hx-get="{% url 'dashboard-section' view_name='ceo' section='visuals' %}?scope=analytics"
      hx-include="#dashboardFilterForm"
-     hx-trigger="dashboardOverviewLoaded from:body once delay:40ms"
-     hx-sync="body:abort"
+     hx-trigger="load once delay:80ms"
+     hx-sync="this:replace"
      hx-swap="innerHTML">
     <div class="empty" style="padding: 24px;">Loading charts...</div>
 </div>
@@ -28,8 +28,8 @@
 <div id="ceo-section-details"
      hx-get="{% url 'dashboard-section' view_name='ceo' section='details' %}?scope=analytics"
      hx-include="#dashboardFilterForm"
-     hx-trigger="dashboardVisualsLoaded from:body once delay:120ms"
-     hx-sync="body:abort"
+     hx-trigger="load once delay:160ms"
+     hx-sync="this:replace"
      hx-swap="innerHTML">
     <div class="empty" style="padding: 24px;">Loading details...</div>
 </div>
