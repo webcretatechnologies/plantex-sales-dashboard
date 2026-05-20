@@ -23,17 +23,29 @@ def _safe_doc(stock_qty, sale_qty):
 
 def _build_amazon_rows(user, only_dates=None):
     only_dates = {str(d) for d in (only_dates or []) if str(d).strip()}
-    
+
+    # Pre-compute aligned dates in Python (3 cheap DISTINCT queries) to eliminate
+    # the two correlated subqueries that MySQL evaluated per-row in the original SQL.
+    _date_kw = {"date__in": only_dates} if only_dates else {}
+    _stock_dates = (
+        set(FBAStockData.objects.filter(user=user, **_date_kw).values_list("date", flat=True).distinct())
+        | set(FlexStockData.objects.filter(user=user, **_date_kw).values_list("date", flat=True).distinct())
+    )
+    _sales_dates = set(
+        ProcessedDashboardData.objects.filter(user=user, **_date_kw).values_list("date", flat=True).distinct()
+    )
+    aligned_dates = sorted(str(d) for d in (_stock_dates & _sales_dates))
+    if not aligned_dates:
+        return 0
+
+    aligned_ph = ", ".join(["%s"] * len(aligned_dates))
+    date_filter = f" AND date IN ({aligned_ph})"
+
     inv_table = DashboardInventoryHealthSummary._meta.db_table
     fba_table = FBAStockData._meta.db_table
     flex_table = FlexStockData._meta.db_table
     sales_table = ProcessedDashboardData._meta.db_table
     cm_table = CategoryMapping._meta.db_table
-    
-    date_filter = ""
-    if only_dates:
-        placeholders = ", ".join(["%s"] * len(only_dates))
-        date_filter = f" AND date IN ({placeholders})"
 
     sql = f"""
         INSERT INTO {inv_table} (
@@ -110,42 +122,22 @@ def _build_amazon_rows(user, only_dates=None):
             FROM {sales_table} WHERE user_id = %s {date_filter} GROUP BY date, asin
         ) sales ON sales.date = k.date AND sales.asin = k.asin
         LEFT JOIN {cm_table} cm ON cm.user_id = %s AND cm.asin = k.asin
-        
-        -- Equivalent to aligned_dates in Python (only output where date exists in both stock and sales across the user)
-        WHERE k.date IN (
-            SELECT DISTINCT s_date FROM (
-                SELECT date AS s_date FROM {fba_table} WHERE user_id = %s {date_filter}
-                UNION 
-                SELECT date AS s_date FROM {flex_table} WHERE user_id = %s {date_filter}
-            ) stock_d
-        )
-        AND k.date IN (
-            SELECT DISTINCT date FROM {sales_table} WHERE user_id = %s {date_filter}
-        )
+        WHERE k.date IN ({aligned_ph})
     """
 
     params = [user.id]
     # UNION keys
     for _ in range(3):
         params.append(user.id)
-        if only_dates:
-            params.extend(list(only_dates))
+        params.extend(aligned_dates)
     # JOIN aggregations
     for _ in range(3):
         params.append(user.id)
-        if only_dates:
-            params.extend(list(only_dates))
+        params.extend(aligned_dates)
     # CM join
     params.append(user.id)
-    # WHERE stock date exists
-    for _ in range(2):
-        params.append(user.id)
-        if only_dates:
-            params.extend(list(only_dates))
-    # WHERE sales date exists
-    params.append(user.id)
-    if only_dates:
-        params.extend(list(only_dates))
+    # WHERE aligned_dates
+    params.extend(aligned_dates)
 
     from django.db import connection
     with connection.cursor() as cursor:
@@ -169,14 +161,13 @@ def _build_flipkart_rows(user, only_dates=None):
         fba_qs = fba_qs.filter(date__in=only_dates)
         rev_qs = rev_qs.filter(date__in=only_dates)
 
-    sales_by_key = {
-        (str(r["fsn"]), r["date"]): int(r["s"] or 0)
-        for r in traffic_qs.values("fsn", "date").annotate(s=Sum("sales"))
-    }
-    sales_total_by_sku = {
-        str(r["fsn"]): int(r["s"] or 0)
-        for r in traffic_qs.values("fsn").annotate(s=Sum("sales"))
-    }
+    sales_by_key = {}
+    sales_total_by_sku = {}
+    for r in traffic_qs.values("fsn", "date").annotate(s=Sum("sales")).iterator(chunk_size=5000):
+        fsn = str(r["fsn"])
+        sales = int(r["s"] or 0)
+        sales_by_key[(fsn, r["date"])] = sales
+        sales_total_by_sku[fsn] = sales_total_by_sku.get(fsn, 0) + sales
     inv_by_key = {
         (str(r["fsn"]), r["date"]): int(r["q"] or 0)
         for r in inv_qs.values("fsn", "date").annotate(q=Sum("qty"))

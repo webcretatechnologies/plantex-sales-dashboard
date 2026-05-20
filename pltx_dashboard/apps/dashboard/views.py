@@ -583,10 +583,15 @@ def _ensure_processed_tables_if_missing(data_owner):
     if refresh_status.get("state") == "processing":
         return
 
+    presence_key = f"processed_tables_present_{data_owner.id}"
+    if cache.get(presence_key):
+        return
+
     has_amz_processed = ProcessedDashboardData.objects.filter(user=data_owner).exists()
     has_fk_processed = FlipkartProcessedDashboardData.objects.filter(user=data_owner).exists()
 
     if has_amz_processed or has_fk_processed:
+        cache.set(presence_key, True, timeout=300)
         return
 
     has_amz_raw = (
@@ -651,9 +656,6 @@ def get_dashboard_context(
             "dashboard_refresh_status_json": json.dumps(refresh_status),
         }
 
-    # Build the queryset with DB-level entity filters
-    qs = ProcessedDashboardData.objects.filter(user=data_owner)
-    fk_qs = FlipkartProcessedDashboardData.objects.filter(user=data_owner)
     _ensure_processed_tables_if_missing(data_owner)
     qs = ProcessedDashboardData.objects.filter(user=data_owner)
     fk_qs = FlipkartProcessedDashboardData.objects.filter(user=data_owner)
@@ -725,14 +727,39 @@ def get_dashboard_context(
             payload = None
 
     if not payload:
-        compute_lock_key = f"{cache_key}:lock"
+        # For full-scope sections (visuals/details) share the lock across sections so
+        # parallel page loads don't run the same heavy queries twice simultaneously.
+        is_shared_full_lock = not include_full_payload and str(compute_scope or "full").lower() == "full"
+        if is_shared_full_lock:
+            compute_lock_key = (
+                f"dashboard_compute_lock_v{DASHBOARD_PAYLOAD_CACHE_VERSION}_"
+                f"{data_owner.id}_{view_type}_{data_version}_{cache_hash}"
+            )
+        else:
+            compute_lock_key = f"{cache_key}:lock"
         have_lock = cache.add(compute_lock_key, "1", timeout=120)
         if not have_lock:
-            # Another request is already computing this exact payload.
-            # Wait briefly and reuse the computed result when available.
-            for _ in range(8):
-                time.sleep(0.15)
+            # Another section is computing the same dataset; wait and reuse.
+            # Use longer waits for full-scope shared lock (computation takes 5–20 s).
+            wait_iters, wait_sleep = (30, 1.0) if is_shared_full_lock else (8, 0.15)
+            for _ in range(wait_iters):
+                time.sleep(wait_sleep)
                 payload = cache.get(cache_key)
+                if payload:
+                    break
+                # Check shared materialized summary on each iteration so we unblock
+                # as soon as the winning section stores its result.
+                if not payload and is_shared_full_lock:
+                    payload = get_materialized_summary(
+                        user_id=data_owner.id,
+                        view_type=view_type,
+                        data_version=data_version,
+                        filter_hash=cache_hash,
+                    )
+                    if payload and _payload_needs_refresh(payload):
+                        payload = None
+                    elif payload and _is_kpis_only_payload(payload):
+                        payload = None
                 if payload:
                     break
         if not payload:
@@ -955,12 +982,24 @@ def dashboard_modal_rows_view(request, view_name, modal_key):
         getattr(settings, "DASHBOARD_MODAL_ROWS_CACHE_TTL_SECONDS", 180)
     )
 
-    if export_format not in {"csv", "excel", "xlsx"}:
+    # DataTables mode: client handles all pagination/search — return all rows at once.
+    load_all = request.GET.get("all") == "1" and modal_key != "inventory-health"
+
+    if export_format not in {"csv", "excel", "xlsx"} and not load_all:
         cached_modal_payload = cache.get(modal_rows_cache_key)
         if cached_modal_payload:
             return JsonResponse(cached_modal_payload)
 
+    # All-rows cache: keyed without page/page_size so page 2+ hits this and paginates in Python.
+    all_rows_cache_key = (
+        "dashboard_modal_all_rows_v3_"
+        f"{data_owner.id}_{view_name}_{modal_key}_{data_version}_{filter_hash}_"
+        f"{hashlib.md5(query.encode('utf-8')).hexdigest()}"
+    )
+
     total = 0
+    rows = None
+
     if modal_key == "inventory-health":
         inventory_qs = _get_inventory_modal_queryset(data_owner, filters, query)
         total = inventory_qs.count()
@@ -970,30 +1009,61 @@ def dashboard_modal_rows_view(request, view_name, modal_key):
             else inventory_qs[(page - 1) * page_size : page * page_size]
         )
         rows = [_inventory_summary_row_dict(row) for row in row_qs]
-    elif modal_key == "top-products":
-        rows = _filter_rows_by_query(_get_top_product_modal_rows(data_owner, filters), query)
-    elif modal_key == "declining-products":
-        rows = _filter_rows_by_query(
-            _get_declining_product_modal_rows(data_owner, filters), query
-        )
     else:
-        ctx = get_dashboard_context(
-            request,
-            include_payload=True,
-            cache_view_type=f"{view_name}-dashboard",
-            section_scope="analytics",
-            compute_scope="full",
-        )
-        if ctx is None:
-            return JsonResponse({"error": "Not authenticated"}, status=401)
+        # Fast path 1: per-page HTML already cached (only for non-DataTables mode)
+        # (handled above via modal_rows_cache_key check)
 
-        payload = ctx.get("payload") or {}
-        rows = _resolve_payload_key(payload, payload_key)
-        if not isinstance(rows, list):
+        # Fast path 2: full rows already cached in memory
+        if not export_format:
+            rows = cache.get(all_rows_cache_key)
+
+        # Fast path 3: reuse materialized summary computed by the section view.
+        # Only for modals whose payload key is always fully populated in the materialized
+        # payload — top-products and declining-products store empty lists there.
+        MATERIALIZED_MODAL_KEYS = {"cluster-performance", "category-growth"}
+        if rows is None and modal_key in MATERIALIZED_MODAL_KEYS:
+            mat_payload = get_materialized_summary(
+                user_id=data_owner.id,
+                view_type=f"{view_name}-dashboard",
+                data_version=data_version,
+                filter_hash=filter_hash,
+            )
+            if mat_payload and not _payload_needs_refresh(mat_payload):
+                mat_rows = _resolve_payload_key(mat_payload, payload_key)
+                if isinstance(mat_rows, list) and mat_rows:
+                    rows = _filter_rows_by_query(mat_rows, query)
+                    if not export_format:
+                        cache.set(all_rows_cache_key, rows, timeout=modal_rows_cache_ttl)
+
+        # Slow path: compute from scratch
+        if rows is None:
+            if modal_key == "top-products":
+                rows = _filter_rows_by_query(_get_top_product_modal_rows(data_owner, filters), query)
+            elif modal_key == "declining-products":
+                rows = _filter_rows_by_query(
+                    _get_declining_product_modal_rows(data_owner, filters), query
+                )
+            else:
+                ctx = get_dashboard_context(
+                    request,
+                    include_payload=True,
+                    cache_view_type=f"{view_name}-dashboard",
+                    section_scope="analytics",
+                    compute_scope="full",
+                )
+                if ctx is None:
+                    return JsonResponse({"error": "Not authenticated"}, status=401)
+                payload = ctx.get("payload") or {}
+                rows = _resolve_payload_key(payload, payload_key)
+                if not isinstance(rows, list):
+                    rows = []
+                rows = _filter_rows_by_query(rows, query)
+
+            if not export_format:
+                cache.set(all_rows_cache_key, rows or [], timeout=modal_rows_cache_ttl)
+
+        if rows is None:
             rows = []
-        rows = _filter_rows_by_query(rows, query)
-
-    if modal_key != "inventory-health":
         total = len(rows)
 
     if export_format in {"csv", "excel", "xlsx"}:
@@ -1022,11 +1092,17 @@ def dashboard_modal_rows_view(request, view_name, modal_key):
         )
         return response
 
-    if modal_key != "inventory-health":
-        rows_total, page_rows = _paginate_rows(rows, page, page_size)
-    else:
+    if modal_key == "inventory-health":
         rows_total, page_rows = total, rows
-    total_pages = math.ceil(rows_total / page_size) if rows_total > 0 else 0
+        total_pages = math.ceil(rows_total / page_size) if rows_total > 0 else 0
+    elif load_all:
+        # DataTables client-side: send all rows at once, no server pagination.
+        page_rows = rows
+        rows_total = total
+        total_pages = 1
+    else:
+        rows_total, page_rows = _paginate_rows(rows, page, page_size)
+        total_pages = math.ceil(rows_total / page_size) if rows_total > 0 else 0
 
     html = render_to_string(
         template_name,
@@ -1040,6 +1116,7 @@ def dashboard_modal_rows_view(request, view_name, modal_key):
     )
     payload = {
         "html": html,
+        "use_datatable": load_all,
         "pagination": {
             "page": page,
             "page_size": page_size,
@@ -1049,7 +1126,8 @@ def dashboard_modal_rows_view(request, view_name, modal_key):
             "has_next": page < total_pages,
         },
     }
-    cache.set(modal_rows_cache_key, payload, timeout=modal_rows_cache_ttl)
+    if not load_all:
+        cache.set(modal_rows_cache_key, payload, timeout=modal_rows_cache_ttl)
     return JsonResponse(payload)
 
 
@@ -1085,25 +1163,20 @@ def dashboard_product_card_rows_view(request, view_name, card_key):
     if cached_html:
         return HttpResponse(cached_html)
 
-    if card_key == "top-products":
-        rows = _get_top_product_modal_rows(data_owner, filters)[:5]
-    elif card_key == "declining-products":
-        rows = _get_declining_product_modal_rows(data_owner, filters)[:5]
-    else:
-        ctx = get_dashboard_context(
-            request,
-            include_payload=True,
-            cache_view_type=f"{view_name}-dashboard",
-            section_scope="analytics",
-            compute_scope="full",
-        )
-        if ctx is None:
-            return JsonResponse({"error": "Not authenticated"}, status=401)
+    ctx = get_dashboard_context(
+        request,
+        include_payload=True,
+        cache_view_type=f"{view_name}-dashboard",
+        section_scope="analytics",
+        compute_scope="full",
+    )
+    if ctx is None:
+        return JsonResponse({"error": "Not authenticated"}, status=401)
 
-        rows = _resolve_payload_key((ctx.get("payload") or {}), payload_key)
-        if not isinstance(rows, list):
-            rows = []
-        rows = rows[:5]
+    rows = _resolve_payload_key((ctx.get("payload") or {}), payload_key)
+    if not isinstance(rows, list):
+        rows = []
+    rows = rows[:5]
 
     html = render_to_string(template_name, {"rows": rows}, request=request)
     cache.set(cache_key, html, timeout=300)

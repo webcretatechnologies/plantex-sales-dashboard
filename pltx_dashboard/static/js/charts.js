@@ -232,6 +232,11 @@ function _initializeDataTable(modalEl) {
     var table = modalEl.querySelector('table');
     if (!table) return;
 
+    // Don't initialize on empty/loading state — a colspan placeholder row causes
+    // DataTables tn/18 "Incorrect column count" because it sees 1 column vs N in thead.
+    var bodyRows = table.querySelectorAll('tbody tr');
+    if (!bodyRows.length || (bodyRows.length === 1 && bodyRows[0].querySelector('td[colspan]'))) return;
+
     // Destroy existing DataTable instance if any
     if ($.fn.DataTable.isDataTable(table)) {
         $(table).DataTable().destroy();
@@ -286,7 +291,7 @@ function _loadModalRowsOnDemand(modalEl, opts) {
     if (ths && ths.length) thCount = ths.length;
 
     modalEl.dataset.lazyLoading = '1';
-    
+
     // Destroy existing DataTable before modifying innerHTML
     if (window.jQuery && $.fn.DataTable && modalEl.querySelector('table')) {
         var existingTable = modalEl.querySelector('table');
@@ -294,17 +299,23 @@ function _loadModalRowsOnDemand(modalEl, opts) {
             $(existingTable).DataTable().destroy();
         }
     }
-    
+
     tbody.innerHTML = '<tr><td colspan="' + thCount + '" class="empty">Loading data...</td></tr>';
 
-    var page = Number(opts.page || modalEl.dataset.currentPage || 1) || 1;
-    var pageSize = Number(opts.pageSize || modalEl.dataset.pageSize || 50) || 50;
-    modalEl.dataset.pageSize = String(pageSize);
+    // Non-inventory modals use DataTables (client-side) — request all rows at once.
+    var isInventoryModal = modalEl.classList.contains('inventory-health-modal');
+    var useDataTable = !isInventoryModal && window.jQuery && $.fn.DataTable;
 
-    var extraParams = {
-        page: page,
-        page_size: pageSize
-    };
+    var extraParams;
+    if (useDataTable && !opts.page) {
+        // DataTables mode: load all rows in one shot; DataTables handles pagination/search.
+        extraParams = { all: '1' };
+    } else {
+        var page = Number(opts.page || modalEl.dataset.currentPage || 1) || 1;
+        var pageSize = Number(opts.pageSize || modalEl.dataset.pageSize || 50) || 50;
+        modalEl.dataset.pageSize = String(pageSize);
+        extraParams = { page: page, page_size: pageSize };
+    }
     var searchInput = modalEl.querySelector('.inv-health-search');
     var searchTerm = searchInput ? String(searchInput.value || '').trim() : '';
     if (searchTerm) extraParams.q = searchTerm;
@@ -314,17 +325,21 @@ function _loadModalRowsOnDemand(modalEl, opts) {
     var cacheKey = modalEl.id + "::" + url;
     var cachedPayload = _getModalResponseFromCache(cacheKey);
     
-    function applyLoadedHTML(html, pagination) {
+    function applyLoadedHTML(html, pagination, useDatatable) {
         tbody.innerHTML = html || '<tr><td colspan="' + thCount + '" class="empty">No data available.</td></tr>';
         modalEl.dataset.lazyLoaded = '1';
         if (pagination && pagination.page) {
             modalEl.dataset.currentPage = String(pagination.page);
         }
-        _renderModalPagination(modalEl, pagination || null);
+        if (useDatatable) {
+            _initializeDataTable(modalEl);
+        } else {
+            _renderModalPagination(modalEl, pagination || null);
+        }
     }
     
     if (cachedPayload) {
-        applyLoadedHTML(cachedPayload.html, cachedPayload.pagination);
+        applyLoadedHTML(cachedPayload.html, cachedPayload.pagination, cachedPayload.use_datatable);
         modalEl.dataset.lazyLoading = '0';
         return;
     }
@@ -350,7 +365,8 @@ function _loadModalRowsOnDemand(modalEl, opts) {
         .then(function (payload) {
             applyLoadedHTML(
                 payload && payload.html ? payload.html : null,
-                payload ? payload.pagination : null
+                payload ? payload.pagination : null,
+                !!(payload && payload.use_datatable)
             );
             _setModalResponseCache(cacheKey, payload || {});
         })

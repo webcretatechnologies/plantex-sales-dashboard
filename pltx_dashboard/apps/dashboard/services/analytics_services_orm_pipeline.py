@@ -360,19 +360,6 @@ def _revenue_map_for_skus(qs, sku_field, sku_ids):
     }
 
 
-def _metric_map_for_skus(qs, sku_field, sku_ids, metric_name):
-    if qs is None or not sku_ids:
-        return {}
-    rows = qs.filter(**{f"{sku_field}__in": list(sku_ids)}).values(sku_field).annotate(
-        metric_total=Sum(metric_name)
-    )
-    return {
-        str(row.get(sku_field)): float(row.get("metric_total") or 0.0)
-        for row in rows
-        if row.get(sku_field)
-    }
-
-
 def _safe_growth(curr, prev):
     return calculate_growth(curr, prev)
 
@@ -554,56 +541,93 @@ def _distinct_value_count(qs, field_name, extra_filter=None):
     return int(qs.aggregate(total=Count(field_name, distinct=True)).get("total") or 0)
 
 
-def _compute_zero_selling_metrics(qs, sku_field):
+def _compute_sku_activity_combined(qs, sku_field):
+    """Single GROUP BY replacing both _active_and_selling_counts and _compute_zero_selling_metrics.
+
+    Returns (active, selling, zero_selling_count, zero_sales_pageviews).
+    Saves one full-table COUNT DISTINCT query per platform call.
+    """
     if qs is None:
-        return 0, 0
+        return 0, 0, 0, 0
 
-    cleaned_qs = qs.exclude(**{f"{sku_field}__isnull": True}).exclude(
-        **{f"{sku_field}": ""}
-    )
-    positive_units_subquery = cleaned_qs.filter(units__gt=0).values(sku_field)
-    zero_signal_qs = cleaned_qs.filter(
-        Q(pageviews__gt=0) | Q(revenue__gt=0) | Q(orders__gt=0)
-    ).exclude(**{f"{sku_field}__in": Subquery(positive_units_subquery)})
+    active = selling = zero_selling_count = zero_sales_pv = 0
+    for row in (
+        qs.exclude(**{f"{sku_field}__isnull": True})
+        .exclude(**{sku_field: ""})
+        .values(sku_field)
+        .annotate(
+            total_units=Sum("units"),
+            total_pv=Sum("pageviews"),
+            total_rev=Sum("revenue"),
+            total_orders=Sum("orders"),
+        )
+        .iterator(chunk_size=2000)
+    ):
+        active += 1
+        has_units = (row.get("total_units") or 0) > 0
+        has_activity = (
+            (row.get("total_pv") or 0) > 0
+            or (row.get("total_rev") or 0) > 0
+            or (row.get("total_orders") or 0) > 0
+        )
+        if has_units:
+            selling += 1
+        elif has_activity:
+            zero_selling_count += 1
+            zero_sales_pv += int(row.get("total_pv") or 0)
+    return active, selling, zero_selling_count, zero_sales_pv
 
-    zero_selling_sku_count = int(
-        zero_signal_qs.values(sku_field).distinct().count() or 0
-    )
-    zero_sales_pageviews = int(
-        zero_signal_qs.aggregate(total=Sum("pageviews")).get("total") or 0
-    )
 
-    return zero_selling_sku_count, zero_sales_pageviews
+def _get_fsn_meta_cached(user):
+    """Load FlipkartCategoryMap for user, cached 5 minutes in Redis."""
+    from apps.dashboard.models import FlipkartCategoryMap
+    cache_key = f"fsn_meta_v1_{user.id}"
+    fsn_meta = cache.get(cache_key)
+    if fsn_meta is None:
+        fsn_meta = {}
+        for row in FlipkartCategoryMap.objects.filter(user=user).values(
+            "fsn", "category", "portfolio", "subcategory", "product_status"
+        ):
+            fsn_meta[row["fsn"]] = {
+                "category": row["category"] or "",
+                "portfolio": row["portfolio"] or "",
+                "subcategory": row["subcategory"] or "",
+                "product_status": row["product_status"] or "",
+            }
+        cache.set(cache_key, fsn_meta, timeout=300)
+    return fsn_meta
+
+
+def _get_asin_meta_cached(user):
+    """Load CategoryMapping for user, cached 5 minutes in Redis."""
+    from apps.dashboard.models import CategoryMapping
+    cache_key = f"asin_meta_v1_{user.id}"
+    asin_meta = cache.get(cache_key)
+    if asin_meta is None:
+        asin_meta = {}
+        for row in CategoryMapping.objects.filter(user=user).values(
+            "asin", "category", "portfolio"
+        ):
+            asin_meta[row["asin"]] = {
+                "category": row["category"] or "",
+                "portfolio": row["portfolio"] or "",
+            }
+        cache.set(cache_key, asin_meta, timeout=300)
+    return asin_meta
 
 
 def _compute_activity_metrics(qs_f, fk_qs_f, filters, user, fsn_meta=None):
-    active_sku_count = _distinct_value_count(qs_f, "asin") + _distinct_value_count(
-        fk_qs_f, "fsn"
-    )
-    selling_sku_count = _distinct_value_count(
-        qs_f, "asin", Q(units__gt=0)
-    ) + _distinct_value_count(fk_qs_f, "fsn", Q(units__gt=0))
-
-    az_zero_sku_count, az_zero_pageviews = _compute_zero_selling_metrics(qs_f, "asin")
-    fk_zero_sku_count, fk_zero_pageviews = _compute_zero_selling_metrics(fk_qs_f, "fsn")
+    az_active, az_selling, az_zero_sku_count, az_zero_pageviews = _compute_sku_activity_combined(qs_f, "asin")
+    fk_active, fk_selling, fk_zero_sku_count, fk_zero_pageviews = _compute_sku_activity_combined(fk_qs_f, "fsn")
+    active_sku_count = az_active + fk_active
+    selling_sku_count = az_selling + fk_selling
 
     status_counts = {"Continued": 0, "Discontinued": 0}
     status_revenue = {"Continued": 0.0, "Discontinued": 0.0}
 
     if fk_qs_f is not None:
         if fsn_meta is None:
-            from apps.dashboard.models import FlipkartCategoryMap
-
-            fsn_meta = {}
-            for row in FlipkartCategoryMap.objects.filter(user=user).values(
-                "fsn", "category", "portfolio", "subcategory", "product_status"
-            ):
-                fsn_meta[row["fsn"]] = {
-                    "category": row["category"] or "",
-                    "portfolio": row["portfolio"] or "",
-                    "subcategory": row["subcategory"] or "",
-                    "product_status": row["product_status"] or "",
-                }
+            fsn_meta = _get_fsn_meta_cached(user)
 
         cat_filter = filters.get("category")
         port_filter = filters.get("portfolio")
@@ -726,49 +750,6 @@ def _merge_previous_revenue_map(store, qs, sku_field):
         store[sku] = store.get(sku, 0.0) + float(row.get("revenue") or 0.0)
 
 
-def _limited_previous_revenue_rows(qs, sku_field, limit=250):
-    if qs is None:
-        return []
-
-    rows = []
-    for row in (
-        qs.exclude(**{f"{sku_field}__isnull": True})
-        .exclude(**{sku_field: ""})
-        .values(sku_field)
-        .annotate(revenue=Sum("revenue"))
-        .filter(revenue__gt=0)
-        .order_by("-revenue")[:limit]
-    ):
-        sku = str(row.get(sku_field) or "").strip()
-        if not sku:
-            continue
-        rows.append(
-            {
-                "sku": sku,
-                "revenue": float(row.get("revenue") or 0.0),
-            }
-        )
-    return rows
-
-
-def _merge_period_revenue_map(store, qs, sku_field, start_date, end_date):
-    if qs is None:
-        return
-
-    for row in (
-        qs.filter(date__gte=start_date, date__lte=end_date)
-        .exclude(**{f"{sku_field}__isnull": True})
-        .exclude(**{sku_field: ""})
-        .values(sku_field)
-        .annotate(revenue=Sum("revenue"))
-        .iterator(chunk_size=5000)
-    ):
-        sku = str(row.get(sku_field) or "").strip()
-        if not sku:
-            continue
-        store[sku] = store.get(sku, 0.0) + float(row.get("revenue") or 0.0)
-
-
 def _build_top_product_rows(
     qs_f,
     fk_qs_f,
@@ -845,72 +826,66 @@ def _build_declining_product_rows(
     pm_end,
     include_full_payload=False,
 ):
-    if not include_full_payload:
-        candidate_limit = 250
-        prev_candidates = {}
-        for row in _limited_previous_revenue_rows(
-            qs.filter(date__gte=pm_start, date__lte=pm_end) if qs is not None else None,
-            "asin",
-            limit=candidate_limit,
-        ):
-            prev_candidates[row["sku"]] = prev_candidates.get(row["sku"], 0.0) + float(
-                row.get("revenue") or 0.0
-            )
-        for row in _limited_previous_revenue_rows(
-            fk_qs.filter(date__gte=pm_start, date__lte=pm_end) if fk_qs is not None else None,
-            "fsn",
-            limit=candidate_limit,
-        ):
-            prev_candidates[row["sku"]] = prev_candidates.get(row["sku"], 0.0) + float(
-                row.get("revenue") or 0.0
-            )
-
-        candidate_skus = list(prev_candidates.keys())
-        if not candidate_skus:
-            return []
-
-        curr_revenue_by_sku = {}
-        for sku, revenue in _metric_map_for_skus(
-            qs.filter(date__gte=cm_start, date__lte=cm_end) if qs is not None else None,
-            "asin",
-            candidate_skus,
-            "revenue",
-        ).items():
-            curr_revenue_by_sku[sku] = curr_revenue_by_sku.get(sku, 0.0) + revenue
-        for sku, revenue in _metric_map_for_skus(
-            fk_qs.filter(date__gte=cm_start, date__lte=cm_end) if fk_qs is not None else None,
-            "fsn",
-            candidate_skus,
-            "revenue",
-        ).items():
-            curr_revenue_by_sku[sku] = curr_revenue_by_sku.get(sku, 0.0) + revenue
-
-        rows = []
-        for sku, prev_revenue in prev_candidates.items():
-            curr_revenue = curr_revenue_by_sku.get(sku, 0.0)
-            if prev_revenue <= 0 or curr_revenue >= prev_revenue:
-                continue
-            drop_pct = _safe_growth(curr_revenue, prev_revenue)
-            if drop_pct >= 0:
-                continue
-            rows.append(
-                {
-                    "sku": sku,
-                    "revenue": curr_revenue,
-                    "drop_pct": drop_pct,
-                    "impact": max(prev_revenue - curr_revenue, 0.0),
-                }
-            )
-
-        rows.sort(key=lambda item: (-(item["impact"] or 0.0), item["drop_pct"]))
-        return rows[:5]
-
     cm_sku_rev = {}
     pm_sku_rev = {}
-    _merge_period_revenue_map(cm_sku_rev, qs, "asin", cm_start, cm_end)
-    _merge_period_revenue_map(pm_sku_rev, qs, "asin", pm_start, pm_end)
-    _merge_period_revenue_map(cm_sku_rev, fk_qs, "fsn", cm_start, cm_end)
-    _merge_period_revenue_map(pm_sku_rev, fk_qs, "fsn", pm_start, pm_end)
+    period_min = min(cm_start, pm_start)
+    period_max = max(cm_end, pm_end)
+
+    if qs is not None:
+        for row in (
+            qs.filter(date__gte=period_min, date__lte=period_max)
+            .values("asin")
+            .annotate(
+                cm_r=Sum(
+                    Case(
+                        When(date__gte=cm_start, date__lte=cm_end, then=F("revenue")),
+                        default=Value(0.0),
+                    )
+                ),
+                pm_r=Sum(
+                    Case(
+                        When(date__gte=pm_start, date__lte=pm_end, then=F("revenue")),
+                        default=Value(0.0),
+                    )
+                ),
+            )
+            .iterator(chunk_size=5000)
+        ):
+            sku = str(row.get("asin") or "").strip()
+            if not sku:
+                continue
+            if row.get("cm_r"):
+                cm_sku_rev[sku] = float(row.get("cm_r") or 0.0)
+            if row.get("pm_r"):
+                pm_sku_rev[sku] = float(row.get("pm_r") or 0.0)
+
+    if fk_qs is not None:
+        for row in (
+            fk_qs.filter(date__gte=period_min, date__lte=period_max)
+            .values("fsn")
+            .annotate(
+                cm_r=Sum(
+                    Case(
+                        When(date__gte=cm_start, date__lte=cm_end, then=F("revenue")),
+                        default=Value(0.0),
+                    )
+                ),
+                pm_r=Sum(
+                    Case(
+                        When(date__gte=pm_start, date__lte=pm_end, then=F("revenue")),
+                        default=Value(0.0),
+                    )
+                ),
+            )
+            .iterator(chunk_size=5000)
+        ):
+            sku = str(row.get("fsn") or "").strip()
+            if not sku:
+                continue
+            if row.get("cm_r"):
+                cm_sku_rev[sku] = cm_sku_rev.get(sku, 0.0) + float(row.get("cm_r") or 0.0)
+            if row.get("pm_r"):
+                pm_sku_rev[sku] = pm_sku_rev.get(sku, 0.0) + float(row.get("pm_r") or 0.0)
 
     rows = []
     for sku in set(cm_sku_rev.keys()) | set(pm_sku_rev.keys()):
@@ -982,18 +957,7 @@ def run_kpi_only_computation(
 
     fsn_meta = None
     if include_activity_metrics and fk_qs_f is not None:
-        from apps.dashboard.models import FlipkartCategoryMap
-
-        fsn_meta = {}
-        for row in FlipkartCategoryMap.objects.filter(user=user).values(
-            "fsn", "category", "portfolio", "subcategory", "product_status"
-        ):
-            fsn_meta[row["fsn"]] = {
-                "category": row["category"] or "",
-                "portfolio": row["portfolio"] or "",
-                "subcategory": row["subcategory"] or "",
-                "product_status": row["product_status"] or "",
-            }
+        fsn_meta = _get_fsn_meta_cached(user)
 
     if include_activity_metrics:
         activity_metrics = _compute_activity_metrics(
@@ -1329,27 +1293,10 @@ def run_orm_computation(
     fk_prev_f = apply_global_filters_orm(fk_prev, {}) if fk_prev is not None else None
 
     # ── Pre-fetch category/portfolio metadata ONCE for both current + prev periods ──
-    # This avoids the 4 duplicate CategoryMapping / FlipkartCategoryMap DB queries
-    # that generate_bi_data_orm would otherwise fire independently each call.
-    from apps.dashboard.models import CategoryMapping as _CategoryMapping, FlipkartCategoryMap as _FlipkartCategoryMap
-    _asin_meta = {}
-    if qs is not None:
-        for _row in _CategoryMapping.objects.filter(user=user).values("asin", "category", "portfolio"):
-            _asin_meta[_row["asin"]] = {
-                "category": _row["category"] or "",
-                "portfolio": _row["portfolio"] or "",
-            }
-    _fsn_meta = {}
-    if fk_qs is not None:
-        for _row in _FlipkartCategoryMap.objects.filter(user=user).values(
-            "fsn", "category", "portfolio", "subcategory", "product_status"
-        ):
-            _fsn_meta[_row["fsn"]] = {
-                "category": _row["category"] or "",
-                "portfolio": _row["portfolio"] or "",
-                "subcategory": _row["subcategory"] or "",
-                "product_status": _row["product_status"] or "",
-            }
+    # Uses Redis-cached helpers (300 s TTL) so repeated filter changes within the
+    # same session never re-hit the DB for the same static mapping tables.
+    _asin_meta = _get_asin_meta_cached(user) if qs is not None else {}
+    _fsn_meta = _get_fsn_meta_cached(user) if fk_qs is not None else {}
 
     # ── Master table data (used to eliminate duplicate DB hits) ──
     if use_summary_rollups:
@@ -1380,15 +1327,18 @@ def run_orm_computation(
 
     if use_summary_rollups:
         summary_prev = get_prev_period_qs(summary_base_qs, filters)
-        prev_summary_metrics = _summary_metrics_by_platform(summary_prev)
-        prev_kpis_totals = _combined_metrics(
-            prev_summary_metrics["Amazon"],
-            prev_summary_metrics["Flipkart"],
-        )
-        prev_rev_by_port = _summary_revenue_by_dimension(summary_prev, "portfolio")
-        prev_rev_by_cat = _summary_revenue_by_dimension(summary_prev, "category")
-        prev_az_rev = prev_summary_metrics["Amazon"]["revenue"]
-        prev_fk_rev = prev_summary_metrics["Flipkart"]["revenue"]
+        # Single GROUP BY (platform, portfolio, category) replaces 3 separate queries:
+        # _summary_metrics_by_platform + 2× _summary_revenue_by_dimension.
+        for _row in summary_prev.values("platform", "portfolio", "category").annotate(rev=Sum("revenue")):
+            _rev = float(_row.get("rev") or 0)
+            _port_key = str(_row.get("portfolio") or "Unknown")
+            _cat_key = str(_row.get("category") or "Unknown")
+            prev_rev_by_port[_port_key] = prev_rev_by_port.get(_port_key, 0) + _rev
+            prev_rev_by_cat[_cat_key] = prev_rev_by_cat.get(_cat_key, 0) + _rev
+            if _row.get("platform") == "Amazon":
+                prev_az_rev += _rev
+            elif _row.get("platform") == "Flipkart":
+                prev_fk_rev += _rev
     elif qs_prev_f is not None or fk_prev_f is not None:
         table_data_prev = generate_bi_data_orm(
             qs_prev_f,
@@ -1407,27 +1357,13 @@ def run_orm_computation(
             prev_rev_by_cat[cat] = prev_rev_by_cat.get(cat, 0) + r["revenue"]
 
     if use_summary_rollups:
-        current_summary_metrics = _summary_metrics_by_platform(summary_qs_f)
-        az_totals = current_summary_metrics["Amazon"]
-        fk_totals = current_summary_metrics["Flipkart"]
-        total_revenue = az_totals["revenue"] + fk_totals["revenue"]
-        total_spend = az_totals["total_spend"] + fk_totals["total_spend"]
-        kpis = {
-            "revenue": total_revenue,
-            "az_revenue": az_totals["revenue"],
-            "fk_revenue": fk_totals["revenue"],
-            "orders": az_totals["orders"] + fk_totals["orders"],
-            "az_orders": az_totals["orders"],
-            "fk_orders": fk_totals["orders"],
-            "units": az_totals["units"] + fk_totals["units"],
-            "az_units": az_totals["units"],
-            "fk_units": fk_totals["units"],
-            "pageviews": az_totals["pageviews"] + fk_totals["pageviews"],
-            "spend": total_spend,
-            "az_spend": az_totals["total_spend"],
-            "fk_spend": fk_totals["total_spend"],
-            "active_asins": len(table_data),
-        }
+        # Reuse kpis already computed inside run_kpi_only_computation — avoids
+        # re-issuing _summary_metrics_by_platform(summary_qs_f) (one DB round-trip).
+        _skpi = dict(summary_kpi_payload.get("kpis") or {}) if summary_kpi_payload else {}
+        total_revenue = float(_skpi.get("revenue") or 0)
+        total_spend = float(_skpi.get("spend") or 0)
+        kpis = _skpi
+        kpis["active_asins"] = len(table_data)
     else:
         total_revenue = sum(r["revenue"] for r in table_data)
         total_spend = sum(r["total_spend"] for r in table_data)
@@ -1459,21 +1395,22 @@ def run_orm_computation(
         conversion = amazon_cvr(kpis["orders"], kpis["pageviews"])
     tacos = calculate_tacos(total_revenue, kpis["spend"])
 
-    # Ad Spend SKUs = individual spend rows with spend > 0 (from raw SpendData
-    # table), NOT unique ASINs.  This matches the source file row count.
+    # Ad Spend SKUs: skip when use_summary_rollups — already computed in
+    # run_kpi_only_computation and available via summary_kpi_payload["kpis"].
     az_ad_spend_sku_count = 0
-    if spend_qs is not None and platform_filter != "Flipkart":
-        spend_qs_f = apply_global_filters_orm(spend_qs, filters)
-        if spend_qs_f is not None:
-            az_ad_spend_sku_count = spend_qs_f.filter(spend__gt=0).count()
     fk_ad_spend_sku_count = 0
-    if fk_qs_f is not None and platform_filter != "Amazon":
-        from apps.dashboard.models import FlipkartPLA
-        fk_pla_qs = apply_global_filters_orm(
-            FlipkartPLA.objects.filter(user=user), filters
-        )
-        if fk_pla_qs is not None:
-            fk_ad_spend_sku_count = fk_pla_qs.filter(ad_spend__gt=0).count()
+    if not use_summary_rollups:
+        if spend_qs is not None and platform_filter != "Flipkart":
+            spend_qs_f = apply_global_filters_orm(spend_qs, filters)
+            if spend_qs_f is not None:
+                az_ad_spend_sku_count = spend_qs_f.filter(spend__gt=0).count()
+        if fk_qs_f is not None and platform_filter != "Amazon":
+            from apps.dashboard.models import FlipkartPLA
+            fk_pla_qs = apply_global_filters_orm(
+                FlipkartPLA.objects.filter(user=user), filters
+            )
+            if fk_pla_qs is not None:
+                fk_ad_spend_sku_count = fk_pla_qs.filter(ad_spend__gt=0).count()
 
     # 0-Sales SKU count: only ASINs that appear in the sales file
     # (have pageviews, revenue, or orders > 0, OR exist in the raw Sales file).
@@ -1670,68 +1607,61 @@ def run_orm_computation(
     yoy_pm_start = safe_replace_year(pm_start)
     yoy_pm_end = safe_replace_year(pm_end)
 
-    _growth_periods = {
-        "cm": (cm_start, cm_end),
-        "pm": (pm_start, pm_end),
-        "ppm": (ppm_start, ppm_end),
-        "yoy_cm": (yoy_cm_start, yoy_cm_end),
-        "yoy_pm": (yoy_pm_start, yoy_pm_end),
-    }
-    if use_summary_rollups:
-        az_periods = _batch_period_aggregates(
-            summary_base_qs.filter(platform="Amazon"), _growth_periods
-        )
-        fk_periods = _batch_period_aggregates(
-            summary_base_qs.filter(platform="Flipkart"), _growth_periods
-        )
-    else:
+    # When use_summary_rollups, all growth KPIs are already in summary_kpi_payload
+    # (computed by run_kpi_only_computation). Skip the two _batch_period_aggregates
+    # DB round-trips and the downstream growth KPI calculations — they would just
+    # be overwritten at the kpis-override below anyway.
+    if not use_summary_rollups:
+        _growth_periods = {
+            "cm": (cm_start, cm_end),
+            "pm": (pm_start, pm_end),
+            "ppm": (ppm_start, ppm_end),
+            "yoy_cm": (yoy_cm_start, yoy_cm_end),
+            "yoy_pm": (yoy_pm_start, yoy_pm_end),
+        }
         az_periods = _batch_period_aggregates(qs, _growth_periods)
         fk_periods = _batch_period_aggregates(fk_qs, _growth_periods)
 
-    # Combined (Amazon + Flipkart) period values
-    cm_rev = az_periods["cm_rev"] + fk_periods["cm_rev"]
-    pm_rev = az_periods["pm_rev"] + fk_periods["pm_rev"]
-    ppm_rev = az_periods["ppm_rev"] + fk_periods["ppm_rev"]
-    yoy_cm_rev = az_periods["yoy_cm_rev"] + fk_periods["yoy_cm_rev"]
-    yoy_pm_rev = az_periods["yoy_pm_rev"] + fk_periods["yoy_pm_rev"]
+        cm_rev = az_periods["cm_rev"] + fk_periods["cm_rev"]
+        pm_rev = az_periods["pm_rev"] + fk_periods["pm_rev"]
+        ppm_rev = az_periods["ppm_rev"] + fk_periods["ppm_rev"]
+        yoy_cm_rev = az_periods["yoy_cm_rev"] + fk_periods["yoy_cm_rev"]
+        yoy_pm_rev = az_periods["yoy_pm_rev"] + fk_periods["yoy_pm_rev"]
 
-    # Per-platform period values
-    cm_az_rev = az_periods["cm_rev"]
-    pm_az_rev = az_periods["pm_rev"]
-    yoy_cm_az_rev = az_periods["yoy_cm_rev"]
-    cm_fk_rev = fk_periods["cm_rev"]
-    pm_fk_rev = fk_periods["pm_rev"]
-    yoy_cm_fk_rev = fk_periods["yoy_cm_rev"]
+        cm_az_rev = az_periods["cm_rev"]
+        pm_az_rev = az_periods["pm_rev"]
+        yoy_cm_az_rev = az_periods["yoy_cm_rev"]
+        cm_fk_rev = fk_periods["cm_rev"]
+        pm_fk_rev = fk_periods["pm_rev"]
+        yoy_cm_fk_rev = fk_periods["yoy_cm_rev"]
 
-    cm_spend = az_periods["cm_spend"] + fk_periods["cm_spend"]
-    pm_spend = az_periods["pm_spend"] + fk_periods["pm_spend"]
+        cm_spend = az_periods["cm_spend"] + fk_periods["cm_spend"]
+        pm_spend = az_periods["pm_spend"] + fk_periods["pm_spend"]
 
-    kpis["mom_growth"] = _safe_growth(cm_rev, pm_rev)
-    kpis["yoy_growth"] = _safe_growth(cm_rev, yoy_cm_rev)
-    kpis["az_mom_growth"] = _safe_growth(cm_az_rev, pm_az_rev)
-    kpis["fk_mom_growth"] = _safe_growth(cm_fk_rev, pm_fk_rev)
-    kpis["az_yoy_growth"] = _safe_growth(cm_az_rev, yoy_cm_az_rev)
-    kpis["fk_yoy_growth"] = _safe_growth(cm_fk_rev, yoy_cm_fk_rev)
-    kpis["prev_mom"] = _safe_growth(pm_rev, ppm_rev)
-    kpis["prev_yoy"] = _safe_growth(pm_rev, yoy_pm_rev)
-    kpis["mom_period_current_start"] = cm_start
-    kpis["mom_period_current_end"] = cm_end
-    kpis["mom_period_previous_start"] = pm_start
-    kpis["mom_period_previous_end"] = pm_end
-    kpis["yoy_period_previous_start"] = yoy_cm_start
-    kpis["yoy_period_previous_end"] = yoy_cm_end
-    kpis["mom_current_revenue"] = round(cm_rev, 2)
-    kpis["mom_previous_revenue"] = round(pm_rev, 2)
-    kpis["yoy_previous_revenue"] = round(yoy_cm_rev, 2)
-    kpis["mom_spend_growth"] = _safe_growth(cm_spend, pm_spend)
-    
-    cm_roas = calculate_roas(cm_rev, cm_spend)
-    pm_roas = calculate_roas(pm_rev, pm_spend)
-    kpis["mom_roas_change"] = round(cm_roas - pm_roas, 2)
-    
-    cm_tacos = calculate_tacos(cm_rev, cm_spend)
-    pm_tacos = calculate_tacos(pm_rev, pm_spend)
-    kpis["mom_tacos_change"] = round(cm_tacos - pm_tacos, 1)
+        kpis["mom_growth"] = _safe_growth(cm_rev, pm_rev)
+        kpis["yoy_growth"] = _safe_growth(cm_rev, yoy_cm_rev)
+        kpis["az_mom_growth"] = _safe_growth(cm_az_rev, pm_az_rev)
+        kpis["fk_mom_growth"] = _safe_growth(cm_fk_rev, pm_fk_rev)
+        kpis["az_yoy_growth"] = _safe_growth(cm_az_rev, yoy_cm_az_rev)
+        kpis["fk_yoy_growth"] = _safe_growth(cm_fk_rev, yoy_cm_fk_rev)
+        kpis["prev_mom"] = _safe_growth(pm_rev, ppm_rev)
+        kpis["prev_yoy"] = _safe_growth(pm_rev, yoy_pm_rev)
+        kpis["mom_period_current_start"] = cm_start
+        kpis["mom_period_current_end"] = cm_end
+        kpis["mom_period_previous_start"] = pm_start
+        kpis["mom_period_previous_end"] = pm_end
+        kpis["yoy_period_previous_start"] = yoy_cm_start
+        kpis["yoy_period_previous_end"] = yoy_cm_end
+        kpis["mom_current_revenue"] = round(cm_rev, 2)
+        kpis["mom_previous_revenue"] = round(pm_rev, 2)
+        kpis["yoy_previous_revenue"] = round(yoy_cm_rev, 2)
+        kpis["mom_spend_growth"] = _safe_growth(cm_spend, pm_spend)
+        cm_roas = calculate_roas(cm_rev, cm_spend)
+        pm_roas = calculate_roas(pm_rev, pm_spend)
+        kpis["mom_roas_change"] = round(cm_roas - pm_roas, 2)
+        cm_tacos = calculate_tacos(cm_rev, cm_spend)
+        pm_tacos = calculate_tacos(pm_rev, pm_spend)
+        kpis["mom_tacos_change"] = round(cm_tacos - pm_tacos, 1)
 
     # Used by forecast and other sections that should anchor to data freshness.
     today = data_anchor_date
@@ -2158,28 +2088,24 @@ def run_orm_computation(
             "calculation": "No critical thresholds breached"
         })
 
-    include_inline_product_cards = include_full_payload
-    top_prods = []
-    under_prods = []
-    if include_inline_product_cards:
-        top_prods = _build_top_product_rows(
-            qs_f,
-            fk_qs_f,
-            qs_prev_f,
-            fk_prev_f,
-            asin_meta=_asin_meta,
-            fsn_meta=_fsn_meta,
-            include_full_payload=include_full_payload,
-        )
-        under_prods = _build_declining_product_rows(
-            qs,
-            fk_qs,
-            cm_start,
-            cm_end,
-            pm_start,
-            pm_end,
-            include_full_payload=include_full_payload,
-        )
+    top_prods = _build_top_product_rows(
+        qs_f,
+        fk_qs_f,
+        qs_prev_f,
+        fk_prev_f,
+        asin_meta=_asin_meta,
+        fsn_meta=_fsn_meta,
+        include_full_payload=include_full_payload,
+    )
+    under_prods = _build_declining_product_rows(
+        qs,
+        fk_qs,
+        cm_start,
+        cm_end,
+        pm_start,
+        pm_end,
+        include_full_payload=include_full_payload,
+    )
 
     if use_summary_rollups:
         port_perf_dict = {
