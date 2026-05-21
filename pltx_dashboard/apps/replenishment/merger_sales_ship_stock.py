@@ -188,6 +188,7 @@ def generate_master_report(
         (sales_df, "Cluster Name"),
         (stock_df, "Cluster Name"),
         (ship_df, "Cluster"),
+        (flex_qty_df, "Cluster"),
     ]:
         if not df.empty:
             if "ASIN" in df.columns:
@@ -198,8 +199,21 @@ def generate_master_report(
     if not business_df.empty and "(Child) ASIN" in business_df.columns:
         asin_set.update(business_df["(Child) ASIN"].dropna().astype(str).unique())
 
-    if not database_df.empty and "ASIN" in database_df.columns:
-        asin_set.update(database_df["ASIN"].dropna().astype(str).unique())
+    if not database_df.empty:
+        if "ASIN" in database_df.columns:
+            asin_set.update(database_df["ASIN"].dropna().astype(str).unique())
+        if "Cluster" in database_df.columns:
+            lis_mapping = {
+                "CHN_CLUSTER": "CHENNAI", "NAG_CLUSTER": "NAGPUR", "GAA_CLUSTER": "GUWAHATI",
+                "PAT_CLUSTER": "PATNA", "SAT_CLUSTER": "LUDHIANA", "PUN_CLUSTER": "PUNE",
+                "AMD_CLUSTER": "AHMEDABAD", "HRA_CLUSTER": "DELHI", "BLR_CLUSTER": "BANGALORE",
+                "IND_CLUSTER": "INDORE", "BOM_CLUSTER": "MUMBAI", "BHU_CLUSTER": "BHUBANESWAR",
+                "JAI_CLUSTER": "JAIPUR", "COI_CLUSTER": "COIMBATORE", "HYD_CLUSTER": "HYDERABAD",
+                "LKO_CLUSTER": "LUCKNOW", "KOL_CLUSTER": "KOLKATA", "HUB_CLUSTER": "HUBLI",
+            }
+            reverse_lis = {v: k for k, v in lis_mapping.items()}
+            mapped_clusters = database_df["Cluster"].map(reverse_lis).fillna(database_df["Cluster"])
+            cluster_set.update(mapped_clusters.dropna().astype(str).unique())
 
     if not product_details_df.empty and "ASIN" in product_details_df.columns:
         asin_set.update(product_details_df["ASIN"].dropna().astype(str).unique())
@@ -222,7 +236,6 @@ def generate_master_report(
     cluster_list = sorted([
         c for c in cluster_set
         if str(c).strip().lower() not in ('nan', 'none', '')
-        and "_SF" not in str(c).upper()
     ])
 
     print(
@@ -491,11 +504,11 @@ def generate_master_report(
                 if "Qty" in flex_qty_df_renamed.columns:
                     flex_qty_df_renamed.rename(columns={"Qty": "Flex Qty"}, inplace=True)
                 
-                # Keep only necessary columns
+                # Keep only necessary columns and sum them
                 flex_merge_cols = [c for c in ["ASIN", "Ideal Cluster", "Flex Qty"] if c in flex_qty_df_renamed.columns]
-                flex_qty_subset = flex_qty_df_renamed[flex_merge_cols].drop_duplicates(
-                    subset=["ASIN", "Ideal Cluster"] if "Ideal Cluster" in flex_merge_cols else ["ASIN"]
-                )
+                
+                group_cols = ["ASIN", "Ideal Cluster"] if "Ideal Cluster" in flex_merge_cols else ["ASIN"]
+                flex_qty_subset = flex_qty_df_renamed[flex_merge_cols].groupby(group_cols, as_index=False)["Flex Qty"].sum()
                 
                 master_df = pd.merge(
                     master_df,
@@ -516,11 +529,13 @@ def generate_master_report(
     print("Merging Business Report Data...")
     if not business_df.empty:
         business_df["(Child) ASIN"] = business_df["(Child) ASIN"].astype(str)
-        # Clean currency format in Ordered Product Sales before merging
-        if "Ordered Product Sales" in business_df.columns:
-            business_df["Ordered Product Sales"] = business_df["Ordered Product Sales"].apply(
-                lambda x: str(x).replace("₹", "").replace(",", "").strip() if isinstance(x, str) else x
-            )
+        # Clean numbers before merging, but keep Ordered Product Sales intact to retain the ₹ symbol
+        for c in ["Page Views - Total", "Units Ordered", "Total Order Items"]:
+            if c in business_df.columns:
+                business_df[c] = business_df[c].apply(
+                    lambda x: str(x).replace(",", "").strip() if isinstance(x, str) else x
+                )
+                business_df[c] = pd.to_numeric(business_df[c], errors="coerce").fillna(0)
         business_cols = [
             "(Child) ASIN",
             "Page Views - Total",
@@ -538,9 +553,7 @@ def generate_master_report(
         # master_df['ASIN'] == business_df['(Child) ASIN']
         # We keep '(Child) ASIN' in b_subset, but create 'ASIN' for joining
         b_subset["ASIN"] = b_subset["(Child) ASIN"]
-        # Ensure Ordered Product Sales is numeric before merging
-        if "Ordered Product Sales" in b_subset.columns:
-            b_subset["Ordered Product Sales"] = pd.to_numeric(b_subset["Ordered Product Sales"], errors="coerce").fillna(0)
+
         master_df = pd.merge(master_df, b_subset, on="ASIN", how="left")
     else:
         for col in [
@@ -580,10 +593,9 @@ def generate_master_report(
             "HUB_CLUSTER": "HUBLI",
         }
 
-        # Determine the LIS Cluster Name first!
         # Map LIS_CLUSTER based exclusively on the Ideal Cluster column
         master_df["LIS_CLUSTER"] = (
-            master_df["Ideal Cluster"].map(lis_mapping).fillna("")
+            master_df["Ideal Cluster"].map(lis_mapping).fillna(master_df["Ideal Cluster"])
         )
 
         db_cols = [
@@ -594,18 +606,19 @@ def generate_master_report(
         ]
         db_subset = database_df[[c for c in db_cols if c in database_df.columns]].copy()
 
+        # Map Cluster back to Ideal Cluster
+        reverse_lis = {v: k for k, v in lis_mapping.items()}
+        db_subset["Ideal Cluster"] = db_subset["Cluster"].map(reverse_lis).fillna(db_subset["Cluster"])
+
         db_subset.rename(
             columns={
-                "Cluster": "LIS_CLUSTER",
                 "Sum of Local Shipped Units": "LIS_LOCAL_QTY",
                 "Sum of Total Units": "LIS_TOTAL_QTY",
             },
             inplace=True,
         )
 
-        db_group_cols = ["ASIN"]
-        if "LIS_CLUSTER" in db_subset.columns:
-            db_group_cols.append("LIS_CLUSTER")
+        db_group_cols = ["ASIN", "Ideal Cluster"]
             
         db_agg_cols = [c for c in ["LIS_LOCAL_QTY", "LIS_TOTAL_QTY"] if c in db_subset.columns]
         
@@ -614,15 +627,8 @@ def generate_master_report(
         else:
             db_agg = db_subset.copy()
 
-        # Merge database data onto master_df using ASIN and LIS_CLUSTER
-        # Ensure data types are consistent for merge
-        merge_on_cols = ["ASIN"]
-        if "LIS_CLUSTER" in db_agg.columns and "LIS_CLUSTER" in master_df.columns:
-            db_agg["LIS_CLUSTER"] = db_agg["LIS_CLUSTER"].astype(str)
-            master_df["LIS_CLUSTER"] = master_df["LIS_CLUSTER"].astype(str)
-            merge_on_cols.append("LIS_CLUSTER")
-            
-        master_df = pd.merge(master_df, db_agg, on=merge_on_cols, how="left")
+        # Merge database data onto master_df using ASIN and Ideal Cluster
+        master_df = pd.merge(master_df, db_agg, on=["ASIN", "Ideal Cluster"], how="left")
 
     else:
         master_df["LIS_LOCAL_QTY"] = 0
@@ -634,12 +640,6 @@ def generate_master_report(
 
     # --- Fill NaNs ---
     print("\nData Cleanup & Calculations...")
-    
-    # Clean 'Ordered Product Sales' column to handle currency format (₹10,11,873.00 -> 1011873.00)
-    if "Ordered Product Sales" in master_df.columns:
-        master_df["Ordered Product Sales"] = master_df["Ordered Product Sales"].apply(
-            lambda x: str(x).replace("₹", "").replace(",", "").strip() if isinstance(x, str) else x
-        )
     
     numeric_columns = [
         "DRR",
@@ -662,7 +662,6 @@ def generate_master_report(
         "LIS_TOTAL_QTY",
         "Page Views - Total",
         "Units Ordered",
-        "Ordered Product Sales",
         "Total Order Items",
         "National Doc",
     ]
@@ -679,7 +678,7 @@ def generate_master_report(
             master_df[col] = master_df[col].fillna("")
 
     # --- Calculate Total Shipment Qty ---
-    # As per requirements, Shipment Qty is the sum of all 3 DFC categories.
+    # Shipment Qty is the sum of all Appointment Pending, Upcoming, and Intransit categories for DFC.
     master_df["Shipment Qty"] = (
         master_df.get("DFC Appointment Pending Qty", 0)
         + master_df.get("DFC Upcoming Shipment Qty", 0)
@@ -695,7 +694,7 @@ def generate_master_report(
     # Stock Transfer Qty comes strictly from Stock Report ('In Transit Between Warehouses')
     master_df["Stock Transfer Qty"] = master_df.get(
         "Stock Transfer Qty", 0
-    )  # if it already existed from stock_df merge
+    )
 
     total_orders = master_df.get("Total Order Items", pd.Series([0]*len(master_df)))
     page_views = master_df.get("Page Views - Total", pd.Series([0]*len(master_df)))
@@ -707,8 +706,15 @@ def generate_master_report(
         page_views = pd.Series([page_views]*len(master_df))
         
     master_df["Conversion Pct"] = (
-        (total_orders / page_views.replace(0, pd.NA)) * 100
+        (pd.to_numeric(total_orders, errors='coerce') / pd.to_numeric(page_views, errors='coerce').replace(0, pd.NA)) * 100
     ).replace([float("inf"), -float("inf")], 0).fillna(0).round(2).astype(str) + "%"
+
+    # Blank out National Business metrics on all but the first row per ASIN
+    is_first_asin = ~master_df["ASIN"].duplicated()
+    for col in ["Ordered Product Sales", "Page Views - Total", "Units Ordered", "Total Order Items"]:
+        if col in master_df.columns:
+            master_df[col] = master_df[col].astype(object)
+            master_df.loc[~is_first_asin, col] = ""
 
     # --- Calculate P0, P1, P2 ---
     master_df["P0"] = (
@@ -754,8 +760,6 @@ def generate_master_report(
 
     today = pd.Timestamp.now().normalize()
 
-    # Days Diff between today and stock report date
-
     # Days of Cover
     master_df["Days of Cover"] = (
         (master_df["Stock Qty"] / master_df["DRR"])
@@ -764,7 +768,6 @@ def generate_master_report(
     )
 
     # --- National Doc (National Days of Cover) ---
-    # Aggregate Stock Qty and DRR at ASIN level (across all clusters)
     print("Calculating National Doc...")
     national_agg = master_df.groupby("ASIN", as_index=False).agg(
         National_Stock_Qty=("Stock Qty", "sum"),
@@ -805,20 +808,17 @@ def generate_master_report(
 
     expected_out_date_dt = today + pd.to_timedelta(days_stock_recv, unit="D")
     
-    # Handle DFC Next Arrival Date cleanly whether it's a column, missing, or scalar
     arrival_col = master_df.get("DFC Next Arrival Date", pd.Series([pd.NaT]*len(master_df)))
     if isinstance(arrival_col, str):
         arrival_col = pd.Series([arrival_col]*len(master_df))
     shipment_date_dt = pd.to_datetime(arrival_col, errors="coerce")
 
-    # Use pd.notna instead of .notna() to handle both Series and scalar NaT
     condition = pd.notna(shipment_date_dt) & (expected_out_date_dt > shipment_date_dt)
     final_days = np.where(condition, days_all, days_stock_recv)
 
     # --- Vectorized Stock Out Date ---
-    # Rows with DRR==0 or days>=999 → "Never", rest → date string
     never_mask = pd.isna(pd.Series(final_days)) | (pd.Series(final_days) >= 999)
-    final_days_series = pd.Series(final_days).clip(upper=998)  # avoid huge timedelta
+    final_days_series = pd.Series(final_days).clip(upper=998)
     out_dates = (today + pd.to_timedelta(final_days_series.round().astype(int), unit="D")).dt.strftime("%Y-%m-%d")
     master_df["Stock Out Date"] = out_dates.where(~never_mask, "Never")
 
