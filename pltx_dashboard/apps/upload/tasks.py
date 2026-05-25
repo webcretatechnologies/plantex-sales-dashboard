@@ -355,12 +355,14 @@ def _run_dashboard_refresh(
     )
     from apps.dashboard.services.invalidation import invalidate_dashboard_cache_for_user
     from apps.dashboard.models import (
+        ProcessedDashboardData,
         Flipkartfba,
         FlipkartCategoryMap,
         FlipkartSearchTraffic,
         FlipkartPLA,
         FlipkartPrice,
         FlipkartInventoryStock,
+        FlipkartProcessedDashboardData,
     )
 
     affected_dates = set(affected_dates or [])
@@ -378,6 +380,9 @@ def _run_dashboard_refresh(
         has_fk_traffic = FlipkartSearchTraffic.objects.filter(user_id=uid).values("id")[:1].exists()
         has_fk_pla = FlipkartPLA.objects.filter(user_id=uid).values("id")[:1].exists()
         has_fk_price = FlipkartPrice.objects.filter(user_id=uid).values("id")[:1].exists()
+        has_fk_processed = (
+            FlipkartProcessedDashboardData.objects.filter(user_id=uid).values("id")[:1].exists()
+        )
         if not (has_fk_category and has_fk_traffic and has_fk_pla and has_fk_price):
             raise ValueError(
                 "Flipkart requires Search Traffic, Category, PLA, and Price reports."
@@ -392,11 +397,22 @@ def _run_dashboard_refresh(
                 data_owner.id, has_fk_inventory, has_fba_stock,
             )
 
-        if file_type in {"fk_search_traffic", "fk_pla"} and affected_dates:
+        needs_fk_processed_rebuild = file_type in {"fk_search_traffic", "fk_pla"} or (
+            file_type in {"fk_category", "fk_price"} and not has_fk_processed
+        )
+
+        if needs_fk_processed_rebuild:
+            if file_type in {"fk_category", "fk_price"} and not has_fk_processed:
+                logger.warning(
+                    "[DashboardRefresh] user=%s missing Flipkart processed rows after %s upload — "
+                    "rebuilding processed dashboard data from raw Flipkart reports.",
+                    data_owner.id,
+                    file_type,
+                )
             generate_flipkart_dashboard_data(
                 data_owner,
                 progress_callback=_dashboard_progress,
-                only_dates=sorted(affected_dates),
+                only_dates=sorted(affected_dates) if affected_dates else None,
             )
             dashboard_refreshed = True
         elif file_type == "fk_category":
@@ -421,12 +437,34 @@ def _run_dashboard_refresh(
             generate_dashboard_data(data_owner, progress_callback=_dashboard_progress)
         dashboard_refreshed = True
     elif file_type == "category":
-        update_category_in_processed_data(data_owner.id)
-        invalidate_dashboard_cache_for_user(data_owner.id, clear_materialized=True)
+        has_amz_processed = (
+            ProcessedDashboardData.objects.filter(user_id=data_owner.id).values("id")[:1].exists()
+        )
+        if not has_amz_processed:
+            logger.warning(
+                "[DashboardRefresh] user=%s missing Amazon processed rows after category upload — "
+                "rebuilding processed dashboard data from raw Amazon reports.",
+                data_owner.id,
+            )
+            generate_dashboard_data(data_owner, progress_callback=_dashboard_progress)
+        else:
+            update_category_in_processed_data(data_owner.id)
+            invalidate_dashboard_cache_for_user(data_owner.id, clear_materialized=True)
         dashboard_refreshed = True
     elif file_type == "price":
-        update_price_in_processed_data(data_owner.id)
-        invalidate_dashboard_cache_for_user(data_owner.id, clear_materialized=True)
+        has_amz_processed = (
+            ProcessedDashboardData.objects.filter(user_id=data_owner.id).values("id")[:1].exists()
+        )
+        if not has_amz_processed:
+            logger.warning(
+                "[DashboardRefresh] user=%s missing Amazon processed rows after price upload — "
+                "rebuilding processed dashboard data from raw Amazon reports.",
+                data_owner.id,
+            )
+            generate_dashboard_data(data_owner, progress_callback=_dashboard_progress)
+        else:
+            update_price_in_processed_data(data_owner.id)
+            invalidate_dashboard_cache_for_user(data_owner.id, clear_materialized=True)
         dashboard_refreshed = True
     else:
         invalidate_dashboard_cache_for_user(data_owner.id, clear_materialized=True)
