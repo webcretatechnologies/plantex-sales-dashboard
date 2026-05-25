@@ -2,6 +2,7 @@ import logging
 
 from celery import shared_task
 from django.conf import settings
+from django.core.cache import cache
 
 from apps.accounts.models import Users
 from apps.dashboard.services.materialized_cache import cleanup_materialized_summaries
@@ -11,6 +12,10 @@ from apps.dashboard.services.inventory_summary import rebuild_inventory_summary_
 from apps.dashboard.services.asin_monthly_summary import rebuild_asin_monthly_summary_for_user
 
 logger = logging.getLogger(__name__)
+
+
+def _inventory_summary_lock_key(data_owner_id):
+    return f"dashboard_inventory_summary_task_lock_{data_owner_id}"
 
 
 @shared_task
@@ -68,17 +73,33 @@ def refresh_dashboard_daily_summary_task(data_owner_id, only_dates=None):
 
 @shared_task
 def refresh_dashboard_inventory_summary_task(data_owner_id, only_dates=None):
+    lock_key = _inventory_summary_lock_key(data_owner_id)
+    lock_timeout = max(
+        int(getattr(settings, "DASHBOARD_INVENTORY_SUMMARY_LOCK_TIMEOUT_SECONDS", 1800)),
+        60,
+    )
+    if not cache.add(lock_key, "1", timeout=lock_timeout):
+        logger.info(
+            "[DashboardInventorySummary] Skipping duplicate run for user=%s",
+            data_owner_id,
+        )
+        return {"rows_written": 0, "skipped": "duplicate-run"}
+
     try:
         user = Users.objects.get(pk=data_owner_id)
     except Users.DoesNotExist:
+        cache.delete(lock_key)
         logger.warning(
             "[DashboardInventorySummary] Skipping; user %s not found.", data_owner_id
         )
         return {"rows_written": 0, "error": "user-not-found"}
 
-    stats = rebuild_inventory_summary_for_user(user, only_dates=only_dates or [])
-    logger.info("[DashboardInventorySummary] user=%s stats=%s", data_owner_id, stats)
-    return stats
+    try:
+        stats = rebuild_inventory_summary_for_user(user, only_dates=only_dates or [])
+        logger.info("[DashboardInventorySummary] user=%s stats=%s", data_owner_id, stats)
+        return stats
+    finally:
+        cache.delete(lock_key)
 
 
 @shared_task
