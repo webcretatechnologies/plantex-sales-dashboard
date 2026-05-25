@@ -23,6 +23,7 @@ def process_category_file(file_obj, user):
     - Uses bulk_create with update_conflicts to elegantly update existing records.
     """
     any_chunk = False
+    touched_asins = set()
     for df in iter_file_chunks(file_obj):
         any_chunk = True
         require_columns(df, "category")
@@ -32,6 +33,7 @@ def process_category_file(file_obj, user):
             asin = str(row.get("ASIN", "")).strip()
             if not asin or asin.lower() == "nan":
                 continue
+            touched_asins.add(asin)
 
             new_mappings.append(
                 CategoryMapping(
@@ -54,6 +56,7 @@ def process_category_file(file_obj, user):
 
     if not any_chunk:
         raise ValueError("Category Mapping file is empty.")
+    return touched_asins
 
 
 # ---------------------------------------------------------------------------
@@ -67,6 +70,7 @@ def process_price_file(file_obj, user):
     - Uses bulk_create with update_conflicts to smartly update existing values.
     """
     any_chunk = False
+    touched_asins = set()
     for df in iter_file_chunks(file_obj):
         any_chunk = True
         require_columns(df, "price")
@@ -76,6 +80,7 @@ def process_price_file(file_obj, user):
             asin = str(row.get("ASIN", "")).strip()
             if not asin or asin.lower() == "nan":
                 continue
+            touched_asins.add(asin)
             new_prices.append(
                 PriceData(user=user, asin=asin, price=clean_currency(row.get("Price", 0)))
             )
@@ -90,6 +95,7 @@ def process_price_file(file_obj, user):
 
     if not any_chunk:
         raise ValueError("Pricing Data file is empty.")
+    return touched_asins
 
 
 # ---------------------------------------------------------------------------
@@ -469,4 +475,3 @@ def process_flex_stock_file(file_obj, user, id_columns=("ASIN",)):
 
     logger.info("[FlexStockData] Processed %s records.", total_records)
     return touched_dates
-

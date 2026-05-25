@@ -469,6 +469,7 @@ def process_fk_category(file_obj, user):
     """
     total_records = 0
     any_chunk = False
+    touched_fsns = set()
     for df in iter_file_chunks(file_obj):
         any_chunk = True
         col_lookup = {}
@@ -512,6 +513,7 @@ def process_fk_category(file_obj, user):
             fsn = str(row.get(fsn_col, "")).strip()
             if not fsn or fsn.lower() == "nan":
                 continue
+            touched_fsns.add(fsn)
 
             raw_status = (
                 str(row.get(product_status_col, "") or "").strip()
@@ -557,6 +559,7 @@ def process_fk_category(file_obj, user):
         raise ValueError("FK Category file is empty.")
 
     logger.info("[FK Category] Processed %s records.", total_records)
+    return touched_fsns
 
 
 # ---------------------------------------------------------------------------
@@ -571,6 +574,7 @@ def process_fk_price(file_obj, user):
     """
     total_records = 0
     any_chunk = False
+    touched_fsns = set()
     for df in iter_file_chunks(file_obj):
         any_chunk = True
         require_columns(df, "fk_price")
@@ -580,6 +584,7 @@ def process_fk_price(file_obj, user):
             fsn = str(row.get("Flipkart Serial Number", "")).strip().replace('"', "")
             if not fsn or fsn.lower() == "nan":
                 continue
+            touched_fsns.add(fsn)
             records.append(
                 FlipkartPrice(
                     user=user,
@@ -601,6 +606,7 @@ def process_fk_price(file_obj, user):
         raise ValueError("FK Price file is empty.")
 
     logger.info("[FK Price] Processed %s records.", total_records)
+    return touched_fsns
 
 
 # ---------------------------------------------------------------------------

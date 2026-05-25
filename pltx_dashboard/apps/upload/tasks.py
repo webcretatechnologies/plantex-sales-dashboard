@@ -167,6 +167,7 @@ def _mark_batch_task_complete(
     success,
     file_type="",
     affected_dates=None,
+    affected_entity_ids=None,
 ):
     if not batch_id:
         return
@@ -179,6 +180,7 @@ def _mark_batch_task_complete(
     meta_key = upload_batch_key(batch_id, "meta")
     file_types_key = upload_batch_key(batch_id, "file_types")
     dates_key = upload_batch_key(batch_id, "affected_dates")
+    entity_ids_key = upload_batch_key(batch_id, "affected_entity_ids")
 
     # Accumulate file types and affected dates from each task.
     # Note: get-modify-set has a small race window with concurrent workers.
@@ -201,6 +203,16 @@ def _mark_batch_task_complete(
                 existing_dates.add(str(d))
             cache.set(dates_key, existing_dates, timeout=ttl)
             break  # dates are additive; minor race loss is acceptable
+
+    if affected_entity_ids:
+        for _attempt in range(3):
+            existing_ids = cache.get(entity_ids_key) or set()
+            for value in affected_entity_ids:
+                item = str(value or "").strip()
+                if item:
+                    existing_ids.add(item)
+            cache.set(entity_ids_key, existing_ids, timeout=ttl)
+            break
 
     expected = cache.get(expected_key)
     if expected is None:
@@ -271,6 +283,7 @@ def _mark_batch_task_complete(
     # Determine smart file_type and affected_dates from accumulated batch data.
     batch_file_types = cache.get(file_types_key) or set()
     batch_affected_dates = sorted(cache.get(dates_key) or set())
+    batch_affected_entity_ids = sorted(cache.get(entity_ids_key) or set())
 
     logger.info(
         "[BatchTracker] batch=%s FINALIZING — completed=%d expected=%d failed=%d owner=%d flipkart=%s",
@@ -287,16 +300,38 @@ def _mark_batch_task_complete(
         return
 
     # Determine the effective file_type for the refresh.
-    # Only force full rebuild when category/price files are in the batch.
-    # For sales-only or spend-only batches, enable incremental date-scoped refresh.
+    # Metadata-only batches can use category/price refresh paths, but mixed
+    # metadata + fact-data batches must preserve affected_dates so we rebuild
+    # only the uploaded sales/spend dates instead of the entire history.
     FULL_REBUILD_TYPES_AMZ = {"category", "price"}
     FULL_REBUILD_TYPES_FK = {"fk_category", "fk_price"}
     full_rebuild_types = FULL_REBUILD_TYPES_FK if owner_is_flipkart else FULL_REBUILD_TYPES_AMZ
+    fact_rebuild_types = (
+        {"fk_search_traffic", "fk_pla"} if owner_is_flipkart else {"sales", "spend"}
+    )
+    metadata_file_types = sorted(batch_file_types & full_rebuild_types)
 
     needs_full_rebuild = bool(batch_file_types & full_rebuild_types)
     if needs_full_rebuild:
-        effective_file_type = "fk_category" if owner_is_flipkart else "category"
-        effective_dates = []  # full rebuild ignores dates
+        fact_types_in_batch = batch_file_types & fact_rebuild_types
+        if fact_types_in_batch:
+            # Mixed metadata + fact-data batches should rebuild only the newly
+            # uploaded fact dates. The latest category/price rows are already
+            # read during processed-row generation for those dates.
+            if owner_is_flipkart:
+                effective_file_type = (
+                    "fk_search_traffic" if "fk_search_traffic" in fact_types_in_batch else "fk_pla"
+                )
+            else:
+                effective_file_type = "sales" if "sales" in fact_types_in_batch else "spend"
+            effective_dates = batch_affected_dates
+            effective_metadata_file_types = []
+            effective_entity_ids = []
+        else:
+            effective_file_type = "fk_category" if owner_is_flipkart else "category"
+            effective_dates = []  # metadata-only refresh ignores dates
+            effective_metadata_file_types = metadata_file_types or [effective_file_type]
+            effective_entity_ids = batch_affected_entity_ids
     else:
         # Pick the dominant file type; prefer "sales"/"spend" for incremental.
         if owner_is_flipkart:
@@ -314,6 +349,8 @@ def _mark_batch_task_complete(
             else:
                 effective_file_type = next(iter(batch_file_types), "category")
         effective_dates = batch_affected_dates
+        effective_metadata_file_types = []
+        effective_entity_ids = []
 
     _set_dashboard_refresh_status(
         owner_id,
@@ -332,6 +369,8 @@ def _mark_batch_task_complete(
         is_flipkart=owner_is_flipkart,
         file_type=effective_file_type,
         affected_dates=effective_dates,
+        metadata_file_types=effective_metadata_file_types,
+        affected_entity_ids=effective_entity_ids,
         dashboard_refreshed=False,
     )
 
@@ -343,6 +382,8 @@ def _run_dashboard_refresh(
     is_flipkart,
     file_type,
     affected_dates=None,
+    metadata_file_types=None,
+    affected_entity_ids=None,
     dashboard_refreshed=False,
 ):
     from apps.upload.dashboard_builders import (
@@ -366,6 +407,8 @@ def _run_dashboard_refresh(
     )
 
     affected_dates = set(affected_dates or [])
+    metadata_file_types = {str(item).strip() for item in (metadata_file_types or []) if str(item).strip()}
+    affected_entity_ids = [str(item).strip() for item in (affected_entity_ids or []) if str(item).strip()]
     dashboard_invalidated = False
     _t_start = time.monotonic()
 
@@ -416,11 +459,19 @@ def _run_dashboard_refresh(
             )
             dashboard_refreshed = True
         elif file_type == "fk_category":
-            update_fk_category_in_processed_data(data_owner.id)
+            refresh_types = metadata_file_types or {"fk_category"}
+            if "fk_category" in refresh_types:
+                update_fk_category_in_processed_data(data_owner.id, fsns=affected_entity_ids)
+            if "fk_price" in refresh_types:
+                update_fk_price_in_processed_data(data_owner.id, fsns=affected_entity_ids)
             invalidate_dashboard_cache_for_user(data_owner.id, clear_materialized=True)
             dashboard_refreshed = True
         elif file_type == "fk_price":
-            update_fk_price_in_processed_data(data_owner.id)
+            refresh_types = metadata_file_types or {"fk_price"}
+            if "fk_category" in refresh_types:
+                update_fk_category_in_processed_data(data_owner.id, fsns=affected_entity_ids)
+            if "fk_price" in refresh_types:
+                update_fk_price_in_processed_data(data_owner.id, fsns=affected_entity_ids)
             invalidate_dashboard_cache_for_user(data_owner.id, clear_materialized=True)
             dashboard_refreshed = True
         else:
@@ -448,7 +499,11 @@ def _run_dashboard_refresh(
             )
             generate_dashboard_data(data_owner, progress_callback=_dashboard_progress)
         else:
-            update_category_in_processed_data(data_owner.id)
+            refresh_types = metadata_file_types or {"category"}
+            if "category" in refresh_types:
+                update_category_in_processed_data(data_owner.id, asins=affected_entity_ids)
+            if "price" in refresh_types:
+                update_price_in_processed_data(data_owner.id, asins=affected_entity_ids)
             invalidate_dashboard_cache_for_user(data_owner.id, clear_materialized=True)
         dashboard_refreshed = True
     elif file_type == "price":
@@ -463,7 +518,11 @@ def _run_dashboard_refresh(
             )
             generate_dashboard_data(data_owner, progress_callback=_dashboard_progress)
         else:
-            update_price_in_processed_data(data_owner.id)
+            refresh_types = metadata_file_types or {"price"}
+            if "category" in refresh_types:
+                update_category_in_processed_data(data_owner.id, asins=affected_entity_ids)
+            if "price" in refresh_types:
+                update_price_in_processed_data(data_owner.id, asins=affected_entity_ids)
             invalidate_dashboard_cache_for_user(data_owner.id, clear_materialized=True)
         dashboard_refreshed = True
     else:
@@ -550,6 +609,8 @@ def refresh_dashboard_after_upload_task(
     is_flipkart,
     file_type,
     affected_dates=None,
+    metadata_file_types=None,
+    affected_entity_ids=None,
     dashboard_refreshed=False,
 ):
     from apps.accounts.models import Users
@@ -615,6 +676,8 @@ def refresh_dashboard_after_upload_task(
             is_flipkart=is_flipkart,
             file_type=file_type,
             affected_dates=affected_dates or [],
+            metadata_file_types=metadata_file_types or [],
+            affected_entity_ids=affected_entity_ids or [],
             dashboard_refreshed=dashboard_refreshed,
         )
 
@@ -767,6 +830,7 @@ def process_upload_file_task(
         files_to_cleanup = []
         keep_uploaded_files = bool(getattr(settings, "UPLOAD_KEEP_FILES", True))
         affected_dates = set()
+        affected_entity_ids = set()
         upload_log = None
         if upload_log_id:
             upload_log = UploadLog.objects.filter(pk=upload_log_id).first()
@@ -783,9 +847,9 @@ def process_upload_file_task(
         # Open the file from disk
         with open(processing_path, "rb") as fh:
             if file_type == "category":
-                process_category_file(fh, data_owner)
+                affected_entity_ids = process_category_file(fh, data_owner) or set()
             elif file_type == "price":
-                process_price_file(fh, data_owner)
+                affected_entity_ids = process_price_file(fh, data_owner) or set()
             elif file_type == "spend":
                 affected_dates = process_spend_file(fh, data_owner) or set()
             elif file_type == "sales":
@@ -797,9 +861,9 @@ def process_upload_file_task(
             elif file_type == "fk_search_traffic":
                 affected_dates = process_fk_search_traffic(fh, data_owner) or set()
             elif file_type == "fk_category":
-                process_fk_category(fh, data_owner)
+                affected_entity_ids = process_fk_category(fh, data_owner) or set()
             elif file_type == "fk_price":
-                process_fk_price(fh, data_owner)
+                affected_entity_ids = process_fk_price(fh, data_owner) or set()
             elif file_type == "fk_pla":
                 affected_dates = process_fk_pla(fh, data_owner) or set()
             elif file_type == "fk_fba_stock":
@@ -831,6 +895,7 @@ def process_upload_file_task(
                 success=True,
                 file_type=file_type,
                 affected_dates=sorted(affected_dates),
+                affected_entity_ids=sorted(affected_entity_ids),
             )
         elif is_last:
             _set_dashboard_refresh_status(
@@ -845,6 +910,8 @@ def process_upload_file_task(
                 is_flipkart=is_flipkart,
                 file_type=file_type,
                 affected_dates=sorted(affected_dates),
+                metadata_file_types=[file_type] if file_type in {"category", "price", "fk_category", "fk_price"} else [],
+                affected_entity_ids=sorted(affected_entity_ids),
                 dashboard_refreshed=False,
             )
             _send_ws(
@@ -889,6 +956,7 @@ def process_upload_file_task(
                 is_flipkart=is_flipkart,
                 success=False,
                 file_type=file_type,
+                affected_entity_ids=sorted(affected_entity_ids),
             )
 
         return {
@@ -931,6 +999,7 @@ def process_upload_file_task(
                 is_flipkart=is_flipkart,
                 success=False,
                 file_type=file_type,
+                affected_entity_ids=sorted(affected_entity_ids),
             )
 
         return {
