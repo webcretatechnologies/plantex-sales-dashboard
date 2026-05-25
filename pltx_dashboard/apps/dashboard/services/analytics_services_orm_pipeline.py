@@ -544,13 +544,14 @@ def _distinct_value_count(qs, field_name, extra_filter=None):
 def _compute_sku_activity_combined(qs, sku_field):
     """Single GROUP BY replacing both _active_and_selling_counts and _compute_zero_selling_metrics.
 
-    Returns (active, selling, zero_selling_count, zero_sales_pageviews).
+    Returns (active, selling, zero_selling_count, zero_sales_pageviews, all_zero_skus).
     Saves one full-table COUNT DISTINCT query per platform call.
     """
     if qs is None:
-        return 0, 0, 0, 0
+        return 0, 0, 0, 0, set()
 
     active = selling = zero_selling_count = zero_sales_pv = 0
+    all_zero_skus = set()
     for row in (
         qs.exclude(**{f"{sku_field}__isnull": True})
         .exclude(**{sku_field: ""})
@@ -575,7 +576,22 @@ def _compute_sku_activity_combined(qs, sku_field):
         elif has_activity:
             zero_selling_count += 1
             zero_sales_pv += int(row.get("total_pv") or 0)
-    return active, selling, zero_selling_count, zero_sales_pv
+        else:
+            sku = str(row.get(sku_field) or "").strip()
+            if sku:
+                all_zero_skus.add(sku)
+    return active, selling, zero_selling_count, zero_sales_pv, all_zero_skus
+
+
+def _count_raw_sales_presence(candidate_skus, raw_qs, raw_field):
+    if not candidate_skus or raw_qs is None:
+        return 0
+    return int(
+        raw_qs.filter(**{f"{raw_field}__in": list(candidate_skus)})
+        .values(raw_field)
+        .distinct()
+        .count()
+    )
 
 
 def _get_fsn_meta_cached(user):
@@ -617,10 +633,22 @@ def _get_asin_meta_cached(user):
 
 
 def _compute_activity_metrics(qs_f, fk_qs_f, filters, user, fsn_meta=None):
-    az_active, az_selling, az_zero_sku_count, az_zero_pageviews = _compute_sku_activity_combined(qs_f, "asin")
-    fk_active, fk_selling, fk_zero_sku_count, fk_zero_pageviews = _compute_sku_activity_combined(fk_qs_f, "fsn")
+    az_active, az_selling, az_zero_sku_count, az_zero_pageviews, az_all_zero_skus = _compute_sku_activity_combined(qs_f, "asin")
+    fk_active, fk_selling, fk_zero_sku_count, fk_zero_pageviews, fk_all_zero_skus = _compute_sku_activity_combined(fk_qs_f, "fsn")
     active_sku_count = az_active + fk_active
     selling_sku_count = az_selling + fk_selling
+
+    if az_all_zero_skus:
+        from apps.dashboard.models import SalesData as _SalesData
+
+        raw_sales_qs = apply_global_filters_orm(_SalesData.objects.filter(user=user), filters)
+        az_zero_sku_count += _count_raw_sales_presence(az_all_zero_skus, raw_sales_qs, "asin")
+
+    if fk_all_zero_skus:
+        from apps.dashboard.models import FlipkartSearchTraffic as _FKTraffic
+
+        raw_traffic_qs = apply_global_filters_orm(_FKTraffic.objects.filter(user=user), filters)
+        fk_zero_sku_count += _count_raw_sales_presence(fk_all_zero_skus, raw_traffic_qs, "fsn")
 
     status_counts = {"Continued": 0, "Discontinued": 0}
     status_revenue = {"Continued": 0.0, "Discontinued": 0.0}

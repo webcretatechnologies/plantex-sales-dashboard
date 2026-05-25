@@ -68,6 +68,24 @@ def _invalidate_user_dashboard_cache(user_id):
     invalidate_dashboard_cache_for_user(user_id, clear_materialized=True)
 
 
+def _normalize_identifier_values(values):
+    cleaned = []
+    seen = set()
+    for value in values or []:
+        item = str(value or "").strip()
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        cleaned.append(item)
+    return cleaned
+
+
+def _identifier_batches(values, batch_size=DB_BATCH_SIZE):
+    normalized = _normalize_identifier_values(values)
+    for idx in range(0, len(normalized), batch_size):
+        yield normalized[idx : idx + batch_size]
+
+
 def _mysql_insert_processed_dashboard_rows(user_id, target_dates):
     """
     Build ProcessedDashboardData fully in MySQL using INSERT...SELECT joins.
@@ -178,84 +196,132 @@ def _mysql_insert_processed_dashboard_rows(user_id, target_dates):
     return rows_written
 
 
-def update_category_in_processed_data(user_id):
+def update_category_in_processed_data(user_id, asins=None):
     """
     In-place UPDATE: refreshes portfolio/category/subcategory in ProcessedDashboardData
     from the latest CategoryMapping. Much faster than DELETE + full re-INSERT.
     """
     p_tbl = ProcessedDashboardData._meta.db_table
     c_tbl = CategoryMapping._meta.db_table
+    total_rows = 0
+    scoped_batches = list(_identifier_batches(asins))
+    if not scoped_batches:
+        scoped_batches = [None]
+
     with connection.cursor() as cursor:
-        cursor.execute(f"""
-            UPDATE `{p_tbl}` p
-            LEFT JOIN `{c_tbl}` cm ON cm.user_id = %s AND cm.asin = p.asin
-            SET p.portfolio   = COALESCE(cm.portfolio, ''),
-                p.category    = COALESCE(cm.category, ''),
-                p.subcategory = COALESCE(cm.subcategory, '')
-            WHERE p.user_id = %s
-        """, [user_id, user_id])
-        rows = max(int(cursor.rowcount or 0), 0)
-    logger.info("[Dashboard] category in-place UPDATE user=%s rows=%d", user_id, rows)
-    return rows
+        for asin_batch in scoped_batches:
+            where_sql = "WHERE p.user_id = %s"
+            params = [user_id, user_id]
+            if asin_batch is not None:
+                placeholders = ", ".join(["%s"] * len(asin_batch))
+                where_sql += f" AND p.asin IN ({placeholders})"
+                params.extend(asin_batch)
+            cursor.execute(f"""
+                UPDATE `{p_tbl}` p
+                LEFT JOIN `{c_tbl}` cm ON cm.user_id = %s AND cm.asin = p.asin
+                SET p.portfolio   = COALESCE(cm.portfolio, ''),
+                    p.category    = COALESCE(cm.category, ''),
+                    p.subcategory = COALESCE(cm.subcategory, '')
+                {where_sql}
+            """, params)
+            total_rows += max(int(cursor.rowcount or 0), 0)
+    logger.info("[Dashboard] category in-place UPDATE user=%s rows=%d scoped=%s", user_id, total_rows, bool(asins))
+    return total_rows
 
 
-def update_price_in_processed_data(user_id):
+def update_price_in_processed_data(user_id, asins=None):
     """
     In-place UPDATE: refreshes price in ProcessedDashboardData
     from the latest PriceData. Much faster than DELETE + full re-INSERT.
     """
     p_tbl = ProcessedDashboardData._meta.db_table
     pr_tbl = PriceData._meta.db_table
+    total_rows = 0
+    scoped_batches = list(_identifier_batches(asins))
+    if not scoped_batches:
+        scoped_batches = [None]
+
     with connection.cursor() as cursor:
-        cursor.execute(f"""
-            UPDATE `{p_tbl}` p
-            LEFT JOIN `{pr_tbl}` pr ON pr.user_id = %s AND pr.asin = p.asin
-            SET p.price = COALESCE(pr.price, 0.0)
-            WHERE p.user_id = %s
-        """, [user_id, user_id])
-        rows = max(int(cursor.rowcount or 0), 0)
-    logger.info("[Dashboard] price in-place UPDATE user=%s rows=%d", user_id, rows)
-    return rows
+        for asin_batch in scoped_batches:
+            where_sql = "WHERE p.user_id = %s"
+            params = [user_id, user_id]
+            if asin_batch is not None:
+                placeholders = ", ".join(["%s"] * len(asin_batch))
+                where_sql += f" AND p.asin IN ({placeholders})"
+                params.extend(asin_batch)
+            cursor.execute(f"""
+                UPDATE `{p_tbl}` p
+                LEFT JOIN `{pr_tbl}` pr ON pr.user_id = %s AND pr.asin = p.asin
+                SET p.price = COALESCE(pr.price, 0.0)
+                {where_sql}
+            """, params)
+            total_rows += max(int(cursor.rowcount or 0), 0)
+    logger.info("[Dashboard] price in-place UPDATE user=%s rows=%d scoped=%s", user_id, total_rows, bool(asins))
+    return total_rows
 
 
-def update_fk_category_in_processed_data(user_id):
+def update_fk_category_in_processed_data(user_id, fsns=None):
     """
     In-place UPDATE: refreshes portfolio/category/subcategory in
     FlipkartProcessedDashboardData from the latest FlipkartCategoryMap.
     """
     p_tbl = FlipkartProcessedDashboardData._meta.db_table
     c_tbl = FlipkartCategoryMap._meta.db_table
+    total_rows = 0
+    scoped_batches = list(_identifier_batches(fsns))
+    if not scoped_batches:
+        scoped_batches = [None]
+
     with connection.cursor() as cursor:
-        cursor.execute(f"""
-            UPDATE `{p_tbl}` p
-            LEFT JOIN `{c_tbl}` cm ON cm.user_id = %s AND cm.fsn = p.fsn
-            SET p.portfolio   = COALESCE(cm.portfolio, ''),
-                p.category    = COALESCE(cm.category, ''),
-                p.subcategory = COALESCE(cm.subcategory, '')
-            WHERE p.user_id = %s
-        """, [user_id, user_id])
-        rows = max(int(cursor.rowcount or 0), 0)
-    logger.info("[Dashboard] fk_category in-place UPDATE user=%s rows=%d", user_id, rows)
-    return rows
+        for fsn_batch in scoped_batches:
+            where_sql = "WHERE p.user_id = %s"
+            params = [user_id, user_id]
+            if fsn_batch is not None:
+                placeholders = ", ".join(["%s"] * len(fsn_batch))
+                where_sql += f" AND p.fsn IN ({placeholders})"
+                params.extend(fsn_batch)
+            cursor.execute(f"""
+                UPDATE `{p_tbl}` p
+                LEFT JOIN `{c_tbl}` cm ON cm.user_id = %s AND cm.fsn = p.fsn
+                SET p.portfolio   = COALESCE(cm.portfolio, ''),
+                    p.category    = COALESCE(cm.category, ''),
+                    p.subcategory = COALESCE(cm.subcategory, '')
+                {where_sql}
+            """, params)
+            total_rows += max(int(cursor.rowcount or 0), 0)
+    logger.info("[Dashboard] fk_category in-place UPDATE user=%s rows=%d scoped=%s", user_id, total_rows, bool(fsns))
+    return total_rows
 
 
-def update_fk_price_in_processed_data(user_id):
+def update_fk_price_in_processed_data(user_id, fsns=None):
     """
     In-place UPDATE: refreshes price in FlipkartProcessedDashboardData
     from the latest FlipkartPrice.
     """
     p_tbl = FlipkartProcessedDashboardData._meta.db_table
     pr_tbl = FlipkartPrice._meta.db_table
+    total_rows = 0
+    scoped_batches = list(_identifier_batches(fsns))
+    if not scoped_batches:
+        scoped_batches = [None]
+
     with connection.cursor() as cursor:
-        cursor.execute(f"""
-            UPDATE `{p_tbl}` p
-            LEFT JOIN `{pr_tbl}` pr ON pr.user_id = %s AND pr.fsn = p.fsn
-            SET p.price = COALESCE(pr.price, 0.0)
-            WHERE p.user_id = %s
-        """, [user_id, user_id])
-        rows = max(int(cursor.rowcount or 0), 0)
-    logger.info("[Dashboard] fk_price in-place UPDATE user=%s rows=%d", user_id, rows)
-    return rows
+        for fsn_batch in scoped_batches:
+            where_sql = "WHERE p.user_id = %s"
+            params = [user_id, user_id]
+            if fsn_batch is not None:
+                placeholders = ", ".join(["%s"] * len(fsn_batch))
+                where_sql += f" AND p.fsn IN ({placeholders})"
+                params.extend(fsn_batch)
+            cursor.execute(f"""
+                UPDATE `{p_tbl}` p
+                LEFT JOIN `{pr_tbl}` pr ON pr.user_id = %s AND pr.fsn = p.fsn
+                SET p.price = COALESCE(pr.price, 0.0)
+                {where_sql}
+            """, params)
+            total_rows += max(int(cursor.rowcount or 0), 0)
+    logger.info("[Dashboard] fk_price in-place UPDATE user=%s rows=%d scoped=%s", user_id, total_rows, bool(fsns))
+    return total_rows
 
 
 def _generate_dashboard_data_python(user, sales_qs, spend_qs, progress_callback):
