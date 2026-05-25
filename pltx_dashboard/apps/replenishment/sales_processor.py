@@ -83,8 +83,8 @@ def process_sales_report(sales_file, pin_file, output_file):
     )
 
     # Handle Missing mappings
-    df_merged["FULFILMENT CLUSTER"] = df_merged["FULFILMENT CLUSTER"].fillna("Unmapped")
-    df_merged["ZONE"] = df_merged["ZONE"].fillna("Unmapped")
+    df_merged["FULFILMENT CLUSTER"] = df_merged["FULFILMENT CLUSTER"].fillna("N/A")
+    df_merged["ZONE"] = df_merged["ZONE"].fillna("N/A")
 
     print("Calculating file-level Sales Day Count...")
     # File-level: find max and min of Customer Shipment Date across the entire file
@@ -122,7 +122,7 @@ def process_sales_report(sales_file, pin_file, output_file):
     df_result["Sales Day Count"] = file_sales_day_count
 
     # DRR
-    df_result["DRR"] = df_result["Sales_Qty"] / 30
+    df_result["DRR"] = df_result["Sales_Qty"] / df_result["Sales Day Count"]
     df_result["DRR"] = df_result["DRR"].round(2)
     df_result["Total"] = df_result["Total_Sum"].round(2)
 

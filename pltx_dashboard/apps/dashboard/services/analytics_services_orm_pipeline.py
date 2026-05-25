@@ -542,39 +542,40 @@ def _distinct_value_count(qs, field_name, extra_filter=None):
 
 
 def _compute_sku_activity_combined(qs, sku_field):
-    rows = (
+    """Single GROUP BY replacing both _active_and_selling_counts and _compute_zero_selling_metrics.
+
+    Returns (active, selling, zero_selling_count, zero_sales_pageviews).
+    Saves one full-table COUNT DISTINCT query per platform call.
+    """
+    if qs is None:
+        return 0, 0, 0, 0
+
+    active = selling = zero_selling_count = zero_sales_pv = 0
+    for row in (
         qs.exclude(**{f"{sku_field}__isnull": True})
         .exclude(**{sku_field: ""})
-        .filter(Q(pageviews__gt=0) | Q(revenue__gt=0) | Q(orders__gt=0))
         .values(sku_field)
         .annotate(
-            has_units=Sum(Case(When(units__gt=0, then=Value(1)), default=Value(0))),
+            total_units=Sum("units"),
             total_pv=Sum("pageviews"),
+            total_rev=Sum("revenue"),
+            total_orders=Sum("orders"),
         )
         .iterator(chunk_size=2000)
-    )
-    zero_selling_sku_count = 0
-    zero_sales_pageviews = 0
-    for row in rows:
-        if not row["has_units"]:
-            zero_selling_sku_count += 1
-            zero_sales_pageviews += int(row["total_pv"] or 0)
-    return zero_selling_sku_count, zero_sales_pageviews
-
-
-def _active_and_selling_counts(qs, sku_field):
-    """Return (active_count, selling_count) in a single aggregate query."""
-    if qs is None:
-        return 0, 0
-    result = (
-        qs.exclude(**{f"{sku_field}__isnull": True})
-        .exclude(**{sku_field: ""})
-        .aggregate(
-            active=Count(sku_field, distinct=True),
-            selling=Count(sku_field, distinct=True, filter=Q(units__gt=0)),
+    ):
+        active += 1
+        has_units = (row.get("total_units") or 0) > 0
+        has_activity = (
+            (row.get("total_pv") or 0) > 0
+            or (row.get("total_rev") or 0) > 0
+            or (row.get("total_orders") or 0) > 0
         )
-    )
-    return int(result["active"] or 0), int(result["selling"] or 0)
+        if has_units:
+            selling += 1
+        elif has_activity:
+            zero_selling_count += 1
+            zero_sales_pv += int(row.get("total_pv") or 0)
+    return active, selling, zero_selling_count, zero_sales_pv
 
 
 def _get_fsn_meta_cached(user):
@@ -616,13 +617,10 @@ def _get_asin_meta_cached(user):
 
 
 def _compute_activity_metrics(qs_f, fk_qs_f, filters, user, fsn_meta=None):
-    az_active, az_selling = _active_and_selling_counts(qs_f, "asin")
-    fk_active, fk_selling = _active_and_selling_counts(fk_qs_f, "fsn")
+    az_active, az_selling, az_zero_sku_count, az_zero_pageviews = _compute_sku_activity_combined(qs_f, "asin")
+    fk_active, fk_selling, fk_zero_sku_count, fk_zero_pageviews = _compute_sku_activity_combined(fk_qs_f, "fsn")
     active_sku_count = az_active + fk_active
     selling_sku_count = az_selling + fk_selling
-
-    az_zero_sku_count, az_zero_pageviews = _compute_zero_selling_metrics(qs_f, "asin")
-    fk_zero_sku_count, fk_zero_pageviews = _compute_zero_selling_metrics(fk_qs_f, "fsn")
 
     status_counts = {"Continued": 0, "Discontinued": 0}
     status_revenue = {"Continued": 0.0, "Discontinued": 0.0}
@@ -946,12 +944,20 @@ def run_kpi_only_computation(
     summary_base_qs = _get_daily_summary_base_qs(user, filters)
     summary_qs_f = apply_global_filters_orm(summary_base_qs, filters)
 
-    if summary_qs_f is not None and summary_qs_f.exists():
-        summary_metrics = _summary_metrics_by_platform(summary_qs_f)
-        az_metrics = summary_metrics["Amazon"]
-        fk_metrics = summary_metrics["Flipkart"]
+    _sm = None
+    if summary_qs_f is not None:
+        _sm = _summary_metrics_by_platform(summary_qs_f)
+        if not any(
+            _sm[p]["units"] or _sm[p]["orders"] or _sm[p]["revenue"] or _sm[p]["pageviews"]
+            for p in ("Amazon", "Flipkart")
+        ):
+            _sm = None
+            summary_base_qs = None
+
+    if _sm:
+        az_metrics = _sm["Amazon"]
+        fk_metrics = _sm["Flipkart"]
     else:
-        summary_base_qs = None
         az_metrics = _aggregate_metrics(qs_f)
         fk_metrics = _aggregate_metrics(fk_qs_f)
 
@@ -962,9 +968,26 @@ def run_kpi_only_computation(
         fsn_meta = _get_fsn_meta_cached(user)
 
     if include_activity_metrics:
-        activity_metrics = _compute_activity_metrics(
-            qs_f, fk_qs_f, filters, user, fsn_meta=fsn_meta
-        )
+        # Fast path: use pre-aggregated monthly summary when date range is long
+        # (last_3_months / last_6_months / last_1_year or custom ≥ 45 days).
+        # Falls back to the slow ProcessedDashboardData GROUP BY when not applicable.
+        _monthly_activity = None
+        try:
+            from apps.dashboard.services.asin_monthly_summary import (
+                compute_activity_metrics_from_monthly,
+            )
+            _monthly_activity = compute_activity_metrics_from_monthly(
+                user, filters, fsn_meta=fsn_meta
+            )
+        except Exception:
+            pass
+
+        if _monthly_activity is not None:
+            activity_metrics = _monthly_activity
+        else:
+            activity_metrics = _compute_activity_metrics(
+                qs_f, fk_qs_f, filters, user, fsn_meta=fsn_meta
+            )
     else:
         activity_metrics = {
             "active_asins": 0,
@@ -1260,11 +1283,19 @@ def run_orm_computation(
     fk_qs_f = apply_global_filters_orm(fk_qs, filters)
     summary_base_qs = _get_daily_summary_base_qs(user, filters)
     summary_qs_f = apply_global_filters_orm(summary_base_qs, filters)
-    use_summary_rollups = (
-        not include_full_payload
-        and summary_qs_f is not None
-        and summary_qs_f.exists()
-    )
+    if not include_full_payload and summary_qs_f is not None:
+        _ex_key = (
+            f"dash_sum_ex_v1_{user.id}"
+            f"_{(cache_identity or {}).get('data_version', 0)}"
+            f"_{(cache_identity or {}).get('filter_hash', '')}"
+        )
+        _ex = cache.get(_ex_key)
+        if _ex is None:
+            _ex = summary_qs_f.exists()
+            cache.set(_ex_key, _ex, timeout=300)
+        use_summary_rollups = bool(_ex)
+    else:
+        use_summary_rollups = False
     summary_kpi_payload = None
     normalized_section_scope = str(section_scope or "all").lower()
     normalized_dashboard_view = str(dashboard_view or "").lower()
@@ -1320,7 +1351,6 @@ def run_orm_computation(
 
     # ── Master prev table data for growth calculations ──
     table_data_prev = []
-    prev_rev_by_asin = {}
     prev_rev_by_port = {}
     prev_rev_by_cat = {}
     prev_az_rev = 0.0
@@ -1342,21 +1372,46 @@ def run_orm_computation(
             elif _row.get("platform") == "Flipkart":
                 prev_fk_rev += _rev
     elif qs_prev_f is not None or fk_prev_f is not None:
-        table_data_prev = generate_bi_data_orm(
-            qs_prev_f,
-            fk_prev_f,
-            user=user,
-            asin_meta=_asin_meta,
-            fsn_meta=_fsn_meta,
-        )
-        prev_rev_by_asin = {r["asin"]: r["revenue"] for r in table_data_prev}
-        prev_az_rev = sum(r.get("az_revenue", 0) for r in table_data_prev)
-        prev_fk_rev = sum(r.get("fk_revenue", 0) for r in table_data_prev)
-        for r in table_data_prev:
-            port = r.get("portfolio") or "Unknown"
-            prev_rev_by_port[port] = prev_rev_by_port.get(port, 0) + r["revenue"]
-            cat = r.get("category") or "Unknown"
-            prev_rev_by_cat[cat] = prev_rev_by_cat.get(cat, 0) + r["revenue"]
+        # Use a single low-cardinality GROUP BY (portfolio, category) per platform instead of
+        # a full per-ASIN GROUP BY via generate_bi_data_orm — reduces scan cost 10-30× for
+        # large date ranges while providing all the data downstream code actually needs.
+        _prev_orders = _prev_units = _prev_spend = 0
+        _prev_fk_orders = _prev_fk_units = _prev_fk_spend = 0
+        if qs_prev_f is not None:
+            for _r in qs_prev_f.values("portfolio", "category").annotate(
+                rev=Sum("revenue"), spend=Sum("total_spend"),
+                ord=Sum("orders"), u=Sum("units"),
+            ):
+                _rev = float(_r.get("rev") or 0)
+                prev_az_rev += _rev
+                _prev_spend += float(_r.get("spend") or 0)
+                _prev_orders += int(_r.get("ord") or 0)
+                _prev_units += int(_r.get("u") or 0)
+                _port = str(_r.get("portfolio") or "Unknown")
+                _cat = str(_r.get("category") or "Unknown")
+                prev_rev_by_port[_port] = prev_rev_by_port.get(_port, 0) + _rev
+                prev_rev_by_cat[_cat] = prev_rev_by_cat.get(_cat, 0) + _rev
+        if fk_prev_f is not None:
+            for _r in fk_prev_f.values("portfolio", "category").annotate(
+                rev=Sum("revenue"), spend=Sum("total_spend"),
+                ord=Sum("orders"), u=Sum("units"),
+            ):
+                _rev = float(_r.get("rev") or 0)
+                prev_fk_rev += _rev
+                _prev_fk_spend += float(_r.get("spend") or 0)
+                _prev_fk_orders += int(_r.get("ord") or 0)
+                _prev_fk_units += int(_r.get("u") or 0)
+                _port = str(_r.get("portfolio") or "Unknown")
+                _cat = str(_r.get("category") or "Unknown")
+                prev_rev_by_port[_port] = prev_rev_by_port.get(_port, 0) + _rev
+                prev_rev_by_cat[_cat] = prev_rev_by_cat.get(_cat, 0) + _rev
+        _prev_total_spend = _prev_spend + _prev_fk_spend
+        prev_kpis_totals = {
+            "revenue": prev_az_rev + prev_fk_rev,
+            "orders": _prev_orders + _prev_fk_orders,
+            "units": _prev_units + _prev_fk_units,
+            "total_spend": _prev_total_spend,
+        }
 
     if use_summary_rollups:
         # Reuse kpis already computed inside run_kpi_only_computation — avoids
@@ -2090,24 +2145,56 @@ def run_orm_computation(
             "calculation": "No critical thresholds breached"
         })
 
-    top_prods = _build_top_product_rows(
-        qs_f,
-        fk_qs_f,
-        qs_prev_f,
-        fk_prev_f,
-        asin_meta=_asin_meta,
-        fsn_meta=_fsn_meta,
-        include_full_payload=include_full_payload,
-    )
-    under_prods = _build_declining_product_rows(
-        qs,
-        fk_qs,
-        cm_start,
-        cm_end,
-        pm_start,
-        pm_end,
-        include_full_payload=include_full_payload,
-    )
+    # Fast path: use monthly summary for top/declining products on long date ranges.
+    # Falls back to ProcessedDashboardData when monthly summary is not applicable.
+    top_prods = None
+    under_prods = None
+    try:
+        from apps.dashboard.services.asin_monthly_summary import (
+            build_top_products_from_monthly,
+            build_declining_products_from_monthly,
+        )
+        top_prods = build_top_products_from_monthly(
+            user,
+            filters,
+            asin_meta=_asin_meta,
+            fsn_meta=_fsn_meta,
+            limit=5,
+            include_full_payload=include_full_payload,
+        )
+        under_prods = build_declining_products_from_monthly(
+            user,
+            filters,
+            cm_start,
+            cm_end,
+            pm_start,
+            pm_end,
+            include_full_payload=include_full_payload,
+        )
+    except Exception:
+        top_prods = None
+        under_prods = None
+
+    if top_prods is None:
+        top_prods = _build_top_product_rows(
+            qs_f,
+            fk_qs_f,
+            qs_prev_f,
+            fk_prev_f,
+            asin_meta=_asin_meta,
+            fsn_meta=_fsn_meta,
+            include_full_payload=include_full_payload,
+        )
+    if under_prods is None:
+        under_prods = _build_declining_product_rows(
+            qs,
+            fk_qs,
+            cm_start,
+            cm_end,
+            pm_start,
+            pm_end,
+            include_full_payload=include_full_payload,
+        )
 
     if use_summary_rollups:
         port_perf_dict = {

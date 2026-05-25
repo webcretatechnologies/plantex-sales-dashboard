@@ -81,11 +81,11 @@ def generate_shipment_report(shipment_file, mapping_file, output_file):
     df["Appointment Pending Qty"] = np.where(status == "Appointment Pending", qty, 0)
     df["Upcoming Shipment Qty"]   = np.where(status == "Upcoming", qty, 0)
 
-    inbound_statuses = ["Receiving", "Intransit", "In Transit"]
+    inbound_statuses = ["Receiving", "Intransit", "In Transit", "Inbound"]
     df["Receiving + Intransit Qty"] = np.where(status.isin(inbound_statuses), qty, 0)
     df["Receiving Qty"]             = np.where(status == "Receiving", qty, 0)
 
-    intransit_statuses = ["Intransit", "In Transit"]
+    intransit_statuses = ["Intransit", "In Transit", "Inbound"]
     df["Intransit Qty"] = np.where(status.isin(intransit_statuses), qty, 0)
 
     # Format Appointment Date — vectorized ID + date combination
