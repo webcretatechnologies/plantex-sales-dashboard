@@ -257,6 +257,14 @@ body {
     transform: translateY(-1px);
 }
 
+.sidebar-refresh-btn:disabled,
+.sidebar-refresh-btn.is-loading {
+    opacity: 0.72;
+    cursor: wait;
+    transform: none;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+}
+
 /* ── Topbar ── */
 .topbar {
     position: sticky;

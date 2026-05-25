@@ -415,8 +415,13 @@
                 <span class="status-dot"></span>
                 Data updated<br><span class="status-time">2 min ago</span>
             </div>
-            <button class="sidebar-refresh-btn" onclick="window.location.reload()">
-                <span class="material-icons-round" style="font-size:14px">refresh</span> Refresh
+            <button
+                class="sidebar-refresh-btn"
+                id="sidebarRefreshButton"
+                type="button"
+                onclick="forceDashboardRefresh(this)">
+                <span class="material-icons-round" style="font-size:14px">refresh</span>
+                <span class="sidebar-refresh-btn-text">Refresh</span>
             </button>
         </div>
     </div>
@@ -633,6 +638,7 @@
         window.DASHBOARD_REFRESH_STATUS = {{ dashboard_refresh_status_json|safe|default:'{"state":"idle","message":""}' }};
         window.CURRENT_PAGE_URL_NAME = "{{ request.resolver_match.url_name|default:'' }}";
         window.UPLOAD_PROGRESS_STORAGE_KEY = "pltx_upload_progress_v1";
+        window.DASHBOARD_REFRESH_NOW_URL = "{% url 'dashboard-refresh-now' %}";
 
         function isUploadMenuPage() {
             return window.CURRENT_PAGE_URL_NAME === "dashboard-upload";
@@ -738,6 +744,73 @@
             showGlobalUploadNotifier(next);
             emitUploadProgressEvent(next);
         };
+
+        function clearDashboardStorageCache() {
+            var storageKeys = [window.UPLOAD_PROGRESS_STORAGE_KEY];
+            [window.localStorage, window.sessionStorage].forEach(function (storage) {
+                if (!storage) return;
+                try {
+                    for (var i = storage.length - 1; i >= 0; i--) {
+                        var key = storage.key(i);
+                        if (!key) continue;
+                        if (
+                            storageKeys.indexOf(key) !== -1 ||
+                            key.indexOf("pltx_dashboard_") === 0 ||
+                            key.indexOf("htmx-history-cache") === 0
+                        ) {
+                            storage.removeItem(key);
+                        }
+                    }
+                } catch (e) {
+                    // ignore storage cleanup issues
+                }
+            });
+        }
+
+        async function clearBrowserCacheStorage() {
+            if (!("caches" in window) || !window.caches || typeof window.caches.keys !== "function") {
+                return;
+            }
+            try {
+                var cacheKeys = await window.caches.keys();
+                await Promise.all(cacheKeys.map(function (cacheKey) {
+                    return window.caches.delete(cacheKey);
+                }));
+            } catch (e) {
+                // ignore Cache Storage cleanup issues
+            }
+        }
+
+        async function forceDashboardRefresh(button) {
+            if (button && button.disabled) return;
+
+            if (button) {
+                button.disabled = true;
+                button.classList.add('is-loading');
+                var labelNode = button.querySelector('.sidebar-refresh-btn-text');
+                if (labelNode) {
+                    labelNode.textContent = 'Refreshing...';
+                }
+            }
+
+            try {
+                clearDashboardStorageCache();
+                await clearBrowserCacheStorage();
+                await fetch(window.DASHBOARD_REFRESH_NOW_URL, {
+                    credentials: 'same-origin',
+                    cache: 'no-store',
+                    headers: {
+                        'X-Requested-With': 'XMLHttpRequest'
+                    }
+                });
+            } catch (e) {
+                // Fall back to a hard reload even if the invalidate request fails.
+            }
+
+            var refreshedUrl = new URL(window.location.href);
+            refreshedUrl.searchParams.set('_refresh', String(Date.now()));
+            window.location.replace(refreshedUrl.toString());
+        }
 
         (function connectGlobalUploadProgressSocket() {
             let socket = null;
