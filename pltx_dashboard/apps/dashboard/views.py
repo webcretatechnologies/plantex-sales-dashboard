@@ -15,6 +15,7 @@ from django.http import FileResponse, HttpResponse, JsonResponse
 from django.shortcuts import render, redirect
 from django.template.loader import render_to_string
 from django.utils import timezone
+from django.views.decorators.http import require_GET
 
 from apps.accounts.decorators import require_feature, _first_allowed_dashboard_for
 from apps.accounts.models import Feature
@@ -41,6 +42,7 @@ from apps.dashboard.services.materialized_cache import (
     get_materialized_summary,
     store_materialized_summary,
 )
+from apps.dashboard.services.invalidation import invalidate_dashboard_cache_for_user
 from apps.dashboard.services.cache_config import DASHBOARD_PAYLOAD_CACHE_VERSION
 from apps.dashboard.services.cache_config import (
     DASHBOARD_CACHE_TTL_FULL_SECONDS,
@@ -1312,6 +1314,27 @@ def dashboard_refresh_status(request):
         return JsonResponse({"error": "Not authenticated"}, status=401)
     data_owner = user.created_by if user.created_by else user
     return JsonResponse(_get_dashboard_refresh_status(data_owner.id))
+
+
+@require_GET
+def dashboard_refresh_now(request):
+    user = get_logged_in_user(request)
+    if not user:
+        return JsonResponse({"error": "Not authenticated"}, status=401)
+
+    data_owner = user.created_by if user.created_by else user
+    invalidate_dashboard_cache_for_user(data_owner.id, clear_materialized=True)
+
+    response = JsonResponse(
+        {
+            "ok": True,
+            "message": "Dashboard cache cleared. Reloading fresh data.",
+        }
+    )
+    response["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
+    response["Pragma"] = "no-cache"
+    response["Expires"] = "0"
+    return response
 
 
 def _parse_positive_int(value, default, minimum=1, maximum=200):

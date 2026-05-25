@@ -14,6 +14,7 @@ from .views import (
     dashboard_category_performance_rows_view,
     filter_dropdown_options,
     dashboard_refresh_status,
+    dashboard_refresh_now,
 )
 
 urlpatterns = [
@@ -56,6 +57,11 @@ urlpatterns = [
         "api/dashboard/refresh-status/",
         dashboard_refresh_status,
         name="dashboard-refresh-status",
+    ),
+    path(
+        "api/dashboard/refresh-now/",
+        dashboard_refresh_now,
+        name="dashboard-refresh-now",
     ),
     path(
         "dashboard/download/<str:file_format>/",
