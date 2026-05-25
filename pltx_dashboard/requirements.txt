@@ -57,3 +57,7 @@ vulture==2.16
 wcwidth==0.6.0
 xlsxwriter==3.2.9
 zope.interface==8.2
+uvicorn[standard]
+websockets
+wsproto
+django-redis

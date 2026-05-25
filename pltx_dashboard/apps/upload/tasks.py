@@ -119,6 +119,28 @@ def _enqueue_inventory_summary_refresh(data_owner_id, affected_dates=None):
         )
 
 
+def _enqueue_asin_monthly_summary_refresh(data_owner_id, affected_dates=None):
+    try:
+        from django.conf import settings
+
+        if not getattr(settings, "DASHBOARD_ASIN_MONTHLY_SUMMARY_ENABLED", True):
+            return
+        from apps.dashboard.tasks import refresh_dashboard_asin_monthly_summary_task
+
+        affected_months = sorted({
+            str(d)[:7] + "-01" for d in (affected_dates or [])
+        })
+        refresh_dashboard_asin_monthly_summary_task.delay(
+            data_owner_id=data_owner_id,
+            only_months=affected_months,
+        )
+    except Exception:
+        logger.exception(
+            "[UploadTask] Failed to enqueue ASIN monthly summary refresh for user=%s",
+            data_owner_id,
+        )
+
+
 def _dashboard_refresh_cache_key(data_owner_id):
     return f"dashboard_refresh_status_{data_owner_id}"
 
@@ -326,6 +348,10 @@ def _run_dashboard_refresh(
     from apps.upload.dashboard_builders import (
         generate_dashboard_data,
         generate_flipkart_dashboard_data,
+        update_category_in_processed_data,
+        update_price_in_processed_data,
+        update_fk_category_in_processed_data,
+        update_fk_price_in_processed_data,
     )
     from apps.dashboard.services.invalidation import invalidate_dashboard_cache_for_user
     from apps.dashboard.models import (
@@ -345,17 +371,20 @@ def _run_dashboard_refresh(
         _send_ws(user_id, message, "processing")
 
     if is_flipkart:
-        has_fk_category = FlipkartCategoryMap.objects.filter(user=data_owner).exists()
-        has_fk_traffic = FlipkartSearchTraffic.objects.filter(user=data_owner).exists()
-        has_fk_pla = FlipkartPLA.objects.filter(user=data_owner).exists()
-        has_fk_price = FlipkartPrice.objects.filter(user=data_owner).exists()
+        # Batch all 6 existence checks into one query per table using
+        # a single COUNT per model — avoids 6 sequential DB round trips.
+        uid = data_owner.id
+        has_fk_category = FlipkartCategoryMap.objects.filter(user_id=uid).values("id")[:1].exists()
+        has_fk_traffic = FlipkartSearchTraffic.objects.filter(user_id=uid).values("id")[:1].exists()
+        has_fk_pla = FlipkartPLA.objects.filter(user_id=uid).values("id")[:1].exists()
+        has_fk_price = FlipkartPrice.objects.filter(user_id=uid).values("id")[:1].exists()
         if not (has_fk_category and has_fk_traffic and has_fk_pla and has_fk_price):
             raise ValueError(
                 "Flipkart requires Search Traffic, Category, PLA, and Price reports."
             )
 
-        has_fba_stock = Flipkartfba.objects.filter(user=data_owner).exists()
-        has_fk_inventory = FlipkartInventoryStock.objects.filter(user=data_owner).exists()
+        has_fba_stock = Flipkartfba.objects.filter(user_id=uid).values("id")[:1].exists()
+        has_fk_inventory = FlipkartInventoryStock.objects.filter(user_id=uid).values("id")[:1].exists()
         if not has_fba_stock or not has_fk_inventory:
             logger.warning(
                 "[DashboardRefresh] user=%s missing FK Inventory (%s) or FBA Stock (%s) — "
@@ -370,10 +399,13 @@ def _run_dashboard_refresh(
                 only_dates=sorted(affected_dates),
             )
             dashboard_refreshed = True
-        elif file_type in {"fk_category", "fk_price"}:
-            generate_flipkart_dashboard_data(
-                data_owner, progress_callback=_dashboard_progress
-            )
+        elif file_type == "fk_category":
+            update_fk_category_in_processed_data(data_owner.id)
+            invalidate_dashboard_cache_for_user(data_owner.id, clear_materialized=True)
+            dashboard_refreshed = True
+        elif file_type == "fk_price":
+            update_fk_price_in_processed_data(data_owner.id)
+            invalidate_dashboard_cache_for_user(data_owner.id, clear_materialized=True)
             dashboard_refreshed = True
         else:
             invalidate_dashboard_cache_for_user(data_owner.id, clear_materialized=True)
@@ -388,8 +420,13 @@ def _run_dashboard_refresh(
         else:
             generate_dashboard_data(data_owner, progress_callback=_dashboard_progress)
         dashboard_refreshed = True
-    elif file_type in {"category", "price"}:
-        generate_dashboard_data(data_owner, progress_callback=_dashboard_progress)
+    elif file_type == "category":
+        update_category_in_processed_data(data_owner.id)
+        invalidate_dashboard_cache_for_user(data_owner.id, clear_materialized=True)
+        dashboard_refreshed = True
+    elif file_type == "price":
+        update_price_in_processed_data(data_owner.id)
+        invalidate_dashboard_cache_for_user(data_owner.id, clear_materialized=True)
         dashboard_refreshed = True
     else:
         invalidate_dashboard_cache_for_user(data_owner.id, clear_materialized=True)
@@ -402,43 +439,62 @@ def _run_dashboard_refresh(
     )
 
     if dashboard_refreshed or dashboard_invalidated:
-        # Fire daily-summary and inventory-summary as a parallel Celery group
-        # so they run concurrently instead of sequentially.
         sorted_dates = sorted(affected_dates or [])
+        affected_months = sorted({
+            str(d)[:7] + "-01" for d in sorted_dates
+        }) if sorted_dates else []
+
+        # Rebuild DashboardDailySummary INLINE (synchronously) so the fast
+        # summary rollup path is ready before the user is notified.
+        # This is the key table that makes filter changes fast — without it
+        # every dashboard load falls back to the 17s GROUP BY asin query.
+        try:
+            from apps.dashboard.services.daily_summary import rebuild_daily_summary_for_user
+            _t_ds = time.monotonic()
+            rebuild_daily_summary_for_user(data_owner, only_dates=sorted_dates or None)
+            logger.info(
+                "[DashboardRefreshTask] Daily summary rebuilt inline in %.1fs for owner=%s",
+                time.monotonic() - _t_ds, data_owner.id,
+            )
+        except Exception:
+            logger.exception(
+                "[DashboardRefreshTask] Inline daily summary rebuild failed for owner=%s, "
+                "falling back to async task.", data_owner.id,
+            )
+            _enqueue_daily_summary_refresh(data_owner.id, affected_dates=sorted_dates)
+
+        # Fire inventory + monthly summaries as async tasks — they're not needed
+        # for the first dashboard open and can complete in the background.
         try:
             from celery import group as celery_group
             from apps.dashboard.tasks import (
-                refresh_dashboard_daily_summary_task,
                 refresh_dashboard_inventory_summary_task,
+                refresh_dashboard_asin_monthly_summary_task,
             )
-
-            summary_group = celery_group(
-                refresh_dashboard_daily_summary_task.si(
-                    data_owner_id=data_owner.id,
-                    only_dates=list(sorted_dates),
-                ),
+            bg_group = celery_group(
                 refresh_dashboard_inventory_summary_task.si(
                     data_owner_id=data_owner.id,
                     only_dates=list(sorted_dates),
                 ),
+                refresh_dashboard_asin_monthly_summary_task.si(
+                    data_owner_id=data_owner.id,
+                    only_months=affected_months,
+                ),
             )
-            summary_group.apply_async()
+            bg_group.apply_async()
             logger.info(
-                "[DashboardRefreshTask] Dispatched daily+inventory summary tasks "
-                "in parallel for owner=%s (%d dates)",
-                data_owner.id, len(sorted_dates),
+                "[DashboardRefreshTask] Dispatched inventory+asin-monthly summary tasks "
+                "in background for owner=%s (%d dates, %d months)",
+                data_owner.id, len(sorted_dates), len(affected_months),
             )
         except Exception:
             logger.exception(
-                "[DashboardRefreshTask] Parallel summary dispatch failed, "
-                "falling back to sequential for owner=%s", data_owner.id,
+                "[DashboardRefreshTask] Background summary dispatch failed for owner=%s",
+                data_owner.id,
             )
-            _enqueue_daily_summary_refresh(
-                data_owner.id, affected_dates=sorted_dates
-            )
-            _enqueue_inventory_summary_refresh(
-                data_owner.id, affected_dates=sorted_dates
-            )
+            _enqueue_inventory_summary_refresh(data_owner.id, affected_dates=sorted_dates)
+            _enqueue_asin_monthly_summary_refresh(data_owner.id, affected_dates=sorted_dates)
+
         # Prime the default dashboard payload right after refresh so the first
         # post-upload page open can reuse cache instead of recomputing from scratch.
         _enqueue_dashboard_warmup(
@@ -577,7 +633,7 @@ def refresh_dashboard_after_upload_task(
 
 NON_CONVERTIBLE_EXCEL_TYPES = set()
 EXCEL_TO_CSV_MIN_SIZE_BYTES = int(
-    os.getenv("EXCEL_TO_CSV_MIN_SIZE_MB", "5")
+    os.getenv("EXCEL_TO_CSV_MIN_SIZE_MB", "0")
 ) * 1024 * 1024
 
 

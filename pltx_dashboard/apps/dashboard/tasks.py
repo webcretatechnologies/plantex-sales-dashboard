@@ -8,6 +8,7 @@ from apps.dashboard.services.materialized_cache import cleanup_materialized_summ
 from apps.dashboard.services.warmup import prime_dashboard_payloads_for_user
 from apps.dashboard.services.daily_summary import rebuild_daily_summary_for_user
 from apps.dashboard.services.inventory_summary import rebuild_inventory_summary_for_user
+from apps.dashboard.services.asin_monthly_summary import rebuild_asin_monthly_summary_for_user
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +78,36 @@ def refresh_dashboard_inventory_summary_task(data_owner_id, only_dates=None):
 
     stats = rebuild_inventory_summary_for_user(user, only_dates=only_dates or [])
     logger.info("[DashboardInventorySummary] user=%s stats=%s", data_owner_id, stats)
+    return stats
+
+
+@shared_task
+def refresh_dashboard_asin_monthly_summary_task(data_owner_id, only_months=None):
+    """
+    Rebuild DashboardAsinMonthlySummary for *data_owner_id*.
+    only_months: optional list of "YYYY-MM-DD" strings (first day of month)
+    to limit the rebuild; omit for a full rebuild.
+    """
+    try:
+        user = Users.objects.get(pk=data_owner_id)
+    except Users.DoesNotExist:
+        logger.warning(
+            "[DashboardAsinMonthlySummary] Skipping; user %s not found.", data_owner_id
+        )
+        return {"rows_written": 0, "error": "user-not-found"}
+
+    import datetime
+    parsed_months = []
+    for m in (only_months or []):
+        try:
+            parsed_months.append(datetime.datetime.strptime(str(m)[:10], "%Y-%m-%d").date())
+        except Exception:
+            pass
+
+    stats = rebuild_asin_monthly_summary_for_user(
+        user, only_months=parsed_months if parsed_months else None
+    )
+    logger.info("[DashboardAsinMonthlySummary] user=%s stats=%s", data_owner_id, stats)
     return stats
 
 

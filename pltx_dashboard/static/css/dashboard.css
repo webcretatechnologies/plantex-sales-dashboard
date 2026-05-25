@@ -1846,7 +1846,7 @@ body {
 }
 
 .tbl-overlay-inner {
-    background: var(--surface);
+    background: #ffffff;
     border: 1px solid var(--border);
     border-radius: 16px;
     width: 90vw;
@@ -1900,6 +1900,7 @@ body {
     flex: 1;
     overflow: auto;
     padding: 0;
+    background: #ffffff;
 }
 
 /* ── DataTables Dark Theme Override ── */
@@ -2042,12 +2043,16 @@ body {
     border-collapse: collapse !important;
 }
 
+.tbl-overlay table.dataTable thead tr {
+    background: #f8fafc;
+}
+
 .tbl-overlay table.dataTable tbody tr {
-    background: transparent;
+    background: #ffffff;
 }
 
 .tbl-overlay table.dataTable tbody tr:hover {
-    background: var(--surface2);
+    background: #f1f5f9;
 }
 
 .tbl-overlay table.dataTable.no-footer {

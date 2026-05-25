@@ -435,6 +435,47 @@ class DashboardDailySummary(models.Model):
         ]
 
 
+class DashboardAsinMonthlySummary(models.Model):
+    """
+    Monthly pre-aggregated metrics per ASIN/FSN — one row per (user, platform, asin, year_month).
+    Rebuilt by Celery after each upload. Eliminates expensive GROUP BY asin scans
+    on ProcessedDashboardData for long date ranges (last 3 months / 6 months / 1 year).
+    year_month is stored as the first day of the month, e.g. 2026-05-01.
+    """
+
+    user = models.ForeignKey(
+        "accounts.Users",
+        on_delete=models.CASCADE,
+        related_name="asin_monthly_summaries",
+    )
+    platform = models.CharField(max_length=20, db_index=True)  # Amazon / Flipkart
+    asin = models.CharField(max_length=50, db_index=True)  # asin (Amazon) or fsn (Flipkart)
+    year_month = models.DateField(db_index=True)  # first day of month: 2026-05-01
+
+    portfolio = models.CharField(max_length=100, null=True, blank=True)
+    category = models.CharField(max_length=100, null=True, blank=True)
+    subcategory = models.CharField(max_length=100, null=True, blank=True)
+
+    revenue = models.FloatField(default=0.0)
+    orders = models.IntegerField(default=0)
+    units = models.IntegerField(default=0)
+    pageviews = models.IntegerField(default=0)
+    total_spend = models.FloatField(default=0.0)
+    spend_sp = models.FloatField(default=0.0)
+    spend_sb = models.FloatField(default=0.0)
+    spend_sd = models.FloatField(default=0.0)
+
+    class Meta:
+        unique_together = ("user", "platform", "asin", "year_month")
+        indexes = [
+            models.Index(fields=["user", "platform", "year_month"], name="idx_ams_u_plat_ym"),
+            models.Index(fields=["user", "asin", "year_month"], name="idx_ams_u_a_ym"),
+            models.Index(fields=["user", "category", "year_month"], name="idx_ams_u_cat_ym"),
+            models.Index(fields=["user", "portfolio", "year_month"], name="idx_ams_u_port_ym"),
+            models.Index(fields=["user", "platform", "asin"], name="idx_ams_u_plat_a"),
+        ]
+
+
 class DashboardInventoryHealthSummary(models.Model):
     """
     Precomputed inventory-health rows used by dashboard requests.

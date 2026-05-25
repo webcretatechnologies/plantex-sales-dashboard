@@ -435,46 +435,44 @@ def _get_dashboard_refresh_status(data_owner_id):
             has_recent_processing_ping = (now - float(ts)) <= 120
 
         # -- Signal 3: Active UploadLog entries --
+        # Only hit the DB if Signals 1 and 2 haven't already confirmed activity.
+        # Results are cached 15s to absorb the 3s polling cadence.
         has_active_upload_logs = False
-        try:
-            from apps.upload.models import UploadLog
-
-            # Only consider upload logs updated within the last 30 minutes
-            # as genuinely active. Entries stuck longer than that are stale
-            # from crashed/interrupted workers and should not keep the
-            # banner visible indefinitely.
-            stale_cutoff = datetime.datetime.now() - datetime.timedelta(minutes=30)
-            active_logs_qs = UploadLog.objects.filter(
-                data_owner_id=data_owner_id,
-                status__in=[
-                    UploadLog.STATUS_QUEUED,
-                    UploadLog.STATUS_PROCESSING,
-                ],
-                updated_at__gte=stale_cutoff,
-            )
-            has_active_upload_logs = active_logs_qs.exists()
-
-            # Auto-cleanup: mark truly stale entries as error so they
-            # don't keep triggering the banner on subsequent checks.
-            stale_count = UploadLog.objects.filter(
-                data_owner_id=data_owner_id,
-                status__in=[
-                    UploadLog.STATUS_QUEUED,
-                    UploadLog.STATUS_PROCESSING,
-                ],
-                updated_at__lt=stale_cutoff,
-            ).update(
-                status=UploadLog.STATUS_ERROR,
-                message="Automatically marked as failed — task did not complete within 30 minutes.",
-            )
-            if stale_count:
-                import logging
-                logging.getLogger(__name__).info(
-                    "[DashboardRefreshStatus] Auto-cleaned %d stale UploadLog entries "
-                    "for owner=%s", stale_count, data_owner_id,
-                )
-        except Exception:
-            has_active_upload_logs = False
+        if not (has_refresh_lock or has_recent_processing_ping):
+            _ul_key = f"dashboard_upload_log_active_{data_owner_id}"
+            _ul_cached = cache.get(_ul_key)
+            if _ul_cached is None:
+                try:
+                    from apps.upload.models import UploadLog
+                    stale_cutoff = datetime.datetime.now() - datetime.timedelta(minutes=30)
+                    has_active_upload_logs = UploadLog.objects.filter(
+                        data_owner_id=data_owner_id,
+                        status__in=[
+                            UploadLog.STATUS_QUEUED,
+                            UploadLog.STATUS_PROCESSING,
+                        ],
+                        updated_at__gte=stale_cutoff,
+                    ).exists()
+                    cache.set(_ul_key, has_active_upload_logs, timeout=15)
+                    # Auto-cleanup: throttled to once per 60s to avoid write storms.
+                    _cleanup_key = f"dashboard_upload_log_cleanup_{data_owner_id}"
+                    if not cache.get(_cleanup_key):
+                        cache.set(_cleanup_key, 1, timeout=60)
+                        UploadLog.objects.filter(
+                            data_owner_id=data_owner_id,
+                            status__in=[
+                                UploadLog.STATUS_QUEUED,
+                                UploadLog.STATUS_PROCESSING,
+                            ],
+                            updated_at__lt=stale_cutoff,
+                        ).update(
+                            status=UploadLog.STATUS_ERROR,
+                            message="Automatically marked as failed — task did not complete within 30 minutes.",
+                        )
+                except Exception:
+                    has_active_upload_logs = False
+            else:
+                has_active_upload_logs = _ul_cached
 
         if not (has_refresh_lock or has_active_upload_logs or has_recent_processing_ping):
             cache.set(
@@ -632,11 +630,22 @@ def get_dashboard_context(
     data_owner = user.created_by if user.created_by else user
 
     if user.is_main_user:
-        user_features = [f.code_name for f in Feature.objects.all()]
+        _feat_key = "all_feature_codenames_v1"
+        user_features = cache.get(_feat_key)
+        if user_features is None:
+            user_features = list(Feature.objects.values_list("code_name", flat=True))
+            cache.set(_feat_key, user_features, timeout=3600)
     else:
-        user_features = (
-            [f.code_name for f in user.role.features.all()] if user.role else []
-        )
+        if user.role:
+            _feat_key = f"role_feature_codenames_v1_{user.role_id}"
+            user_features = cache.get(_feat_key)
+            if user_features is None:
+                user_features = list(
+                    user.role.features.values_list("code_name", flat=True)
+                )
+                cache.set(_feat_key, user_features, timeout=3600)
+        else:
+            user_features = []
 
     filters = build_filters_from_querydict(request.GET)
     filters.pop("scope", None)
@@ -740,16 +749,18 @@ def get_dashboard_context(
         have_lock = cache.add(compute_lock_key, "1", timeout=120)
         if not have_lock:
             # Another section is computing the same dataset; wait and reuse.
-            # Use longer waits for full-scope shared lock (computation takes 5–20 s).
-            wait_iters, wait_sleep = (30, 1.0) if is_shared_full_lock else (8, 0.15)
-            for _ in range(wait_iters):
+            # With monthly summary the typical computation is 1–3 s, so reduce
+            # wait_sleep to 0.5 s and check materialized summary every 4 iterations
+            # instead of every iteration (reduces repeated DB hits from ~30 to ~8).
+            wait_iters, wait_sleep = (24, 0.5) if is_shared_full_lock else (8, 0.15)
+            for _wi, _ in enumerate(range(wait_iters)):
                 time.sleep(wait_sleep)
                 payload = cache.get(cache_key)
                 if payload:
                     break
-                # Check shared materialized summary on each iteration so we unblock
-                # as soon as the winning section stores its result.
-                if not payload and is_shared_full_lock:
+                # Check shared materialized summary every 4 iterations (every 2 s)
+                # to avoid N×DashboardMaterializedSummary queries per waiting section.
+                if not payload and is_shared_full_lock and (_wi % 4 == 0):
                     payload = get_materialized_summary(
                         user_id=data_owner.id,
                         view_type=view_type,
@@ -1255,11 +1266,22 @@ def upload_view(request):
     data_owner = user.created_by if user.created_by else user
 
     if user.is_main_user:
-        user_features = [f.code_name for f in Feature.objects.all()]
+        _feat_key = "all_feature_codenames_v1"
+        user_features = cache.get(_feat_key)
+        if user_features is None:
+            user_features = list(Feature.objects.values_list("code_name", flat=True))
+            cache.set(_feat_key, user_features, timeout=3600)
     else:
-        user_features = (
-            [f.code_name for f in user.role.features.all()] if user.role else []
-        )
+        if user.role:
+            _feat_key = f"role_feature_codenames_v1_{user.role_id}"
+            user_features = cache.get(_feat_key)
+            if user_features is None:
+                user_features = list(
+                    user.role.features.values_list("code_name", flat=True)
+                )
+                cache.set(_feat_key, user_features, timeout=3600)
+        else:
+            user_features = []
     from apps.upload.models import UploadLog
     upload_logs = UploadLog.objects.filter(data_owner=data_owner).select_related(
         "uploaded_by"

@@ -11,6 +11,18 @@
     <link rel="preconnect" href="https://fonts.shopifycdn.com" crossorigin>
     <title id="page-document-title">Plantex — {% block page_title %}Sales Dashboard{% endblock %}</title>
     <meta name="description" content="Plantex real-time business overview and performance insights dashboard">
+    <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
+    <link rel="dns-prefetch" href="https://cdnjs.cloudflare.com">
+    <link rel="preconnect" href="https://unpkg.com" crossorigin>
+    <link rel="dns-prefetch" href="https://unpkg.com">
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+    <link rel="dns-prefetch" href="https://cdn.jsdelivr.net">
+    <link rel="preconnect" href="https://code.jquery.com" crossorigin>
+    <link rel="dns-prefetch" href="https://code.jquery.com">
+    <link rel="preconnect" href="https://cdn.datatables.net" crossorigin>
+    <link rel="dns-prefetch" href="https://cdn.datatables.net">
+    <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin>
+    <link rel="dns-prefetch" href="https://fonts.googleapis.com">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
     <link
@@ -24,20 +36,20 @@
     <link rel="stylesheet" href="https://cdn.datatables.net/1.13.8/css/jquery.dataTables.min.css">
     <script src="https://cdn.datatables.net/1.13.8/js/jquery.dataTables.min.js"></script>
     <style>
-        /* DataTables inside modals — match dashboard theme */
-        .tbl-overlay .dataTables_wrapper { font-size: 12px; color: var(--text, #e2e8f0); }
+        /* DataTables inside modals — light theme */
+        .tbl-overlay .dataTables_wrapper { font-size: 12px; color: var(--text, #0f172a); }
         .tbl-overlay .dataTables_wrapper .dataTables_length,
         .tbl-overlay .dataTables_wrapper .dataTables_filter,
         .tbl-overlay .dataTables_wrapper .dataTables_info,
         .tbl-overlay .dataTables_wrapper .dataTables_paginate { margin-bottom: 8px; }
         .tbl-overlay .dataTables_wrapper .dataTables_filter input,
         .tbl-overlay .dataTables_wrapper .dataTables_length select {
-            background: var(--card-bg, #1e293b); color: var(--text, #e2e8f0);
-            border: 1px solid var(--border, #334155); border-radius: 6px; padding: 4px 8px;
+            background: #ffffff; color: var(--text, #0f172a);
+            border: 1px solid var(--border, #e2e8f0); border-radius: 6px; padding: 4px 8px;
         }
         .tbl-overlay .dataTables_wrapper .dataTables_paginate .paginate_button {
-            background: var(--card-bg, #1e293b); color: var(--text, #e2e8f0) !important;
-            border: 1px solid var(--border, #334155); border-radius: 4px; padding: 3px 10px;
+            background: #ffffff; color: var(--text, #0f172a) !important;
+            border: 1px solid var(--border, #e2e8f0); border-radius: 4px; padding: 3px 10px;
             cursor: pointer; margin: 0 2px;
         }
         .tbl-overlay .dataTables_wrapper .dataTables_paginate .paginate_button.current,
@@ -53,8 +65,8 @@
             padding: 8px 0 6px; gap: 12px; flex-wrap: wrap; }
         .tbl-overlay .dt-bottom { display: flex; justify-content: space-between; align-items: center;
             padding: 6px 0 0; }
-        .tbl-overlay table.dataTable thead th { background: var(--table-header, #1e293b);
-            cursor: pointer; user-select: none; }
+        .tbl-overlay table.dataTable thead th { background: #f8fafc !important;
+            color: var(--text, #0f172a); cursor: pointer; user-select: none; }
     </style>
     
     <link rel="stylesheet" href="/static/css/dashboard.css?v=2">
@@ -206,7 +218,6 @@
     position: fixed;
     inset: 0;
     background: rgba(15, 23, 42, 0.35);
-    backdrop-filter: blur(2px);
     z-index: 9999;
     align-items: center;
     justify-content: center;
