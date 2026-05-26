@@ -132,7 +132,7 @@ def validate_shipment(filepath, master_data):
     cluster_master = set(master_data["cluster_list"])
 
     today = datetime.now().date()
-    cutoff_date = today - timedelta(days=15)
+    cutoff_date = today - timedelta(days=21)
 
     # 1. ASIN validation
     if "ASIN" in df.columns:
@@ -190,7 +190,7 @@ def validate_shipment(filepath, master_data):
                     "Row": idx + 2,
                     "Column": "LOADING DATE",
                     "Value": str(dates[idx].date()),
-                    "Message": f"Loading Date is before Today-15 days ({cutoff_date}), flagged as too old",
+                    "Message": f"Loading Date is before Today-21 days ({cutoff_date}), flagged as too old",
                     "Shipment_id": str(row.get("ID", "")),
                     "ASIN": str(row.get("ASIN", "")),
                 }
