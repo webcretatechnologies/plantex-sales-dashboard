@@ -141,14 +141,17 @@
             </select>
         </div>
 
-        <div class="topbar-filter-group" style="margin-left: 8px;">
-            <span class="filter-label">&nbsp;</span>
-            <button type="button" class="ceo-view-all-btn" id="applyFiltersBtn"
-                onclick="applyDashboardFilters()" title="Apply selected filters">Apply Filters</button>
+        <div class="topbar-filter-group topbar-filter-action-group">
+            <span class="filter-label filter-label-spacer" aria-hidden="true">Actions</span>
+            <button type="button" class="filter-action-btn" id="applyFiltersBtn" data-pending="0"
+                data-loading="0" onclick="applyDashboardFilters()" title="Apply selected filters">
+                <span class="material-icons-round" aria-hidden="true">filter_alt</span>
+                <span class="filter-action-btn__label" data-role="label">Apply Filters</span>
+            </button>
         </div>
 
-        <div class="topbar-filter-group" style="margin-left: 8px;">
-            <span class="filter-label">&nbsp;</span>
+        <div class="topbar-filter-group topbar-filter-action-group">
+            <span class="filter-label filter-label-spacer" aria-hidden="true">Actions</span>
             <button type="button" class="btn-text-reset" onclick="window.location.href=window.location.pathname"
                 title="Reset all filters">Reset Filters</button>
         </div>

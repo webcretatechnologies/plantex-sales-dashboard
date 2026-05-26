@@ -581,14 +581,17 @@
                     </select>
                 </div>
 
-                <div class="topbar-filter-group" style="margin-left: 8px;">
-                    <span class="filter-label">&nbsp;</span>
-                    <button type="button" class="ceo-view-all-btn" id="applyFiltersBtn"
-                        onclick="applyDashboardFilters()" title="Apply selected filters">Apply Filters</button>
+                <div class="topbar-filter-group topbar-filter-action-group">
+                    <span class="filter-label filter-label-spacer" aria-hidden="true">Actions</span>
+                    <button type="button" class="filter-action-btn" id="applyFiltersBtn" data-pending="0"
+                        data-loading="0" onclick="applyDashboardFilters()" title="Apply selected filters">
+                        <span class="material-icons-round" aria-hidden="true">filter_alt</span>
+                        <span class="filter-action-btn__label" data-role="label">Apply Filters</span>
+                    </button>
                 </div>
 
-                <div class="topbar-filter-group" style="margin-left: 8px;">
-                    <span class="filter-label">&nbsp;</span>
+                <div class="topbar-filter-group topbar-filter-action-group">
+                    <span class="filter-label filter-label-spacer" aria-hidden="true">Actions</span>
                     <button type="button" class="btn-text-reset" onclick="window.location.href=window.location.pathname"
                         title="Reset all filters">Reset Filters</button>
                 </div>
@@ -984,13 +987,16 @@
             bindFilterFormGuards();
         });
 
+        function getApplyFiltersLabel(btn) {
+            if (!btn) return null;
+            return btn.querySelector('[data-role="label"]');
+        }
+
         function markFiltersDirty() {
             var btn = document.getElementById('applyFiltersBtn');
             if (!btn) return;
             if (btn.dataset.loading === '1') return;
             btn.dataset.pending = '1';
-            btn.style.opacity = '1';
-            btn.style.boxShadow = '0 0 0 2px rgba(37,99,235,0.12)';
         }
 
         function markFiltersClean() {
@@ -998,29 +1004,26 @@
             if (!btn) return;
             if (btn.dataset.loading === '1') return;
             btn.dataset.pending = '0';
-            btn.style.opacity = '0.85';
-            btn.style.boxShadow = 'none';
         }
 
         function setApplyFiltersLoading(isLoading) {
             var btn = document.getElementById('applyFiltersBtn');
+            var label = getApplyFiltersLabel(btn);
             if (!btn) return;
             if (!btn.dataset.defaultLabel) {
-                btn.dataset.defaultLabel = btn.textContent || 'Apply Filters';
+                btn.dataset.defaultLabel = label ? label.textContent : (btn.textContent || 'Apply Filters');
             }
 
             if (isLoading) {
                 btn.dataset.loading = '1';
                 btn.disabled = true;
-                btn.textContent = 'Applying filters...';
-                btn.style.opacity = '0.7';
-                btn.style.cursor = 'not-allowed';
-                btn.style.boxShadow = 'none';
+                btn.setAttribute('aria-busy', 'true');
+                if (label) label.textContent = 'Applying filters...';
             } else {
                 btn.dataset.loading = '0';
                 btn.disabled = false;
-                btn.textContent = btn.dataset.defaultLabel || 'Apply Filters';
-                btn.style.cursor = '';
+                btn.setAttribute('aria-busy', 'false');
+                if (label) label.textContent = btn.dataset.defaultLabel || 'Apply Filters';
                 // Keep the clean visual state after a successful apply
                 markFiltersClean();
             }

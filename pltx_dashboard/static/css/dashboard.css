@@ -890,6 +890,88 @@ body {
     border-color: rgba(220, 38, 38, 0.4);
 }
 
+.topbar-filter-action-group {
+    margin-left: 8px;
+    justify-content: flex-end;
+}
+
+.filter-label-spacer {
+    visibility: hidden;
+    user-select: none;
+}
+
+.filter-action-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-width: 148px;
+    height: 36px;
+    padding: 0 16px;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    background: linear-gradient(135deg, var(--accent) 0%, #4338ca 55%, var(--accent2) 100%);
+    color: #ffffff;
+    cursor: pointer;
+    transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease, filter 0.2s ease;
+    font-family: 'Inter', sans-serif;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+    box-shadow: 0 12px 24px -14px rgba(79, 70, 229, 0.85), 0 6px 14px -10px rgba(14, 165, 233, 0.55);
+}
+
+.filter-action-btn .material-icons-round {
+    font-size: 16px;
+}
+
+.filter-action-btn__label {
+    white-space: nowrap;
+}
+
+.filter-action-btn[data-pending='0'] {
+    opacity: 0.92;
+}
+
+.filter-action-btn[data-pending='1'] {
+    opacity: 1;
+    box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.14), 0 14px 28px -14px rgba(79, 70, 229, 0.95), 0 8px 16px -12px rgba(14, 165, 233, 0.75);
+}
+
+.filter-action-btn:hover {
+    transform: translateY(-1px);
+    filter: saturate(1.05) brightness(1.02);
+    box-shadow: 0 16px 28px -16px rgba(79, 70, 229, 0.95), 0 10px 20px -16px rgba(14, 165, 233, 0.8);
+}
+
+.filter-action-btn:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.18), 0 16px 28px -16px rgba(79, 70, 229, 0.95);
+}
+
+.filter-action-btn[data-loading='1'],
+.filter-action-btn:disabled {
+    cursor: not-allowed;
+    transform: none;
+    opacity: 0.72;
+    filter: grayscale(0.08);
+    box-shadow: 0 8px 16px -14px rgba(79, 70, 229, 0.6);
+}
+
+.filter-action-btn[data-loading='1'] .material-icons-round {
+    animation: filterButtonSpin 0.9s linear infinite;
+}
+
+@keyframes filterButtonSpin {
+    from {
+        transform: rotate(0deg);
+    }
+
+    to {
+        transform: rotate(360deg);
+    }
+}
+
 
 /* ── Secondary Filter Bar ── */
 .secondary-filter-bar {
