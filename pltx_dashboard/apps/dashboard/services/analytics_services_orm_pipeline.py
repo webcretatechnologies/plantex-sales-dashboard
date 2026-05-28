@@ -159,8 +159,8 @@ def apply_global_filters_orm(qs, filters):
     return qs
 
 
-def get_prev_period_qs(qs, filters):
-    """Return queryset for the previous comparison period."""
+def get_prev_period_qs(qs, filters, reference_date=None):
+    """Return queryset for the previous MOM comparison period."""
     if qs is None:
         return None
 
@@ -169,19 +169,10 @@ def get_prev_period_qs(qs, filters):
     if cs and ce:
         return qs.filter(date__gte=cs, date__lte=ce)
 
-    start = filters.get("start_date")
-    end = filters.get("end_date")
-    if start and end:
-        try:
-            s_dt = datetime.datetime.strptime(str(start), "%Y-%m-%d").date()
-            e_dt = datetime.datetime.strptime(str(end), "%Y-%m-%d").date()
-            delta = e_dt - s_dt + datetime.timedelta(days=1)
-            p_end = s_dt - datetime.timedelta(days=1)
-            p_start = p_end - delta + datetime.timedelta(days=1)
-            return qs.filter(date__gte=p_start, date__lte=p_end)
-        except Exception:
-            pass
-    return qs.none()
+    cm_start, cm_end = resolve_growth_period(filters, reference_date or timezone.localdate())
+    pm_start = safe_shift_month(cm_start, -1)
+    pm_end = safe_shift_month(cm_end, -1)
+    return qs.filter(date__gte=pm_start, date__lte=pm_end)
 
 
 def _has_sku_filters(filters):
