@@ -439,7 +439,15 @@ def _empty_kpi_payload(kpis, marketing, filter_meta):
         "category_performance": [],
         "platforms": {},
         "filters": filter_meta,
-        "oos_impact": {"lost_sales": 0.0, "skus_affected": 0, "orders_lost": 0},
+        "oos_impact": {
+            "lost_sales": 0.0,
+            "skus_affected": 0,
+            "orders_lost": 0,
+            "selected_platform": "",
+            "lost_sales_rule": "",
+            "sku_rule": "",
+            "orders_rule": "",
+        },
         "inventory": {
             "in_stock": 0,
             "low_stock": 0,
@@ -702,10 +710,117 @@ def _compute_activity_metrics(qs_f, fk_qs_f, filters, user, fsn_meta=None):
         "selling_sku_count": selling_sku_count,
         "zero_selling_sku_count": az_zero_sku_count + fk_zero_sku_count,
         "zero_sales_pageviews": az_zero_pageviews + fk_zero_pageviews,
+        "az_selling_sku_count": az_selling,
+        "fk_selling_sku_count": fk_selling,
+        "az_zero_selling_sku_count": az_zero_sku_count,
+        "fk_zero_selling_sku_count": fk_zero_sku_count,
+        "az_zero_sales_pageviews": az_zero_pageviews,
+        "fk_zero_sales_pageviews": fk_zero_pageviews,
         "continue_sales_revenue": round(status_revenue["Continued"], 2),
         "discontinue_sales_revenue": round(status_revenue["Discontinued"], 2),
         "continue_sku_count": int(status_counts["Continued"]),
         "discontinued_sku_count": int(status_counts["Discontinued"]),
+    }
+
+
+def _empty_activity_metrics():
+    return {
+        "active_asins": 0,
+        "selling_sku_count": 0,
+        "zero_selling_sku_count": 0,
+        "zero_sales_pageviews": 0,
+        "az_selling_sku_count": 0,
+        "fk_selling_sku_count": 0,
+        "az_zero_selling_sku_count": 0,
+        "fk_zero_selling_sku_count": 0,
+        "az_zero_sales_pageviews": 0,
+        "fk_zero_sales_pageviews": 0,
+        "continue_sales_revenue": 0.0,
+        "discontinue_sales_revenue": 0.0,
+        "continue_sku_count": 0,
+        "discontinued_sku_count": 0,
+    }
+
+
+def _normalize_activity_metrics(activity_metrics):
+    normalized = _empty_activity_metrics()
+    if activity_metrics:
+        normalized.update(activity_metrics)
+    return normalized
+
+
+def _build_period_filters(start, end):
+    return {
+        "date_range": "custom",
+        "start_date": str(start),
+        "end_date": str(end),
+        "compare_start_date": "",
+        "compare_end_date": "",
+    }
+
+
+def _compute_unique_ad_spend_sku_counts(qs_f, fk_qs_f):
+    az_count = _distinct_value_count(qs_f, "asin", Q(total_spend__gt=0))
+    fk_count = _distinct_value_count(fk_qs_f, "fsn", Q(total_spend__gt=0))
+    return {
+        "az_ad_spend_sku_count": az_count,
+        "fk_ad_spend_sku_count": fk_count,
+        "ad_spend_sku_count": az_count + fk_count,
+    }
+
+
+def _build_period_snapshot(qs, fk_qs, start, end, user, *, fsn_meta=None, include_activity_metrics=True):
+    period_filters = _build_period_filters(start, end)
+    qs_f = apply_global_filters_orm(qs, period_filters)
+    fk_qs_f = apply_global_filters_orm(fk_qs, period_filters)
+
+    az_metrics = _aggregate_metrics(qs_f)
+    fk_metrics = _aggregate_metrics(fk_qs_f)
+    totals = _combined_metrics(az_metrics, fk_metrics)
+    unique_counts = _compute_unique_ad_spend_sku_counts(qs_f, fk_qs_f)
+
+    if include_activity_metrics:
+        activity_metrics = _normalize_activity_metrics(
+            _compute_activity_metrics(qs_f, fk_qs_f, period_filters, user, fsn_meta=fsn_meta)
+        )
+    else:
+        activity_metrics = _empty_activity_metrics()
+
+    az_roas = round(calculate_roas(az_metrics["revenue"], az_metrics["total_spend"]), 2)
+    fk_roas = round(calculate_roas(fk_metrics["revenue"], fk_metrics["total_spend"]), 2)
+    az_tacos = round(calculate_tacos(az_metrics["revenue"], az_metrics["total_spend"]), 2)
+    fk_tacos = round(calculate_tacos(fk_metrics["revenue"], fk_metrics["total_spend"]), 2)
+    total_roas = round(calculate_roas(totals["revenue"], totals["total_spend"]), 2)
+    total_tacos = round(calculate_tacos(totals["revenue"], totals["total_spend"]), 2)
+
+    return {
+        "revenue": round(totals["revenue"], 2),
+        "orders": int(totals["orders"]),
+        "units": int(totals["units"]),
+        "spend": round(totals["total_spend"], 2),
+        "roas": total_roas,
+        "tacos": total_tacos,
+        "az_revenue": round(az_metrics["revenue"], 2),
+        "fk_revenue": round(fk_metrics["revenue"], 2),
+        "az_orders": int(az_metrics["orders"]),
+        "fk_orders": int(fk_metrics["orders"]),
+        "az_units": int(az_metrics["units"]),
+        "fk_units": int(fk_metrics["units"]),
+        "az_spend": round(az_metrics["total_spend"], 2),
+        "fk_spend": round(fk_metrics["total_spend"], 2),
+        "az_roas": az_roas,
+        "fk_roas": fk_roas,
+        "az_tacos": az_tacos,
+        "fk_tacos": fk_tacos,
+        "ad_spend_sku_count": unique_counts["ad_spend_sku_count"],
+        "az_ad_spend_sku_count": unique_counts["az_ad_spend_sku_count"],
+        "fk_ad_spend_sku_count": unique_counts["fk_ad_spend_sku_count"],
+        "selling_sku_count": activity_metrics["selling_sku_count"],
+        "zero_selling_sku_count": activity_metrics["zero_selling_sku_count"],
+        "az_selling_sku_count": activity_metrics["az_selling_sku_count"],
+        "fk_selling_sku_count": activity_metrics["fk_selling_sku_count"],
+        "az_zero_selling_sku_count": activity_metrics["az_zero_selling_sku_count"],
+        "fk_zero_selling_sku_count": activity_metrics["fk_zero_selling_sku_count"],
     }
 
 
@@ -930,7 +1045,7 @@ def _build_declining_product_rows(
                 }
             )
 
-    rows.sort(key=lambda item: item["drop_pct"])
+    rows.sort(key=lambda item: (item["revenue"], item["drop_pct"]))
     return rows if include_full_payload else rows[:5]
 
 
@@ -1011,22 +1126,13 @@ def run_kpi_only_computation(
             pass
 
         if _monthly_activity is not None:
-            activity_metrics = _monthly_activity
+            activity_metrics = _normalize_activity_metrics(_monthly_activity)
         else:
-            activity_metrics = _compute_activity_metrics(
-                qs_f, fk_qs_f, filters, user, fsn_meta=fsn_meta
+            activity_metrics = _normalize_activity_metrics(
+                _compute_activity_metrics(qs_f, fk_qs_f, filters, user, fsn_meta=fsn_meta)
             )
     else:
-        activity_metrics = {
-            "active_asins": 0,
-            "selling_sku_count": 0,
-            "zero_selling_sku_count": 0,
-            "zero_sales_pageviews": 0,
-            "continue_sales_revenue": 0.0,
-            "discontinue_sales_revenue": 0.0,
-            "continue_sku_count": 0,
-            "discontinued_sku_count": 0,
-        }
+        activity_metrics = _empty_activity_metrics()
 
     total_revenue = totals["revenue"]
     total_spend = totals["total_spend"]
@@ -1061,6 +1167,10 @@ def run_kpi_only_computation(
         "roas": round(roas, 2),
         "conversion": round(conversion, 2),
         "tacos": round(tacos, 2),
+        "az_roas": round(calculate_roas(az_metrics["revenue"], az_metrics["total_spend"]), 2),
+        "fk_roas": round(calculate_roas(fk_metrics["revenue"], fk_metrics["total_spend"]), 2),
+        "az_tacos": round(calculate_tacos(az_metrics["revenue"], az_metrics["total_spend"]), 2),
+        "fk_tacos": round(calculate_tacos(fk_metrics["revenue"], fk_metrics["total_spend"]), 2),
     }
 
     # Previous-period KPI changes.
@@ -1088,7 +1198,7 @@ def run_kpi_only_computation(
         "roas": prev_roas,
         "tacos": prev_tacos,
     }
-    for key in ["revenue", "orders", "units", "spend", "roas", "tacos"]:
+    for key in ["orders", "units", "spend", "roas", "tacos"]:
         kpis[f"{key}_change"] = _safe_growth(kpis.get(key, 0), prev_values.get(key, 0))
 
     if summary_base_qs is not None:
@@ -1142,6 +1252,14 @@ def run_kpi_only_computation(
     yoy_pm_rev = az_periods["yoy_pm_rev"] + fk_periods["yoy_pm_rev"]
     cm_spend = az_periods["cm_spend"] + fk_periods["cm_spend"]
     pm_spend = az_periods["pm_spend"] + fk_periods["pm_spend"]
+    cm_snapshot = _build_period_snapshot(
+        qs, fk_qs, cm_start, cm_end, user,
+        fsn_meta=fsn_meta, include_activity_metrics=include_activity_metrics,
+    )
+    pm_snapshot = _build_period_snapshot(
+        qs, fk_qs, pm_start, pm_end, user,
+        fsn_meta=fsn_meta, include_activity_metrics=include_activity_metrics,
+    )
 
     kpis.update(
         {
@@ -1161,30 +1279,49 @@ def run_kpi_only_computation(
             "yoy_period_previous_end": yoy_cm_end,
             "mom_current_revenue": round(cm_rev, 2),
             "mom_previous_revenue": round(pm_rev, 2),
+            "az_mom_current_revenue": round(az_periods["cm_rev"], 2),
+            "az_mom_previous_revenue": round(az_periods["pm_rev"], 2),
+            "fk_mom_current_revenue": round(fk_periods["cm_rev"], 2),
+            "fk_mom_previous_revenue": round(fk_periods["pm_rev"], 2),
+            "yoy_current_revenue": round(cm_rev, 2),
             "yoy_previous_revenue": round(yoy_cm_rev, 2),
+            "az_yoy_current_revenue": round(az_periods["cm_rev"], 2),
+            "az_yoy_previous_revenue": round(az_periods["yoy_cm_rev"], 2),
+            "fk_yoy_current_revenue": round(fk_periods["cm_rev"], 2),
+            "fk_yoy_previous_revenue": round(fk_periods["yoy_cm_rev"], 2),
+            "mom_current_orders": int(cm_snapshot["az_orders"]),
+            "mom_previous_orders": int(pm_snapshot["az_orders"]),
+            "mom_current_units": int(cm_snapshot["units"]),
+            "mom_previous_units": int(pm_snapshot["units"]),
+            "mom_current_roas": cm_snapshot["roas"],
+            "mom_previous_roas": pm_snapshot["roas"],
+            "mom_current_tacos": cm_snapshot["tacos"],
+            "mom_previous_tacos": pm_snapshot["tacos"],
+            "mom_current_ad_spend_sku_count": int(cm_snapshot["ad_spend_sku_count"]),
+            "mom_previous_ad_spend_sku_count": int(pm_snapshot["ad_spend_sku_count"]),
+            "mom_current_selling_sku_count": int(cm_snapshot["selling_sku_count"]),
+            "mom_previous_selling_sku_count": int(pm_snapshot["selling_sku_count"]),
+            "mom_current_zero_selling_sku_count": int(cm_snapshot["zero_selling_sku_count"]),
+            "mom_previous_zero_selling_sku_count": int(pm_snapshot["zero_selling_sku_count"]),
             "mom_spend_growth": _safe_growth(cm_spend, pm_spend),
             "mom_roas_change": round(calculate_roas(cm_rev, cm_spend) - calculate_roas(pm_rev, pm_spend), 2),
             "mom_tacos_change": round(calculate_tacos(cm_rev, cm_spend) - calculate_tacos(pm_rev, pm_spend), 1),
         }
     )
 
-    az_ad_spend_sku_count = 0
-    if include_activity_metrics and spend_qs is not None and platform_filter != "Flipkart":
-        spend_qs_f = apply_global_filters_orm(spend_qs, filters)
-        az_ad_spend_sku_count = spend_qs_f.filter(spend__gt=0).count()
-
-    fk_ad_spend_sku_count = 0
-    if include_activity_metrics and platform_filter != "Amazon":
-        from apps.dashboard.models import FlipkartPLA
-
-        fk_pla_qs = apply_global_filters_orm(FlipkartPLA.objects.filter(user=user), filters)
-        fk_ad_spend_sku_count = fk_pla_qs.filter(ad_spend__gt=0).count()
+    unique_counts = _compute_unique_ad_spend_sku_counts(qs_f, fk_qs_f)
 
     kpis.update(
         {
-            "ad_spend_sku_count": az_ad_spend_sku_count + fk_ad_spend_sku_count,
+            "ad_spend_sku_count": unique_counts["ad_spend_sku_count"],
+            "az_ad_spend_sku_count": unique_counts["az_ad_spend_sku_count"],
+            "fk_ad_spend_sku_count": unique_counts["fk_ad_spend_sku_count"],
             "selling_sku_count": activity_metrics["selling_sku_count"],
+            "az_selling_sku_count": activity_metrics["az_selling_sku_count"],
+            "fk_selling_sku_count": activity_metrics["fk_selling_sku_count"],
             "zero_selling_sku_count": activity_metrics["zero_selling_sku_count"],
+            "az_zero_selling_sku_count": activity_metrics["az_zero_selling_sku_count"],
+            "fk_zero_selling_sku_count": activity_metrics["fk_zero_selling_sku_count"],
             "zero_sales_pageviews": activity_metrics["zero_sales_pageviews"],
             "continue_sales_revenue": activity_metrics["continue_sales_revenue"],
             "discontinue_sales_revenue": activity_metrics["discontinue_sales_revenue"],
@@ -1201,9 +1338,19 @@ def run_kpi_only_computation(
         "tacos": kpis["tacos"],
         "tacos_change": kpis.get("mom_tacos_change", 0),
         "ad_spend_sku_count": kpis.get("ad_spend_sku_count", 0),
+        "az_ad_spend_sku_count": kpis.get("az_ad_spend_sku_count", 0),
+        "fk_ad_spend_sku_count": kpis.get("fk_ad_spend_sku_count", 0),
         "selling_sku_count": kpis.get("selling_sku_count", 0),
+        "az_selling_sku_count": kpis.get("az_selling_sku_count", 0),
+        "fk_selling_sku_count": kpis.get("fk_selling_sku_count", 0),
         "zero_selling_sku_count": kpis.get("zero_selling_sku_count", 0),
+        "az_zero_selling_sku_count": kpis.get("az_zero_selling_sku_count", 0),
+        "fk_zero_selling_sku_count": kpis.get("fk_zero_selling_sku_count", 0),
         "zero_sales_pageviews": kpis.get("zero_sales_pageviews", 0),
+        "az_roas": kpis.get("az_roas", 0),
+        "fk_roas": kpis.get("fk_roas", 0),
+        "az_tacos": kpis.get("az_tacos", 0),
+        "fk_tacos": kpis.get("fk_tacos", 0),
     }
     filter_meta = cached_filter_metadata or get_available_filters_orm(qs, fk_qs)
     payload = _empty_kpi_payload(kpis, marketing, filter_meta)
@@ -1479,23 +1626,19 @@ def run_orm_computation(
     else:
         conversion = amazon_cvr(kpis["orders"], kpis["pageviews"])
     tacos = calculate_tacos(total_revenue, kpis["spend"])
+    az_roas = round(calculate_roas(kpis.get("az_revenue", 0), kpis.get("az_spend", 0)), 2)
+    fk_roas = round(calculate_roas(kpis.get("fk_revenue", 0), kpis.get("fk_spend", 0)), 2)
+    az_tacos = round(calculate_tacos(kpis.get("az_revenue", 0), kpis.get("az_spend", 0)), 2)
+    fk_tacos = round(calculate_tacos(kpis.get("fk_revenue", 0), kpis.get("fk_spend", 0)), 2)
+    current_unique_counts = _compute_unique_ad_spend_sku_counts(qs_f, fk_qs_f)
 
-    # Ad Spend SKUs: skip when use_summary_rollups — already computed in
-    # run_kpi_only_computation and available via summary_kpi_payload["kpis"].
-    az_ad_spend_sku_count = 0
-    fk_ad_spend_sku_count = 0
-    if not use_summary_rollups:
-        if spend_qs is not None and platform_filter != "Flipkart":
-            spend_qs_f = apply_global_filters_orm(spend_qs, filters)
-            if spend_qs_f is not None:
-                az_ad_spend_sku_count = spend_qs_f.filter(spend__gt=0).count()
-        if fk_qs_f is not None and platform_filter != "Amazon":
-            from apps.dashboard.models import FlipkartPLA
-            fk_pla_qs = apply_global_filters_orm(
-                FlipkartPLA.objects.filter(user=user), filters
-            )
-            if fk_pla_qs is not None:
-                fk_ad_spend_sku_count = fk_pla_qs.filter(ad_spend__gt=0).count()
+    current_activity_metrics = (
+        _normalize_activity_metrics(
+            _compute_activity_metrics(qs_f, fk_qs_f, filters, user, fsn_meta=_fsn_meta)
+        )
+        if include_activity_metrics
+        else _empty_activity_metrics()
+    )
 
     # 0-Sales SKU count: only ASINs that appear in the sales file
     # (have pageviews, revenue, or orders > 0, OR exist in the raw Sales file).
@@ -1554,16 +1697,20 @@ def run_orm_computation(
         "roas": round(roas, 2),
         "conversion": round(conversion, 2),
         "tacos": round(tacos, 2),
-        "ad_spend_sku_count": az_ad_spend_sku_count + fk_ad_spend_sku_count,
-        "selling_sku_count": sum(1 for r in table_data if r.get("units", 0) > 0),
-        "zero_selling_sku_count": sum(
-            1 for r in table_data
-            if r.get("units", 0) == 0 and _has_sales_data(r)
-        ),
-        "zero_sales_pageviews": sum(
-            r.get("pageviews", 0) for r in table_data
-            if r.get("units", 0) == 0 and _has_sales_data(r)
-        ),
+        "az_roas": az_roas,
+        "fk_roas": fk_roas,
+        "az_tacos": az_tacos,
+        "fk_tacos": fk_tacos,
+        "ad_spend_sku_count": current_unique_counts["ad_spend_sku_count"],
+        "az_ad_spend_sku_count": current_unique_counts["az_ad_spend_sku_count"],
+        "fk_ad_spend_sku_count": current_unique_counts["fk_ad_spend_sku_count"],
+        "selling_sku_count": current_activity_metrics["selling_sku_count"],
+        "az_selling_sku_count": current_activity_metrics["az_selling_sku_count"],
+        "fk_selling_sku_count": current_activity_metrics["fk_selling_sku_count"],
+        "zero_selling_sku_count": current_activity_metrics["zero_selling_sku_count"],
+        "az_zero_selling_sku_count": current_activity_metrics["az_zero_selling_sku_count"],
+        "fk_zero_selling_sku_count": current_activity_metrics["fk_zero_selling_sku_count"],
+        "zero_sales_pageviews": current_activity_metrics.get("zero_sales_pageviews", 0),
     })
 
     # ── Flipkart Product Status Metrics ──
@@ -1658,7 +1805,7 @@ def run_orm_computation(
     else:
         kpis_prev = {"revenue": 0, "orders": 0, "units": 0, "spend": 0, "roas": 0, "tacos": 0}
 
-    for key in ["revenue", "orders", "units", "spend", "roas", "tacos"]:
+    for key in ["orders", "units", "spend", "roas", "tacos"]:
         curr = kpis.get(key, 0)
         prev = kpis_prev.get(key, 0)
         kpis[f"{key}_change"] = _safe_growth(curr, prev)
@@ -1722,6 +1869,14 @@ def run_orm_computation(
 
         cm_spend = az_periods["cm_spend"] + fk_periods["cm_spend"]
         pm_spend = az_periods["pm_spend"] + fk_periods["pm_spend"]
+        cm_snapshot = _build_period_snapshot(
+            qs, fk_qs, cm_start, cm_end, user,
+            fsn_meta=_fsn_meta, include_activity_metrics=include_activity_metrics,
+        )
+        pm_snapshot = _build_period_snapshot(
+            qs, fk_qs, pm_start, pm_end, user,
+            fsn_meta=_fsn_meta, include_activity_metrics=include_activity_metrics,
+        )
 
         kpis["mom_growth"] = _safe_growth(cm_rev, pm_rev)
         kpis["yoy_growth"] = _safe_growth(cm_rev, yoy_cm_rev)
@@ -1739,7 +1894,30 @@ def run_orm_computation(
         kpis["yoy_period_previous_end"] = yoy_cm_end
         kpis["mom_current_revenue"] = round(cm_rev, 2)
         kpis["mom_previous_revenue"] = round(pm_rev, 2)
+        kpis["az_mom_current_revenue"] = round(cm_az_rev, 2)
+        kpis["az_mom_previous_revenue"] = round(pm_az_rev, 2)
+        kpis["fk_mom_current_revenue"] = round(cm_fk_rev, 2)
+        kpis["fk_mom_previous_revenue"] = round(pm_fk_rev, 2)
+        kpis["yoy_current_revenue"] = round(cm_rev, 2)
         kpis["yoy_previous_revenue"] = round(yoy_cm_rev, 2)
+        kpis["az_yoy_current_revenue"] = round(cm_az_rev, 2)
+        kpis["az_yoy_previous_revenue"] = round(yoy_cm_az_rev, 2)
+        kpis["fk_yoy_current_revenue"] = round(cm_fk_rev, 2)
+        kpis["fk_yoy_previous_revenue"] = round(yoy_cm_fk_rev, 2)
+        kpis["mom_current_orders"] = int(cm_snapshot["az_orders"])
+        kpis["mom_previous_orders"] = int(pm_snapshot["az_orders"])
+        kpis["mom_current_units"] = int(cm_snapshot["units"])
+        kpis["mom_previous_units"] = int(pm_snapshot["units"])
+        kpis["mom_current_roas"] = cm_snapshot["roas"]
+        kpis["mom_previous_roas"] = pm_snapshot["roas"]
+        kpis["mom_current_tacos"] = cm_snapshot["tacos"]
+        kpis["mom_previous_tacos"] = pm_snapshot["tacos"]
+        kpis["mom_current_ad_spend_sku_count"] = int(cm_snapshot["ad_spend_sku_count"])
+        kpis["mom_previous_ad_spend_sku_count"] = int(pm_snapshot["ad_spend_sku_count"])
+        kpis["mom_current_selling_sku_count"] = int(cm_snapshot["selling_sku_count"])
+        kpis["mom_previous_selling_sku_count"] = int(pm_snapshot["selling_sku_count"])
+        kpis["mom_current_zero_selling_sku_count"] = int(cm_snapshot["zero_selling_sku_count"])
+        kpis["mom_previous_zero_selling_sku_count"] = int(pm_snapshot["zero_selling_sku_count"])
         kpis["mom_spend_growth"] = _safe_growth(cm_spend, pm_spend)
         cm_roas = calculate_roas(cm_rev, cm_spend)
         pm_roas = calculate_roas(pm_rev, pm_spend)
@@ -1759,9 +1937,19 @@ def run_orm_computation(
         "tacos": kpis["tacos"],
         "tacos_change": kpis.get("mom_tacos_change", 0),
         "ad_spend_sku_count": kpis.get("ad_spend_sku_count", 0),
+        "az_ad_spend_sku_count": kpis.get("az_ad_spend_sku_count", 0),
+        "fk_ad_spend_sku_count": kpis.get("fk_ad_spend_sku_count", 0),
         "selling_sku_count": kpis.get("selling_sku_count", 0),
+        "az_selling_sku_count": kpis.get("az_selling_sku_count", 0),
+        "fk_selling_sku_count": kpis.get("fk_selling_sku_count", 0),
         "zero_selling_sku_count": kpis.get("zero_selling_sku_count", 0),
+        "az_zero_selling_sku_count": kpis.get("az_zero_selling_sku_count", 0),
+        "fk_zero_selling_sku_count": kpis.get("fk_zero_selling_sku_count", 0),
         "zero_sales_pageviews": kpis.get("zero_sales_pageviews", 0),
+        "az_roas": kpis.get("az_roas", 0),
+        "fk_roas": kpis.get("fk_roas", 0),
+        "az_tacos": kpis.get("az_tacos", 0),
+        "fk_tacos": kpis.get("fk_tacos", 0),
     }
 
     if use_summary_rollups and summary_kpi_payload:
@@ -1776,7 +1964,15 @@ def run_orm_computation(
             "category_performance": [],
             "platforms": {},
             "filters": cached_filter_metadata or get_available_filters_orm(qs, fk_qs),
-            "oos_impact": {"lost_sales": 0.0, "skus_affected": 0, "orders_lost": 0},
+            "oos_impact": {
+                "lost_sales": 0.0,
+                "skus_affected": 0,
+                "orders_lost": 0,
+                "selected_platform": "",
+                "lost_sales_rule": "",
+                "sku_rule": "",
+                "orders_rule": "",
+            },
             "inventory": {
                 "in_stock": 0,
                 "low_stock": 0,
@@ -1873,7 +2069,7 @@ def run_orm_computation(
             "growth": _safe_growth(cat_rev, cat_prev),
             "contribution": round(cat_rev / total_revenue * 100, 1) if total_revenue > 0 else 0,
         })
-    cat_perf_list.sort(key=lambda x: x["revenue"], reverse=True)
+    cat_perf_list.sort(key=lambda x: (x["growth"], x["revenue"]), reverse=True)
 
     # 8. Filter metadata for dropdowns
     filter_meta = cached_filter_metadata or get_available_filters_orm(qs, fk_qs)
@@ -1882,7 +2078,15 @@ def run_orm_computation(
 
     in_stock_count = low_stock_count = oos_count = overstock_count = 0
     total_lost_sales = 0.0
-    oos_impact = {"lost_sales": 0.0, "skus_affected": 0, "orders_lost": 0}
+    oos_impact = {
+        "lost_sales": 0.0,
+        "skus_affected": 0,
+        "orders_lost": 0,
+        "selected_platform": "",
+        "lost_sales_rule": "",
+        "sku_rule": "",
+        "orders_rule": "",
+    }
     inventory_position = []
     inventory = {
         "in_stock": 0,
@@ -2068,6 +2272,18 @@ def run_orm_computation(
                 "lost_sales": round(total_lost_sales, 2),
                 "skus_affected": int(oos_count),
                 "orders_lost": 0,
+                "selected_platform": "Flipkart" if is_flipkart_only else "Amazon",
+                "lost_sales_rule": (
+                    "Lost Sales is the revenue attached to inventory rows marked as OOS or Nearly OOS."
+                    if is_flipkart_only
+                    else "Lost Sales is the revenue attached to inventory rows marked as OOS."
+                ),
+                "sku_rule": (
+                    "SKUs Affected counts inventory rows marked as OOS plus Nearly OOS."
+                    if is_flipkart_only
+                    else "SKUs Affected counts inventory rows marked as OOS."
+                ),
+                "orders_rule": "Orders Lost is currently fixed at 0 in the dashboard logic.",
             }
         else:
             _queue_inventory_summary_refresh(summary_platform)
@@ -2147,22 +2363,6 @@ def run_orm_computation(
             "subtitle": "Trigger replenishment orders.", 
             "priority": "Medium",
             "calculation": f"Low Stock Count ({low_stock_count}) > 0"
-        })
-    if kpis.get("revenue_change", 0) < -5:
-        priorities.append({
-            "rank": len(priorities)+1, 
-            "title": "Investigate Revenue Drop", 
-            "subtitle": f"Revenue declined {abs(kpis['revenue_change']):.1f}%.", 
-            "priority": "High",
-            "calculation": f"Revenue Change ({kpis['revenue_change']:.1f}%) < -5%"
-        })
-    elif kpis.get("revenue_change", 0) > 15:
-        priorities.append({
-            "rank": len(priorities)+1, 
-            "title": "Capitalize on Revenue Growth", 
-            "subtitle": f"Revenue up {kpis['revenue_change']:.1f}%.", 
-            "priority": "Medium",
-            "calculation": f"Revenue Change ({kpis['revenue_change']:.1f}%) > 15%"
         })
     if not priorities:
         priorities.append({

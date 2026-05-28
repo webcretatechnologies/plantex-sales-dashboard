@@ -22,7 +22,7 @@
      hx-trigger="load once delay:80ms"
      hx-sync="this:replace"
      hx-swap="innerHTML">
-    <div class="empty" style="padding: 24px;">Loading charts...</div>
+    {% include "dashboard/partials/visuals_skeleton.html" %}
 </div>
 
 <div id="business-section-details"
@@ -31,6 +31,6 @@
      hx-trigger="load once delay:160ms"
      hx-sync="this:replace"
      hx-swap="innerHTML">
-    <div class="empty" style="padding: 24px;">Loading details...</div>
+    {% include "dashboard/partials/details_skeleton.html" %}
 </div>
 {% endblock %}
