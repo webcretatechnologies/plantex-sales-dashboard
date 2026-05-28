@@ -250,12 +250,28 @@ function _initializeDataTable(modalEl) {
     var paginationBox = modalEl.querySelector('.modal-pagination-controls');
     if (paginationBox) paginationBox.style.display = 'none';
 
+    var modalId = modalEl.id || '';
+    var headerCount = table.querySelectorAll('thead th').length;
+    var defaultOrder = [];
+    if (modalId === 'catGrowthModal') {
+        defaultOrder = [[2, 'desc'], [1, 'desc']];
+    } else if (modalId === 'winningModal') {
+        defaultOrder = [[1, 'desc']];
+    } else if (modalId === 'topProductsModal') {
+        defaultOrder = [[2, 'desc']];
+    } else if (modalId === 'bizDecliningModal' || modalId === 'decliningModal') {
+        defaultOrder = [[headerCount - 1, 'asc']];
+    } else if (modalId === 'clusterModal') {
+        defaultOrder = [[1, 'desc']];
+    }
+
     $(table).DataTable({
         pageLength: 25,
         lengthChange: true,
         lengthMenu: [10, 25, 50, 100],
         searching: true,
         ordering: true,
+        order: defaultOrder,
         info: true,
         autoWidth: false,
         responsive: true,

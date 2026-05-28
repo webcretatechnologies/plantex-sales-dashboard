@@ -1,4 +1,4 @@
-{% load dashboard_extras %}
+{% load dashboard_extras static %}
 <!-- ════════════ ROW 3: Category Trend | Category Share by Platform | Cluster Performance ════════════ -->
 <div class="biz-row-chart">
     <!-- Category Trend -->
@@ -47,12 +47,16 @@
                 <div class="ceo-platform-legend" id="platformLegend">
                     {% for name, data in payload.platforms.items %}
                     <div class="ceo-platform-item">
-                        <span
-                            class="ceo-platform-dot {% if name == 'Amazon' %}amazon{% elif name == 'Flipkart' %}flipkart{% endif %}"></span>
+                        <img
+                            src="{% if name == 'Amazon' %}{% static 'logo/amazon_logo.png' %}{% else %}{% static 'logo/flipkart_logo.png' %}{% endif %}"
+                            alt="{{ name }}"
+                            class="ceo-platform-logo">
                         <span class="ceo-platform-name">{{ name }}</span>
                         <span class="ceo-platform-pct">{{ data.pct }}%</span>
                         <span class="ceo-platform-rev">{{ data.revenue|fmt_rupee }}</span>
-                        <span class="ceo-platform-growth up">(▲{{ data.growth }}%)</span>
+                        <span class="ceo-platform-growth {% if data.growth >= 0 %}up{% else %}down{% endif %}">
+                            ({% if data.growth >= 0 %}▲{% else %}▼{% endif %}{{ data.growth|abs_val }}%)
+                        </span>
                     </div>
                     {% endfor %}
                 </div>
@@ -108,7 +112,7 @@
         <div class="ceo-card-header">
             <div>
                 <span class="ceo-card-title">Top Revenue Contributors</span>
-                <div style="font-size:11px;color:var(--muted);margin-top:2px;">By growth vs previous period</div>
+                <div style="font-size:11px;color:var(--muted);margin-top:2px;">Highest revenue vs previous period</div>
             </div>
             <button class="ceo-view-all-btn" onclick="openModal('topProductsModal')" id="cat-btn-top-viewall">View
                 All</button>
@@ -237,6 +241,7 @@
                 <div style="font-size:11px;color:var(--muted);margin-top:2px;">Potential revenue loss due to
                     out-of-stock</div>
             </div>
+            <button class="ceo-view-all-btn" onclick="openModal('catOosImpactModal')">View Details</button>
         </div>
         <div class="ceo-card-body">
             <div class="biz-metric-row">

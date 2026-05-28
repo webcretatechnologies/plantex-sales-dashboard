@@ -6,8 +6,8 @@
             <div class="ceo-sku-thumb">📦</div><span>{{ prod.sku }}</span>
         </div>
     </td>
-    <td class="num growth-down">▼ {{ prod.drop_pct|abs_val }}%</td>
-    <td class="num" style="color:var(--danger);">-{{ prod.impact|fmt_rupee }}</td>
+    <td class="num growth-down" data-order="{{ prod.drop_pct|default:0 }}">▼ {{ prod.drop_pct|abs_val }}%</td>
+    <td class="num" style="color:var(--danger);" data-order="{{ prod.impact|default:0 }}">-{{ prod.impact|fmt_rupee }}</td>
 </tr>
 {% empty %}
 <tr>

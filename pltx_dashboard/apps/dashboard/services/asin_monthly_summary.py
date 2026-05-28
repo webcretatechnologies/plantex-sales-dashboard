@@ -389,6 +389,12 @@ def compute_activity_metrics_from_monthly(user, filters, fsn_meta=None):
         "selling_sku_count": az_selling + fk_selling,
         "zero_selling_sku_count": az_zero_count + fk_zero_count,
         "zero_sales_pageviews": az_zero_pv + fk_zero_pv,
+        "az_selling_sku_count": az_selling,
+        "fk_selling_sku_count": fk_selling,
+        "az_zero_selling_sku_count": az_zero_count,
+        "fk_zero_selling_sku_count": fk_zero_count,
+        "az_zero_sales_pageviews": az_zero_pv,
+        "fk_zero_sales_pageviews": fk_zero_pv,
         "continue_sales_revenue": round(status_revenue["Continued"], 2),
         "discontinue_sales_revenue": round(status_revenue["Discontinued"], 2),
         "continue_sku_count": int(status_counts["Continued"]),
@@ -577,5 +583,5 @@ def build_declining_products_from_monthly(
                 "impact": max(prev - curr, 0.0),
             })
 
-    declining.sort(key=lambda r: r["drop_pct"])
+    declining.sort(key=lambda r: (r["revenue"], r["drop_pct"]))
     return declining if include_full_payload else declining[:5]

@@ -135,6 +135,108 @@
     </div>
 </div>
 
+<div class="tbl-overlay oos-calc-modal" id="catOosImpactModal">
+    <div class="tbl-overlay-inner oos-calc-inner">
+        <div class="tbl-overlay-header">
+            <div>
+                <span class="tbl-overlay-title">OOS Impact Calculation</span>
+                <div class="oos-calc-subtitle">
+                    This view explains how the category dashboard translates out-of-stock rows into revenue impact and missed demand.
+                </div>
+            </div>
+            <button class="tbl-overlay-close" onclick="closeModal('catOosImpactModal')">✕ Close</button>
+        </div>
+        <div class="tbl-overlay-scroll oos-calc-scroll">
+            <div class="oos-calc-hero">
+                <div>
+                    <div class="oos-calc-eyebrow">Inventory Risk Summary</div>
+                    <div class="oos-calc-copy">
+                        Review the exact numbers and interpretation rules behind the OOS impact card for the current category context.
+                    </div>
+                </div>
+                <div class="oos-calc-basis">
+                    <span class="oos-calc-basis-label">Platform basis</span>
+                    <strong>
+                        {% if payload.oos_impact.selected_platform %}
+                        {{ payload.oos_impact.selected_platform }}
+                        {% else %}
+                        Filter-driven mix
+                        {% endif %}
+                    </strong>
+                </div>
+            </div>
+
+            <div class="oos-calc-metrics">
+                <div class="oos-calc-stat danger">
+                    <span class="oos-calc-stat-label">Lost Sales</span>
+                    <strong class="oos-calc-stat-value">{{ payload.oos_impact.lost_sales|fmt_rupee }}</strong>
+                    <span class="oos-calc-stat-note">Estimated revenue currently blocked by OOS inventory</span>
+                </div>
+                <div class="oos-calc-stat">
+                    <span class="oos-calc-stat-label">SKUs Affected</span>
+                    <strong class="oos-calc-stat-value">{{ payload.oos_impact.skus_affected|fmt_num }}</strong>
+                    <span class="oos-calc-stat-note">SKUs included in the category-level stock-out count</span>
+                </div>
+                <div class="oos-calc-stat">
+                    <span class="oos-calc-stat-label">Orders Lost</span>
+                    <strong class="oos-calc-stat-value">{{ payload.oos_impact.orders_lost|fmt_num }}</strong>
+                    <span class="oos-calc-stat-note">Estimated demand not captured while stock was unavailable</span>
+                </div>
+            </div>
+
+            <div class="oos-calc-grid">
+                <article class="oos-calc-panel">
+                    <div class="oos-calc-panel-head">
+                        <span class="oos-calc-panel-kicker">Metric 01</span>
+                        <strong class="oos-calc-panel-title">Lost Sales</strong>
+                    </div>
+                    <p class="oos-calc-panel-copy">
+                        Revenue impact from out-of-stock items within the active category slice.
+                    </p>
+                    <div class="oos-calc-rule-label">Calculation Logic</div>
+                    <div class="oos-calc-rule-copy">{{ payload.oos_impact.lost_sales_rule|default:"Lost Sales is taken from inventory rows marked as out of stock." }}</div>
+                </article>
+
+                <article class="oos-calc-panel">
+                    <div class="oos-calc-panel-head">
+                        <span class="oos-calc-panel-kicker">Metric 02</span>
+                        <strong class="oos-calc-panel-title">SKUs Affected</strong>
+                    </div>
+                    <p class="oos-calc-panel-copy">
+                        Number of SKUs contributing to the OOS impact after platform and dashboard filters are applied.
+                    </p>
+                    <div class="oos-calc-rule-label">Calculation Logic</div>
+                    <div class="oos-calc-rule-copy">{{ payload.oos_impact.sku_rule|default:"SKUs Affected counts rows that are currently marked as OOS." }}</div>
+                </article>
+
+                <article class="oos-calc-panel">
+                    <div class="oos-calc-panel-head">
+                        <span class="oos-calc-panel-kicker">Metric 03</span>
+                        <strong class="oos-calc-panel-title">Orders Lost</strong>
+                    </div>
+                    <p class="oos-calc-panel-copy">
+                        Estimated order volume missed while the SKU could not be fulfilled.
+                    </p>
+                    <div class="oos-calc-rule-label">Calculation Logic</div>
+                    <div class="oos-calc-rule-copy">{{ payload.oos_impact.orders_rule|default:"Orders Lost is not currently calculated, so the dashboard shows 0." }}</div>
+                </article>
+            </div>
+
+            <div class="oos-calc-footnote">
+                <div class="oos-calc-footnote-title">Current platform logic</div>
+                <div class="oos-calc-footnote-copy">
+                    {% if payload.oos_impact.selected_platform %}
+                    <strong>{{ payload.oos_impact.selected_platform }}</strong> platform logic is being used for this calculation.
+                    {% else %}
+                    Current dashboard filters decide which platform rows are included in this calculation.
+                    {% endif %}
+                    Flipkart logic usually treats <strong>OOS</strong> and <strong>Nearly OOS</strong> as the highest stock-risk rows, while Amazon primarily uses the <strong>OOS</strong> bucket for lost-sales impact.
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Growth Opportunities Modal -->
 <div class="tbl-overlay" id="growthModal">
     <div class="tbl-overlay-inner">
