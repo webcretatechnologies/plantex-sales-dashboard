@@ -62,7 +62,7 @@ def stock_upload_alert(request):
         ).exists()
         has_fk_inventory_upload_today = UploadLog.objects.filter(
             data_owner=data_owner,
-            upload_type__in=["FK Inventory File", "FK Flex Stock File"],
+            upload_type="FK Inventory File",
             status=UploadLog.STATUS_SUCCESS,
             created_at__date=today,
         ).exists()

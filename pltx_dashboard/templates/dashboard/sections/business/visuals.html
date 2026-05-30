@@ -12,6 +12,14 @@
                 <button class="ceo-trend-tab active" data-period="daily" id="biz-btn-daily">Daily</button>
                 <button class="ceo-trend-tab" data-period="weekly" id="biz-btn-weekly">Weekly</button>
                 <button class="ceo-trend-tab" data-period="monthly" id="biz-btn-monthly">Monthly</button>
+                <div class="chart-year-slicer" style="margin-left:8px;border-left:1px solid var(--border);padding-left:8px;">
+                    <select id="bizChartYearSelect" class="chart-year-select" onchange="onChartYearChange(this)" title="Filter chart by year">
+                        <option value="">All Years</option>
+                        {% for y in payload.filters.years %}
+                        <option value="{{ y }}">{{ y }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
             </div>
         </div>
         <div class="ceo-trend-legend">
@@ -66,14 +74,14 @@
 
 </div>
 
-<!-- ════════════ ROW 3: Top Categories Growth | Top 10 Products | Bottom 5 Products ════════════ -->
+<!-- ════════════ ROW 3: Top Categories Revenue | Top 10 Products | Bottom 5 Products ════════════ -->
 <div class="biz-row-3-equal">
-    <!-- Top 5 Categories by Growth -->
+    <!-- Top 5 Categories by Revenue -->
     <div class="ceo-card" id="biz-card-cat-growth">
         <div class="ceo-card-header">
             <div>
-                <span class="ceo-card-title">Top 5 Categories by Growth</span>
-                <div style="font-size:11px;color:var(--muted);margin-top:2px;">vs previous period</div>
+                <span class="ceo-card-title">Top 5 Categories by Revenue</span>
+                <div style="font-size:11px;color:var(--muted);margin-top:2px;">MoM growth</div>
             </div>
             <button class="ceo-view-all-btn" onclick="openModal('catGrowthModal')" id="biz-btn-catgrowth-viewall">View
                 All</button>
@@ -118,20 +126,18 @@
                 All</button>
         </div>
         <div class="ceo-card-body no-pad">
-            <div class="biz-product-scroll">
-                <table class="ceo-table">
-                    <thead>
-                        <tr>
-                            <th>SKU</th>
-                            <th class="num">Revenue</th>
-                            <th class="num">Growth</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% include "dashboard/partials/product_cards/top_products_business_rows.html" with rows=payload.cat_top_products %}
-                    </tbody>
-                </table>
-            </div>
+            <table class="ceo-table">
+                <thead>
+                    <tr>
+                        <th>SKU</th>
+                        <th class="num">Revenue</th>
+                        <th class="num">Growth</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% include "dashboard/partials/product_cards/top_products_business_rows.html" with rows=payload.cat_top_products|slice:":8" %}
+                </tbody>
+            </table>
         </div>
     </div>
 
@@ -152,15 +158,15 @@
                     </tr>
                 </thead>
                 <tbody>
-                    {% include "dashboard/partials/product_cards/declining_products_rows.html" with rows=payload.cat_under_products %}
+                    {% include "dashboard/partials/product_cards/declining_products_rows.html" with rows=payload.cat_under_products|slice:":8" %}
                 </tbody>
             </table>
         </div>
     </div>
 </div>
 
-<!-- ════════════ ROW 4: Inventory Health | OOS Impact | Marketing Performance ════════════ -->
-<div class="biz-row-4">
+<!-- ════════════ ROW 4: Inventory Health | OOS Impact ════════════ -->
+<div class="biz-row-4" style="grid-template-columns: 1fr 1fr;">
     <!-- Inventory Health (CEO-style) -->
     <div class="ceo-card" id="biz-card-inventory">
         <div class="ceo-card-header" style="display: flex; justify-content: space-between; align-items: center;">
@@ -176,21 +182,37 @@
                     <div class="ceo-inv-icon good">✓</div>
                     <div class="ceo-inv-label">In Stock</div>
                     <div class="ceo-inv-value good">{{ payload.inventory.in_stock }} Rows</div>
+                    <div style="font-size: 10px; color: var(--muted); margin-top: 6px; display: flex; justify-content: space-between; padding: 0 4px;">
+                        <span style="display:inline-flex;align-items:center;"><img src="{% static 'logo/amazon_logo.png' %}" alt="Amz" style="width:14px;height:14px;margin-right:4px;"> <strong style="color:var(--text-color);">{{ payload.inventory.amz_in_stock }}</strong></span>
+                        <span style="display:inline-flex;align-items:center;"><img src="{% static 'logo/flipkart_logo.png' %}" alt="FK" style="width:14px;height:14px;margin-right:4px;"> <strong style="color:var(--text-color);">{{ payload.inventory.fk_in_stock }}</strong></span>
+                    </div>
                 </div>
                 <div class="ceo-inv-card">
                     <div class="ceo-inv-icon warn">!</div>
                     <div class="ceo-inv-label">Low Stock</div>
                     <div class="ceo-inv-value warn">{{ payload.inventory.low_stock }} Rows</div>
+                    <div style="font-size: 10px; color: var(--muted); margin-top: 6px; display: flex; justify-content: space-between; padding: 0 4px;">
+                        <span style="display:inline-flex;align-items:center;"><img src="{% static 'logo/amazon_logo.png' %}" alt="Amz" style="width:14px;height:14px;margin-right:4px;"> <strong style="color:var(--text-color);">{{ payload.inventory.amz_low_stock }}</strong></span>
+                        <span style="display:inline-flex;align-items:center;"><img src="{% static 'logo/flipkart_logo.png' %}" alt="FK" style="width:14px;height:14px;margin-right:4px;"> <strong style="color:var(--text-color);">{{ payload.inventory.fk_low_stock }}</strong></span>
+                    </div>
                 </div>
                 <div class="ceo-inv-card">
                     <div class="ceo-inv-icon danger">✕</div>
                     <div class="ceo-inv-label">OOS</div>
                     <div class="ceo-inv-value danger">{{ payload.inventory.oos }} Rows</div>
+                    <div style="font-size: 10px; color: var(--muted); margin-top: 6px; display: flex; justify-content: space-between; padding: 0 4px;">
+                        <span style="display:inline-flex;align-items:center;"><img src="{% static 'logo/amazon_logo.png' %}" alt="Amz" style="width:14px;height:14px;margin-right:4px;"> <strong style="color:var(--text-color);">{{ payload.inventory.amz_oos }}</strong></span>
+                        <span style="display:inline-flex;align-items:center;"><img src="{% static 'logo/flipkart_logo.png' %}" alt="FK" style="width:14px;height:14px;margin-right:4px;"> <strong style="color:var(--text-color);">{{ payload.inventory.fk_oos }}</strong></span>
+                    </div>
                 </div>
                 <div class="ceo-inv-card">
                     <div class="ceo-inv-icon neutral">⬆</div>
                     <div class="ceo-inv-label">Overstock</div>
                     <div class="ceo-inv-value neutral">{{ payload.inventory.overstock }} Rows</div>
+                    <div style="font-size: 10px; color: var(--muted); margin-top: 6px; display: flex; justify-content: space-between; padding: 0 4px;">
+                        <span style="display:inline-flex;align-items:center;"><img src="{% static 'logo/amazon_logo.png' %}" alt="Amz" style="width:14px;height:14px;margin-right:4px;"> <strong style="color:var(--text-color);">{{ payload.inventory.amz_overstock }}</strong></span>
+                        <span style="display:inline-flex;align-items:center;"><img src="{% static 'logo/flipkart_logo.png' %}" alt="FK" style="width:14px;height:14px;margin-right:4px;"> <strong style="color:var(--text-color);">{{ payload.inventory.fk_overstock }}</strong></span>
+                    </div>
                 </div>
             </div>
         </div>
@@ -230,6 +252,10 @@
         </div>
     </div>
 
+</div>
+
+<!-- ════════════ ROW 5: Marketing Performance | Today's Priorities ════════════ -->
+<div class="biz-row-3-bottom">
     <!-- Marketing Performance -->
     <div class="ceo-card" id="biz-card-marketing">
         <div class="ceo-card-header">
@@ -386,10 +412,6 @@
             </div>
         </div>
     </div>
-</div>
-
-            <!-- ════════════ ROW 5: Today's Priorities ════════════ -->
-            <div class="biz-row-3-bottom" style="grid-template-columns: 1fr;">
                 <!-- Today's Priorities (CEO-style) -->
                 <div class="ceo-card" id="biz-card-priorities">
                     <div class="ceo-card-header"

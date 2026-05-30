@@ -1,4 +1,153 @@
 {% load dashboard_extras %}
+<!-- ════════════ CATEGORY PERFORMANCE TABLE ════════════ -->
+<div class="ceo-card" id="cat-full-category-perf" style="margin-bottom: 24px;">
+    <div class="ceo-card-header" style="display: flex; justify-content: space-between; align-items: center;">
+        <div>
+            <span class="ceo-card-title">Category Performance</span>
+            <div style="font-size:11px;color:var(--muted);margin-top:2px;">Top 10 categories by revenue — growth &amp; platform breakdown</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
+            <button type="button" class="ceo-view-all-btn" id="catDashCsvBtn">Download CSV</button>
+            <button type="button" class="ceo-view-all-btn" id="catDashExcelBtn">Download Excel</button>
+            <div style="position: relative; width: 260px;">
+                <span class="material-icons-round"
+                    style="position: absolute; left: 10px; top: 50%; transform: translateY(-50%); font-size: 18px; color: var(--muted);">search</span>
+                <input type="text" id="catDashSearchInput" placeholder="Search top categories..."
+                    style="width: 100%; padding: 8px 12px 8px 36px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; outline: none; background: var(--card-bg, #fff); color: var(--text); transition: border-color 0.2s;"
+                    onfocus="this.style.borderColor='var(--accent)'" onblur="this.style.borderColor='var(--border)'">
+            </div>
+        </div>
+    </div>
+    <div class="ceo-card-body no-pad">
+        <table class="ceo-table" id="catDashCategoryPerformanceTable">
+            <thead>
+                <tr>
+                    <th>Category</th>
+                    <th class="num">Amazon Revenue</th>
+                    <th class="num">Flipkart Revenue</th>
+                    <th class="num">Total Revenue</th>
+                    <th class="num">MoM Growth</th>
+                    <th class="num">Contribution</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td colspan="6" class="empty" style="text-align:center;padding:20px;color:var(--muted);">Loading data...</td>
+                </tr>
+            </tbody>
+        </table>
+        <div class="pagination-container"
+            style="display: flex; justify-content: center; align-items: center; padding: 14px 18px; gap: 6px; border-top: 1px solid var(--border-light);"
+            id="catDashPagination"></div>
+    </div>
+</div>
+
+<script>
+    (function () {
+        const endpoint = "{% url 'dashboard-category-performance-rows' 'category' %}";
+        const table = document.getElementById('catDashCategoryPerformanceTable');
+        const tbody = table ? table.querySelector('tbody') : null;
+        const searchInput = document.getElementById('catDashSearchInput');
+        const paginationControls = document.getElementById('catDashPagination');
+        const csvBtn = document.getElementById('catDashCsvBtn');
+        const excelBtn = document.getElementById('catDashExcelBtn');
+        const pageSize = 10;
+        let currentPage = 1;
+        let debounceId = null;
+        let inFlightController = null;
+
+        if (!table || !tbody || !paginationControls) return;
+
+        function renderPagination(meta) {
+            paginationControls.innerHTML = '';
+            if (!meta || !meta.total_pages || meta.total_pages <= 1) return;
+
+            const info = document.createElement('span');
+            info.style.fontSize = '12px';
+            info.style.color = 'var(--muted)';
+            info.textContent = 'Page ' + currentPage + ' of ' + meta.total_pages;
+            paginationControls.appendChild(info);
+
+            const prevBtn = document.createElement('button');
+            prevBtn.className = 'btn-page';
+            prevBtn.innerText = 'Prev';
+            prevBtn.disabled = !meta.has_prev;
+            prevBtn.style.opacity = meta.has_prev ? '1' : '0.5';
+            prevBtn.style.cursor = meta.has_prev ? 'pointer' : 'not-allowed';
+            prevBtn.onclick = function () {
+                if (!meta.has_prev) return;
+                loadPage(currentPage - 1);
+            };
+            paginationControls.appendChild(prevBtn);
+
+            const nextBtn = document.createElement('button');
+            nextBtn.className = 'btn-page';
+            nextBtn.innerText = 'Next';
+            nextBtn.disabled = !meta.has_next;
+            nextBtn.style.opacity = meta.has_next ? '1' : '0.5';
+            nextBtn.style.cursor = meta.has_next ? 'pointer' : 'not-allowed';
+            nextBtn.onclick = function () {
+                if (!meta.has_next) return;
+                loadPage(currentPage + 1);
+            };
+            paginationControls.appendChild(nextBtn);
+        }
+
+        function buildUrl(page) {
+            const params = new URLSearchParams(window.location.search || '');
+            params.set('page', String(page));
+            params.set('page_size', String(pageSize));
+            const q = searchInput ? String(searchInput.value || '').trim() : '';
+            if (q) params.set('q', q);
+            else params.delete('q');
+            return endpoint + '?' + params.toString();
+        }
+
+        function downloadCategoryPerformance(format) {
+            const params = new URLSearchParams(window.location.search || '');
+            params.set('export', format);
+            window.location.href = endpoint + '?' + params.toString();
+        }
+
+        function loadPage(page) {
+            currentPage = page;
+            tbody.innerHTML = '<tr><td colspan="6" class="empty" style="text-align:center;padding:20px;color:var(--muted);">Loading data...</td></tr>';
+            if (inFlightController) {
+                try { inFlightController.abort(); } catch (e) {}
+            }
+            inFlightController = new AbortController();
+            fetch(buildUrl(page), {
+                headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                signal: inFlightController.signal
+            })
+                .then(function (resp) {
+                    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                    return resp.json();
+                })
+                .then(function (data) {
+                    tbody.innerHTML = data.html || '<tr><td colspan="6" class="empty">No data available</td></tr>';
+                    renderPagination(data.pagination || {});
+                })
+                .catch(function (err) {
+                    if (err && err.name === 'AbortError') return;
+                    tbody.innerHTML = '<tr><td colspan="6" class="empty">Failed to load data. Please retry.</td></tr>';
+                    paginationControls.innerHTML = '';
+                });
+        }
+
+        if (searchInput) {
+            searchInput.oninput = function () {
+                if (debounceId) clearTimeout(debounceId);
+                debounceId = setTimeout(function () { loadPage(1); }, 250);
+            };
+        }
+        if (csvBtn) csvBtn.onclick = function () { downloadCategoryPerformance('csv'); };
+        if (excelBtn) excelBtn.onclick = function () { downloadCategoryPerformance('excel'); };
+
+        loadPage(1);
+    })();
+</script>
+
 <!-- ════════════ VIEW ALL MODALS ════════════ -->
 
 <!-- Cluster Performance Modal -->
@@ -98,12 +247,6 @@
                 </div>
                 {% endif %}
                 <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px;">
-                    <input
-                        type="text"
-                        class="inv-health-search"
-                        placeholder="Search date, SKU, category, status..."
-                        style="min-width:260px;padding:7px 10px;border:1px solid var(--border);border-radius:8px;font-size:12px;"
-                    >
                     <button type="button" class="ceo-view-all-btn inv-health-download" data-format="csv">Download CSV</button>
                     <button type="button" class="ceo-view-all-btn inv-health-download" data-format="excel">Download Excel</button>
                 </div>
@@ -111,26 +254,61 @@
             <button class="tbl-overlay-close" onclick="closeModal('catInventoryHealthModal')">✕ Close</button>
         </div>
         <div class="tbl-overlay-scroll">
-            <table class="ceo-table inv-health-table" style="min-width: 800px;">
-                <thead>
+            <table class="ceo-table inv-health-table" style="min-width: 800px;" id="invHealthTableCat">
+                <thead id="invHealthHeaderCat">
                     <tr>
                         <th>Date</th>
-                        <th>SKU</th>
+                        <th>ASIN</th>
+                        <th>FSN</th>
                         <th>Category</th>
-                        <th class="num">Stock Qty</th>
-                        <th class="num">Sale Qty</th>
-                        <th class="num">DOC (Days)</th>
-                        <th class="num">Revenue</th>
-                        <th>Status</th>
+                        <th class="num">Amz Stock</th>
+                        <th class="num">Amz Sales</th>
+                        <th class="num">Amz DOC</th>
+                        <th class="num">Amz Revenue</th>
+                        <th>Amz Status</th>
+                        <th class="num">FK Stock</th>
+                        <th class="num">FK Sales</th>
+                        <th class="num">FK DOC</th>
+                        <th class="num">FK Revenue</th>
+                        <th>FK Status</th>
                         <th>Calculation</th>
                     </tr>
                 </thead>
-                <tbody data-modal-lazy="1">
+                <tbody data-modal-lazy="1" id="invHealthBodyCat">
                     <tr>
-                        <td colspan="9" class="empty">Loading data...</td>
+                        <td colspan="15" class="empty">Loading data...</td>
                     </tr>
                 </tbody>
             </table>
+<script>
+(function(){
+    var HEADERS = {
+        'All': '<tr><th>Date</th><th>ASIN</th><th>FSN</th><th>Category</th><th class="num">Amz Stock</th><th class="num">Amz Sales</th><th class="num">Amz DOC</th><th class="num">Amz Revenue</th><th>Amz Status</th><th class="num">FK Stock</th><th class="num">FK Sales</th><th class="num">FK DOC</th><th class="num">FK Revenue</th><th>FK Status</th><th>Calculation</th></tr>',
+        'Amazon': '<tr><th>Date</th><th>ASIN</th><th>Category</th><th class="num">Stock</th><th class="num">Sales</th><th class="num">DOC</th><th class="num">Revenue</th><th>Status</th><th>Calculation</th></tr>',
+        'Flipkart': '<tr><th>Date</th><th>FSN</th><th>Category</th><th class="num">Stock</th><th class="num">DOC</th><th class="num">Revenue</th><th>Status</th><th>Calculation</th></tr>',
+    };
+    function updateInvHealthHeaderCat(platform) {
+        var hdr = document.getElementById('invHealthHeaderCat');
+        if (hdr) hdr.innerHTML = HEADERS[platform] || HEADERS['All'];
+    }
+    function readCurrentPlatform() {
+        var sel = document.getElementById('platformSelect');
+        return sel ? (sel.value || 'All') : 'All';
+    }
+    document.addEventListener('DOMContentLoaded', function() {
+        updateInvHealthHeaderCat(readCurrentPlatform());
+        var applyBtn = document.getElementById('applyFiltersBtn');
+        if (applyBtn) applyBtn.addEventListener('click', function() {
+            setTimeout(function(){ updateInvHealthHeaderCat(readCurrentPlatform()); }, 200);
+        });
+    });
+    document.addEventListener('click', function(e) {
+        if (e.target && e.target.getAttribute && e.target.getAttribute('onclick') && e.target.getAttribute('onclick').indexOf('catInventoryHealthModal') > -1) {
+            setTimeout(function(){ updateInvHealthHeaderCat(readCurrentPlatform()); }, 50);
+        }
+    });
+})();
+</script>
         </div>
     </div>
 </div>

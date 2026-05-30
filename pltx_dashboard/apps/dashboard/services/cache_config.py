@@ -4,14 +4,14 @@ DEFAULT_DASHBOARD_VIEW_TYPES = (
     "category-dashboard",
 )
 
-DASHBOARD_PAYLOAD_CACHE_VERSION = 0
+DASHBOARD_PAYLOAD_CACHE_VERSION = 1
 
 # In-memory payload cache TTL tuning
 DASHBOARD_CACHE_TTL_LITE_SECONDS = 60 * 60 * 6   # 6 hours
 DASHBOARD_CACHE_TTL_FULL_SECONDS = 60 * 60 * 4    # 4 hours
 
 # Cache schema marker to prevent stale-key collisions after key format changes.
-DASHBOARD_CACHE_SCHEMA_VERSION = 0
+DASHBOARD_CACHE_SCHEMA_VERSION = 5
 
 DEFAULT_WARMUP_FILTER_SETS = (
     {},

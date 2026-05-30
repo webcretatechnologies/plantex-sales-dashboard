@@ -1,7 +1,9 @@
+import collections
 from django.db import transaction
 from django.db.models import Sum
 
 from apps.dashboard.models import (
+    AsinFsnMapping,
     CategoryMapping,
     DashboardInventoryHealthSummary,
     FBAStockData,
@@ -21,253 +23,205 @@ def _safe_doc(stock_qty, sale_qty):
     return 999.0 if stock_qty > 0 else 0.0
 
 
-def _build_amazon_rows(user, only_dates=None):
+def _build_combined_inventory_rows(user, only_dates=None):
     only_dates = {str(d) for d in (only_dates or []) if str(d).strip()}
+    date_kw = {"date__in": only_dates} if only_dates else {}
 
-    # Pre-compute aligned dates in Python (3 cheap DISTINCT queries) to eliminate
-    # the two correlated subqueries that MySQL evaluated per-row in the original SQL.
-    _date_kw = {"date__in": only_dates} if only_dates else {}
-    _stock_dates = (
-        set(FBAStockData.objects.filter(user=user, **_date_kw).values_list("date", flat=True).distinct())
-        | set(FlexStockData.objects.filter(user=user, **_date_kw).values_list("date", flat=True).distinct())
-    )
-    _sales_dates = set(
-        ProcessedDashboardData.objects.filter(user=user, **_date_kw).values_list("date", flat=True).distinct()
-    )
-    aligned_dates = sorted(str(d) for d in (_stock_dates & _sales_dates))
-    if not aligned_dates:
-        return 0
+    # 1. Load mappings
+    mappings = list(AsinFsnMapping.objects.filter(user=user).values("asin", "fsn", "category", "portfolio", "subcategory"))
+    amz_to_fk = {m["asin"]: m["fsn"] for m in mappings if m["asin"]}
+    fk_to_amz = {m["fsn"]: m["asin"] for m in mappings if m["fsn"]}
+    meta_by_asin = {m["asin"]: (m["category"], m["portfolio"], m["subcategory"]) for m in mappings if m["asin"]}
+    meta_by_fsn = {m["fsn"]: (m["category"], m["portfolio"], m["subcategory"]) for m in mappings if m["fsn"]}
 
-    aligned_ph = ", ".join(["%s"] * len(aligned_dates))
-    date_filter = f" AND date IN ({aligned_ph})"
+    # 2. Amazon data
+    amz_fba_qs = FBAStockData.objects.filter(user=user, **date_kw).values("asin", "date").annotate(qty=Sum("ending_warehouse_balance"))
+    amz_fba = {(r["asin"], r["date"]): int(r["qty"] or 0) for r in amz_fba_qs.iterator(chunk_size=5000)}
 
-    inv_table = DashboardInventoryHealthSummary._meta.db_table
-    fba_table = FBAStockData._meta.db_table
-    flex_table = FlexStockData._meta.db_table
-    sales_table = ProcessedDashboardData._meta.db_table
-    cm_table = CategoryMapping._meta.db_table
+    amz_flex_qs = FlexStockData.objects.filter(user=user, **date_kw).values("asin", "date").annotate(qty=Sum("qty"))
+    amz_flex = {(r["asin"], r["date"]): int(r["qty"] or 0) for r in amz_flex_qs.iterator(chunk_size=5000)}
 
-    sql = f"""
-        INSERT INTO {inv_table} (
-            user_id, date, platform, sku, category, portfolio, subcategory,
-            status, status_class, stock_qty, fba_qty, flex_qty, sale_qty, 
-            total_sales_window, drr, doc, reason, revenue
-        )
-        SELECT 
-            %s AS user_id,
-            k.date,
-            'Amazon' AS platform,
-            k.asin AS sku,
-            COALESCE(cm.category, 'Unknown') AS category,
-            COALESCE(cm.portfolio, '') AS portfolio,
-            COALESCE(cm.subcategory, '') AS subcategory,
-            
-            CASE 
-                WHEN COALESCE(fba.qty, 0) + COALESCE(flex.qty, 0) <= 0 THEN 'OOS'
-                WHEN COALESCE(sales.units, 0) <= 0 THEN 'Overstock'
-                WHEN (COALESCE(fba.qty, 0) + COALESCE(flex.qty, 0)) / COALESCE(sales.units, 0) <= 15 THEN 'Low Stock'
-                WHEN (COALESCE(fba.qty, 0) + COALESCE(flex.qty, 0)) / COALESCE(sales.units, 0) > 60 THEN 'Overstock'
-                ELSE 'In Stock'
-            END AS status,
-            
-            CASE 
-                WHEN COALESCE(fba.qty, 0) + COALESCE(flex.qty, 0) <= 0 THEN 'danger'
-                WHEN COALESCE(sales.units, 0) <= 0 THEN 'neutral'
-                WHEN (COALESCE(fba.qty, 0) + COALESCE(flex.qty, 0)) / COALESCE(sales.units, 0) <= 15 THEN 'warn'
-                WHEN (COALESCE(fba.qty, 0) + COALESCE(flex.qty, 0)) / COALESCE(sales.units, 0) > 60 THEN 'neutral'
-                ELSE 'good'
-            END AS status_class,
-            
-            COALESCE(fba.qty, 0) + COALESCE(flex.qty, 0) AS stock_qty,
-            COALESCE(fba.qty, 0) AS fba_qty,
-            COALESCE(flex.qty, 0) AS flex_qty,
-            COALESCE(sales.units, 0) AS sale_qty,
-            COALESCE(sales.units, 0) AS total_sales_window,
-            COALESCE(sales.units, 0) AS drr,
-            
-            CASE 
-                WHEN COALESCE(sales.units, 0) > 0 THEN ROUND((COALESCE(fba.qty, 0) + COALESCE(flex.qty, 0)) / COALESCE(sales.units, 0), 1)
-                WHEN COALESCE(fba.qty, 0) + COALESCE(flex.qty, 0) > 0 THEN 999.0
-                ELSE 0.0
-            END AS doc,
-            
-            CASE 
-                WHEN COALESCE(fba.qty, 0) + COALESCE(flex.qty, 0) <= 0 THEN CONCAT('Stock Qty = 0 (FBA: ', COALESCE(fba.qty, 0), ', Flex: ', COALESCE(flex.qty, 0), ')')
-                WHEN COALESCE(sales.units, 0) <= 0 THEN CONCAT('DOC = ∞ (Stock: ', COALESCE(fba.qty, 0) + COALESCE(flex.qty, 0), ', No sales)')
-                ELSE CONCAT('DOC = ', 
-                     ROUND((COALESCE(fba.qty, 0) + COALESCE(flex.qty, 0)) / COALESCE(sales.units, 0), 1),
-                     ' days (Stock: ', COALESCE(fba.qty, 0) + COALESCE(flex.qty, 0), 
-                     ' / Same-Day Sales: ', ROUND(COALESCE(sales.units, 0), 1), ')')
-            END AS reason,
-            
-            COALESCE(sales.revenue, 0) AS revenue
+    amz_sales_qs = ProcessedDashboardData.objects.filter(user=user, **date_kw).values("asin", "date").annotate(units=Sum("units"), revenue=Sum("revenue"))
+    amz_sales = {(r["asin"], r["date"]): {"units": int(r["units"] or 0), "revenue": float(r["revenue"] or 0)} for r in amz_sales_qs.iterator(chunk_size=5000)}
 
-        FROM (
-            SELECT date, asin FROM {fba_table} WHERE user_id = %s {date_filter}
-            UNION
-            SELECT date, asin FROM {flex_table} WHERE user_id = %s {date_filter}
-            UNION
-            SELECT date, asin FROM {sales_table} WHERE user_id = %s {date_filter}
-        ) k
-        LEFT JOIN (
-            SELECT date, asin, SUM(ending_warehouse_balance) as qty 
-            FROM {fba_table} WHERE user_id = %s {date_filter} GROUP BY date, asin
-        ) fba ON fba.date = k.date AND fba.asin = k.asin
-        LEFT JOIN (
-            SELECT date, asin, SUM(qty) as qty 
-            FROM {flex_table} WHERE user_id = %s {date_filter} GROUP BY date, asin
-        ) flex ON flex.date = k.date AND flex.asin = k.asin
-        LEFT JOIN (
-            SELECT date, asin, SUM(units) as units, SUM(revenue) as revenue
-            FROM {sales_table} WHERE user_id = %s {date_filter} GROUP BY date, asin
-        ) sales ON sales.date = k.date AND sales.asin = k.asin
-        LEFT JOIN {cm_table} cm ON cm.user_id = %s AND cm.asin = k.asin
-        WHERE k.date IN ({aligned_ph})
-    """
+    amz_cm = {r["asin"]: (r["category"], r["portfolio"], r["subcategory"]) for r in CategoryMapping.objects.filter(user=user).values("asin", "category", "portfolio", "subcategory")}
 
-    params = [user.id]
-    # UNION keys
-    for _ in range(3):
-        params.append(user.id)
-        params.extend(aligned_dates)
-    # JOIN aggregations
-    for _ in range(3):
-        params.append(user.id)
-        params.extend(aligned_dates)
-    # CM join
-    params.append(user.id)
-    # WHERE aligned_dates
-    params.extend(aligned_dates)
+    # 3. Flipkart data
+    fk_fba_qs = Flipkartfba.objects.filter(user=user, **date_kw).values("fsn", "date").annotate(qty=Sum("live_on_website"))
+    fk_fba = {(r["fsn"], r["date"]): int(r["qty"] or 0) for r in fk_fba_qs.iterator(chunk_size=5000)}
 
-    from django.db import connection
-    with connection.cursor() as cursor:
-        cursor.execute(sql, params)
-        rows_written = max(cursor.rowcount, 0)
+    fk_inv_qs = FlipkartInventoryStock.objects.filter(user=user, **date_kw).values("fsn", "date").annotate(qty=Sum("qty"))
+    fk_inv = {(r["fsn"], r["date"]): int(r["qty"] or 0) for r in fk_inv_qs.iterator(chunk_size=5000)}
 
-    return rows_written
+    fk_sales_qs = FlipkartSearchTraffic.objects.filter(user=user, **date_kw).values("fsn", "date").annotate(s=Sum("sales"))
+    fk_sales = {(r["fsn"], r["date"]): int(r["s"] or 0) for r in fk_sales_qs.iterator(chunk_size=5000)}
 
+    fk_rev_qs = FlipkartProcessedDashboardData.objects.filter(user=user, **date_kw).values("fsn", "date").annotate(r=Sum("revenue"))
+    fk_rev = {(r["fsn"], r["date"]): float(r["r"] or 0) for r in fk_rev_qs.iterator(chunk_size=5000)}
 
-def _build_flipkart_rows(user, only_dates=None):
-    only_dates = {str(d) for d in (only_dates or []) if str(d).strip()}
-    traffic_qs = FlipkartSearchTraffic.objects.filter(user=user)
-    inv_qs = FlipkartInventoryStock.objects.filter(user=user)
-    fba_qs = Flipkartfba.objects.filter(user=user)
-    rev_qs = FlipkartProcessedDashboardData.objects.filter(user=user)
-    map_qs = FlipkartCategoryMap.objects.filter(user=user)
+    fk_cm = {r["fsn"]: (r["category"], r["portfolio"], r["subcategory"]) for r in FlipkartCategoryMap.objects.filter(user=user).values("fsn", "category", "portfolio", "subcategory")}
 
-    if only_dates:
-        traffic_qs = traffic_qs.filter(date__in=only_dates)
-        inv_qs = inv_qs.filter(date__in=only_dates)
-        fba_qs = fba_qs.filter(date__in=only_dates)
-        rev_qs = rev_qs.filter(date__in=only_dates)
+    # ── CRITICAL: Only build rows for dates where stock data was ACTUALLY uploaded ──
+    # Amazon: only dates present in FBA or Flex stock uploads
+    amz_stock_dates = {d for (_, d) in amz_fba.keys()} | {d for (_, d) in amz_flex.keys()}
+    # Flipkart: only dates present in FK FBA or FK Inventory stock uploads
+    fk_stock_dates = {d for (_, d) in fk_fba.keys()} | {d for (_, d) in fk_inv.keys()}
 
-    sales_by_key = {}
-    sales_total_by_sku = {}
-    for r in traffic_qs.values("fsn", "date").annotate(s=Sum("sales")).iterator(chunk_size=5000):
-        fsn = str(r["fsn"])
-        sales = int(r["s"] or 0)
-        sales_by_key[(fsn, r["date"])] = sales
-        sales_total_by_sku[fsn] = sales_total_by_sku.get(fsn, 0) + sales
-    inv_by_key = {
-        (str(r["fsn"]), r["date"]): int(r["q"] or 0)
-        for r in inv_qs.values("fsn", "date").annotate(q=Sum("qty"))
-    }
-    fba_by_key = {
-        (str(r["fsn"]), r["date"]): int(r["q"] or 0)
-        for r in fba_qs.values("fsn", "date").annotate(q=Sum("live_on_website"))
-    }
-    rev_by_key = {
-        (str(r["fsn"]), r["date"]): float(r["r"] or 0)
-        for r in rev_qs.values("fsn", "date").annotate(r=Sum("revenue"))
-    }
-    meta_by_sku = {
-        str(r["fsn"]): (
-            str(r.get("category") or "Unknown"),
-            str(r.get("portfolio") or ""),
-            str(r.get("subcategory") or ""),
-        )
-        for r in map_qs.values("fsn", "category", "portfolio", "subcategory")
-    }
+    # Build keyed sets: Amazon rows = ASINs with stock data for valid Amazon dates
+    amz_keys = set()
+    for (asin, d) in list(amz_fba.keys()) + list(amz_flex.keys()):
+        amz_keys.add((asin, d))
+    # Also add ASINs that appear in sales for valid Amazon stock dates (to get DOC right)
+    for (asin, d) in amz_sales.keys():
+        if d in amz_stock_dates:
+            amz_keys.add((asin, d))
 
-    stock_keys = set(inv_by_key.keys()) | set(fba_by_key.keys())
-    sales_keys = set(sales_by_key.keys())
-    stock_dates = {d for _sku, d in stock_keys if d}
-    sales_dates = {d for _sku, d in sales_keys if d}
-    aligned_dates = stock_dates & sales_dates
-    keys = ({k for k in stock_keys if k[1] in aligned_dates} | {k for k in sales_keys if k[1] in aligned_dates}) if aligned_dates else set()
+    # Flipkart rows = FSNs with stock data for valid FK dates
+    fk_keys = set()
+    for (fsn, d) in list(fk_fba.keys()) + list(fk_inv.keys()):
+        fk_keys.add((fsn, d))
+    # Also add FSNs that appear in FK sales for valid FK stock dates
+    for (fsn, d) in list(fk_sales.keys()) + list(fk_rev.keys()):
+        if d in fk_stock_dates:
+            fk_keys.add((fsn, d))
+
+    # For each Amazon ASIN, if a mapped FSN exists AND FK stock data exists for that date → link them
+    # Otherwise keep them separate (don't create phantom FK OOS rows)
+    all_keys = {}  # key → {"asin": .., "fsn": .., "date": ..}
+
+    for (asin, d) in amz_keys:
+        fsn = amz_to_fk.get(asin, "")
+        k = (asin or fsn, d)
+        if k not in all_keys:
+            all_keys[k] = {"asin": asin, "fsn": fsn if (fsn, d) in fk_keys else "", "date": d}
+        else:
+            # Merge — FSN only linked if FK stock exists for this date
+            if fsn and (fsn, d) in fk_keys:
+                all_keys[k]["fsn"] = fsn
+
+    for (fsn, d) in fk_keys:
+        asin = fk_to_amz.get(fsn, "")
+        k = (asin if asin else fsn, d)
+        if k not in all_keys:
+            all_keys[k] = {"asin": asin if asin and (asin, d) in amz_keys else "", "fsn": fsn, "date": d}
 
     rows = []
-    for sku, row_date in keys:
-        fba_qty = int(fba_by_key.get((sku, row_date), 0))
-        flex_qty = int(inv_by_key.get((sku, row_date), 0))
-        stock_qty = fba_qty + flex_qty
-        same_day_sales = int(sales_by_key.get((sku, row_date), 0))
-        total_sales = int(sales_total_by_sku.get(sku, 0))
-        drr = float(total_sales) / 30.0
-        if drr > 0:
-            doc = round(stock_qty / drr, 1)
-        else:
-            doc = 999.0 if stock_qty > 0 else 0.0
-        rev = float(rev_by_key.get((sku, row_date), 0.0) or 0.0)
-        category, portfolio, subcategory = meta_by_sku.get(sku, ("Unknown", "", ""))
 
-        if stock_qty <= 0:
-            status = "OOS"
-            status_class = "danger"
-            reason = f"Stock Qty = 0 (Live on Website: {fba_qty}, FK Qty: {flex_qty})"
-        elif doc < 5:
-            status = "Nearly OOS"
-            status_class = "danger"
-            reason = f"DOC = {doc} days (Stock: {stock_qty}, DRR: {drr:.2f})"
-        elif doc < 15:
-            status = "Understock"
-            status_class = "warn"
-            reason = f"DOC = {doc} days (Stock: {stock_qty}, DRR: {drr:.2f})"
-        elif doc <= 30:
-            status = "Ideal Stocking"
-            status_class = "good"
-            reason = f"DOC = {doc} days (Stock: {stock_qty}, DRR: {drr:.2f})"
-        elif doc <= 90:
-            status = "Over Stock"
-            status_class = "neutral"
-            reason = f"DOC = {doc} days (Stock: {stock_qty}, DRR: {drr:.2f})"
-        elif doc <= 180:
-            status = "Highly Over Stock"
-            status_class = "neutral"
-            reason = f"DOC = {doc} days (Stock: {stock_qty}, DRR: {drr:.2f})"
-        else:
-            status = "Not Selling"
-            status_class = "neutral"
-            reason = f"DOC = {doc} days (Stock: {stock_qty}, DRR: {drr:.2f})"
+    def _status(stock, sale):
+        doc = _safe_doc(stock, sale)
+        if stock <= 0: return "OOS", "danger"
+        elif sale <= 0: return "Overstock", "neutral"
+        elif doc <= 15: return "Low Stock", "warn"
+        elif doc > 60: return "Overstock", "neutral"
+        else: return "In Stock", "good"
 
-        rows.append(
-            DashboardInventoryHealthSummary(
-                user=user,
-                date=row_date,
-                platform="Flipkart",
-                sku=sku,
-                category=category,
-                portfolio=portfolio,
-                subcategory=subcategory,
-                stock_qty=stock_qty,
-                fba_qty=fba_qty,
-                flex_qty=flex_qty,
-                sale_qty=same_day_sales,
-                total_sales_window=total_sales,
-                drr=round(drr, 2),
-                doc=float(doc),
-                revenue=round(rev, 2),
-                status=status,
-                status_class=status_class,
-                reason=reason,
-            )
-        )
+    def _fk_status(stock, sale):
+        doc = _safe_doc(stock, sale)
+        if stock <= 0: return "OOS", "danger"
+        elif doc < 5: return "Nearly OOS", "danger"
+        elif doc < 15: return "Understock", "warn"
+        elif doc <= 30: return "Ideal Stocking", "good"
+        elif doc <= 90: return "Over Stock", "neutral"
+        elif doc <= 180: return "Highly Over Stock", "neutral"
+        else: return "Not Selling", "neutral"
+
+    for _key, item in all_keys.items():
+        asin = item["asin"]
+        fsn = item["fsn"]
+        d = item["date"]
+
+        # Amazon metrics — only if ASIN is present and stock data uploaded for this date
+        if asin:
+            fba_qty = amz_fba.get((asin, d), 0)
+            flex_qty = amz_flex.get((asin, d), 0)
+            amz_stock = fba_qty + flex_qty
+            amz_s_dict = amz_sales.get((asin, d), {"units": 0, "revenue": 0.0})
+            amz_sale_qty = amz_s_dict["units"]
+            amz_revenue = amz_s_dict["revenue"]
+            amz_doc = _safe_doc(amz_stock, amz_sale_qty)
+            amz_stat, amz_stat_cls = _status(amz_stock, amz_sale_qty)
+            if amz_stock <= 0:
+                amz_reason = f"Stock Qty = 0 (FBA: {fba_qty}, Flex: {flex_qty})"
+            elif amz_sale_qty <= 0:
+                amz_reason = f"DOC = ∞ (Stock: {amz_stock}, No sales)"
+            else:
+                amz_reason = f"DOC = {amz_doc} days (Stock: {amz_stock} / Same-Day Sales: {amz_sale_qty})"
+        else:
+            fba_qty = flex_qty = amz_stock = amz_sale_qty = 0
+            amz_revenue = amz_doc = 0.0
+            amz_stat = amz_stat_cls = amz_reason = ""
+
+        # Flipkart metrics — only if FSN is present and FK stock data uploaded for this date
+        if fsn:
+            fk_fba_q = fk_fba.get((fsn, d), 0)
+            fk_inv_q = fk_inv.get((fsn, d), 0)
+            fk_stock = fk_fba_q + fk_inv_q
+            fk_sale = fk_sales.get((fsn, d), 0)
+            fk_rev_val = fk_rev.get((fsn, d), 0.0)
+            fk_doc = _safe_doc(fk_stock, fk_sale)
+            fk_stat, fk_stat_cls = _fk_status(fk_stock, fk_sale)
+        else:
+            fk_fba_q = fk_inv_q = fk_stock = fk_sale = 0
+            fk_rev_val = fk_doc = 0.0
+            fk_stat = fk_stat_cls = ""
+
+        # Skip rows with no data at all (shouldn't happen but guard)
+        if not asin and not fsn:
+            continue
+
+        # Meta
+        if asin and asin in meta_by_asin:
+            cat, port, sub = meta_by_asin[asin]
+        elif fsn and fsn in meta_by_fsn:
+            cat, port, sub = meta_by_fsn[fsn]
+        elif asin and asin in amz_cm:
+            cat, port, sub = amz_cm[asin]
+        elif fsn and fsn in fk_cm:
+            cat, port, sub = fk_cm[fsn]
+        else:
+            cat, port, sub = "Unknown", "", ""
+
+        rows.append(DashboardInventoryHealthSummary(
+            user=user,
+            date=d,
+            platform="Combined",
+            sku=asin if asin else fsn,
+            asin=asin,
+            fsn=fsn,
+            category=cat,
+            portfolio=port,
+            subcategory=sub,
+
+            stock_qty=amz_stock,
+            fba_qty=fba_qty,
+            flex_qty=flex_qty,
+            sale_qty=amz_sale_qty,
+            total_sales_window=amz_sale_qty,
+            drr=amz_sale_qty,
+            doc=amz_doc,
+            revenue=amz_revenue,
+            status=amz_stat,
+            status_class=amz_stat_cls,
+            reason=amz_reason,
+
+            fk_stock_qty=fk_stock,
+            fk_fba_qty=fk_fba_q,
+            fk_flex_qty=fk_inv_q,
+            fk_sale_qty=fk_sale,
+            fk_doc=fk_doc,
+            fk_revenue=fk_rev_val,
+            fk_status=fk_stat,
+            fk_status_class=fk_stat_cls,
+        ))
+
     return rows
 
 
 def rebuild_inventory_summary_for_user(user, *, only_dates=None):
     """
-    Rebuild dashboard inventory-health summary rows.
+    Rebuild dashboard inventory-health summary rows using the combined ASIN-FSN logic.
+    Only creates rows for dates where actual stock files were uploaded — never generates
+    phantom OOS rows from sales-only data.
     """
     only_dates = {str(d) for d in (only_dates or []) if str(d).strip()}
     with transaction.atomic():
@@ -276,11 +230,8 @@ def rebuild_inventory_summary_for_user(user, *, only_dates=None):
             scoped = scoped.filter(date__in=only_dates)
         scoped.delete()
 
-        rows_written = _build_amazon_rows(user, only_dates=only_dates)
-        inserts = []
-        inserts.extend(_build_flipkart_rows(user, only_dates=only_dates))
+        inserts = _build_combined_inventory_rows(user, only_dates=only_dates)
         if inserts:
             DashboardInventoryHealthSummary.objects.bulk_create(inserts, batch_size=2000)
-            rows_written += len(inserts)
 
-    return {"rows_written": rows_written, "dates_scoped": sorted(only_dates)}
+    return {"rows_written": len(inserts), "dates_scoped": sorted(only_dates)}

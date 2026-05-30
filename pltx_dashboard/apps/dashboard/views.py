@@ -101,6 +101,7 @@ DASHBOARD_PRODUCT_CARD_PAYLOAD_KEY_MAP = {
 DASHBOARD_CATEGORY_PERFORMANCE_ROWS_TEMPLATE_MAP = {
     "business": "dashboard/partials/category_performance_rows_business.html",
     "ceo": "dashboard/partials/category_performance_rows_ceo.html",
+    "category": "dashboard/partials/category_performance_rows_category.html",
 }
 
 
@@ -155,6 +156,71 @@ def _modal_rows_export_filename(view_name, modal_key, ext):
     safe_view = str(view_name).strip().replace(" ", "_").lower()
     safe_modal = str(modal_key).strip().replace(" ", "_").replace("-", "_").lower()
     return f"{safe_view}_{safe_modal}_{stamp}.{ext}"
+
+
+def _category_performance_export_filename(view_name, ext):
+    stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_view = str(view_name).strip().replace(" ", "_").lower()
+    return f"{safe_view}_category_performance_{stamp}.{ext}"
+
+
+def _export_number(value):
+    """Robustly convert a value (including strings like '1234.56') to a float."""
+    if value is None:
+        return 0.0
+    if isinstance(value, (int, float)):
+        return round(float(value), 2)
+    # Handle string values that may come from cached/serialized data
+    try:
+        cleaned = str(value).replace(",", "").strip()
+        return round(float(cleaned), 2) if cleaned else 0.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _fmt_rupee_export(value):
+    """Format a numeric revenue value as a readable rupee string for exports."""
+    num = _export_number(value)
+    if num >= 10_000_000:
+        return f"\u20b9{num / 10_000_000:.2f}Cr"
+    if num >= 100_000:
+        return f"\u20b9{num / 100_000:.2f}L"
+    if num >= 1_000:
+        return f"\u20b9{num / 1_000:.2f}K"
+    return f"\u20b9{num:.2f}"
+
+
+def _category_performance_export_table(rows):
+    headers = [
+        "Category",
+        "Amazon Revenue",
+        "Flipkart Revenue",
+        "Total Revenue",
+        "MoM Growth",
+        "Contribution",
+    ]
+    table_rows = []
+    for row in rows:
+        current_revenue = _export_number(row.get("mom_current_revenue", row.get("revenue")))
+        previous_revenue = _export_number(row.get("mom_previous_revenue"))
+        growth = _export_number(row.get("mom_growth", row.get("growth")))
+        contribution = _export_number(row.get("contribution"))
+        direction = "+" if growth >= 0 else ""
+        mom_cell = (
+            f"{direction}{growth}% "
+            f"({_fmt_rupee_export(current_revenue)} vs {_fmt_rupee_export(previous_revenue)})"
+        )
+        table_rows.append(
+            [
+                _clean_export_value(row.get("category") or "Unknown"),
+                _export_number(row.get("amazon_revenue")),
+                _export_number(row.get("flipkart_revenue")),
+                _export_number(row.get("total_revenue", row.get("revenue"))),
+                mom_cell,
+                f"{contribution}%",
+            ]
+        )
+    return headers, table_rows
 
 
 def _strip_non_dashboard_filters(filters):
@@ -216,6 +282,23 @@ def _get_light_filter_metadata(data_owner_id, data_version):
     if FlipkartProcessedDashboardData.objects.filter(user_id=data_owner_id).exists():
         platforms.append("Flipkart")
 
+    # Collect distinct years from both Amazon and Flipkart processed data
+    az_years = list(
+        ProcessedDashboardData.objects
+        .filter(user_id=data_owner_id)
+        .exclude(date__isnull=True)
+        .values_list("date__year", flat=True)
+        .distinct()
+    )
+    fk_years = list(
+        FlipkartProcessedDashboardData.objects
+        .filter(user_id=data_owner_id)
+        .exclude(date__isnull=True)
+        .values_list("date__year", flat=True)
+        .distinct()
+    )
+    years = sorted(list(set(az_years) | set(fk_years)), reverse=True)
+
     metadata = {
         "asins": [],
         "fsns": [],
@@ -223,10 +306,12 @@ def _get_light_filter_metadata(data_owner_id, data_version):
         "portfolios": [],
         "subcategories": [],
         "platforms": platforms,
+        "years": years,
         "dates": [],
     }
     cache.set(cache_key, metadata, timeout=3600)
     return metadata
+
 
 
 def _get_top_product_modal_rows(data_owner, filters):
@@ -310,27 +395,33 @@ def _get_inventory_modal_queryset(data_owner, filters, query):
         apply_global_filters_orm,
     )
 
-    platform = _inventory_summary_platform(filters)
     qs = DashboardInventoryHealthSummary.objects.filter(
         user=data_owner,
-        platform=platform,
+        platform="Combined",
     )
     qs = apply_global_filters_orm(qs, filters)
     qs = _list_or_scalar_filter(qs, "category", filters.get("category"))
     qs = _list_or_scalar_filter(qs, "portfolio", filters.get("portfolio"))
     qs = _list_or_scalar_filter(qs, "subcategory", filters.get("subcategory"))
 
-    sku_filter = filters.get("fsn") if platform == "Flipkart" else filters.get("asin")
-    qs = _list_or_scalar_filter(qs, "sku", sku_filter)
+    sku_filter = filters.get("fsn") or filters.get("asin")
+    if sku_filter:
+        if isinstance(sku_filter, (list, tuple)):
+            qs = qs.filter(Q(asin__in=sku_filter) | Q(fsn__in=sku_filter))
+        else:
+            qs = qs.filter(Q(asin=sku_filter) | Q(fsn=sku_filter))
 
     if query:
         needle = str(query).strip()
         qs = qs.filter(
             Q(sku__icontains=needle)
+            | Q(asin__icontains=needle)
+            | Q(fsn__icontains=needle)
             | Q(category__icontains=needle)
             | Q(portfolio__icontains=needle)
             | Q(subcategory__icontains=needle)
             | Q(status__icontains=needle)
+            | Q(fk_status__icontains=needle)
             | Q(reason__icontains=needle)
         )
     return qs.order_by("-date", "-revenue", "sku")
@@ -340,18 +431,30 @@ def _inventory_summary_row_dict(row):
     return {
         "date": row.date,
         "sku": row.sku,
+        "asin": row.asin or "",
+        "fsn": row.fsn or "",
         "category": row.category or "Unknown",
+        
+        # Amazon Metrics
+        "amz_stock": int(row.stock_qty or 0),
+        "amz_sales": int(row.sale_qty or 0),
+        "amz_doc": float(row.doc or 0),
+        "amz_revenue": round(float(row.revenue or 0), 2),
+        "amz_status": row.status or "",
+        "amz_status_class": row.status_class or "",
+        
+        # Flipkart Metrics
+        "fk_stock": int(row.fk_stock_qty or 0),
+        "fk_sales": int(row.fk_sale_qty or 0),
+        "fk_doc": float(row.fk_doc or 0),
+        "fk_revenue": round(float(row.fk_revenue or 0), 2),
+        "fk_status": row.fk_status or "",
+        "fk_status_class": row.fk_status_class or "",
+        
+        # Combined / Legacy (for sorting/fallback)
+        "revenue": round(float(row.revenue or 0) + float(row.fk_revenue or 0), 2),
         "stock_qty": int(row.stock_qty or 0),
-        "fba_qty": int(row.fba_qty or 0),
-        "flex_qty": int(row.flex_qty or 0),
         "sale_qty": int(row.sale_qty or 0),
-        "total_sales_30d": int(row.total_sales_window or 0),
-        "drr": round(float(row.drr or 0), 2),
-        "doc": float(row.doc or 0),
-        "units": int(row.sale_qty or 0),
-        "revenue": round(float(row.revenue or 0), 2),
-        "status": row.status,
-        "status_class": row.status_class,
         "reason": row.reason,
     }
 
@@ -653,6 +756,28 @@ def get_dashboard_context(
     filters.pop("scope", None)
     selected_filters = selected_filter_payload(filters)
 
+    data_version_dates = cache.get(f"dashboard_data_version_{data_owner.id}", 0)
+    uploaded_dates_key = f"dashboard_uploaded_dates_v1_{data_owner.id}_{data_version_dates}"
+    uploaded_dates = cache.get(uploaded_dates_key)
+    if uploaded_dates is None:
+        az_dates = set(
+            ProcessedDashboardData.objects
+            .filter(user_id=data_owner.id)
+            .exclude(date__isnull=True)
+            .values_list("date", flat=True)
+            .distinct()
+        )
+        fk_dates = set(
+            FlipkartProcessedDashboardData.objects
+            .filter(user_id=data_owner.id)
+            .exclude(date__isnull=True)
+            .values_list("date", flat=True)
+            .distinct()
+        )
+        all_dts = sorted(list(az_dates | fk_dates))
+        uploaded_dates = [d.strftime("%Y-%m-%d") for d in all_dts if d]
+        cache.set(uploaded_dates_key, uploaded_dates, timeout=86400)
+
     if not include_payload:
         refresh_status = _get_dashboard_refresh_status(data_owner.id)
         return {
@@ -665,6 +790,7 @@ def get_dashboard_context(
             "selected_filters_json": json.dumps(selected_filters),
             "dashboard_refresh_status": refresh_status,
             "dashboard_refresh_status_json": json.dumps(refresh_status),
+            "uploaded_dates_json": json.dumps(uploaded_dates),
         }
 
     _ensure_processed_tables_if_missing(data_owner)
@@ -698,6 +824,7 @@ def get_dashboard_context(
             "selected_filters_json": json.dumps(selected_filters),
             "dashboard_refresh_status": refresh_status,
             "dashboard_refresh_status_json": json.dumps(refresh_status),
+            "uploaded_dates_json": json.dumps(uploaded_dates),
         }
 
     # Apply same entity filters to spend data at DB level
@@ -838,6 +965,7 @@ def get_dashboard_context(
         "selected_filters_json": json.dumps(selected_filters),
         "dashboard_refresh_status": refresh_status,
         "dashboard_refresh_status_json": json.dumps(refresh_status),
+        "uploaded_dates_json": json.dumps(uploaded_dates),
     }
 
 
@@ -996,7 +1124,7 @@ def dashboard_modal_rows_view(request, view_name, modal_key):
     )
 
     # DataTables mode: client handles all pagination/search — return all rows at once.
-    load_all = request.GET.get("all") == "1" and modal_key != "inventory-health"
+    load_all = request.GET.get("all") == "1"
 
     if export_format not in {"csv", "excel", "xlsx"} and not load_all:
         cached_modal_payload = cache.get(modal_rows_cache_key)
@@ -1080,7 +1208,58 @@ def dashboard_modal_rows_view(request, view_name, modal_key):
         total = len(rows)
 
     if export_format in {"csv", "excel", "xlsx"}:
-        headers, table_rows = _rows_to_export_table(rows)
+        # Platform-aware export for inventory health
+        if modal_key == "inventory-health":
+            _platform = filters.get("platform") or "All"
+            if _platform == "Amazon":
+                headers = ["Date", "ASIN", "Category", "Portfolio", "Stock", "Sales", "DOC", "Revenue", "Status", "Calculation"]
+                table_rows = [[
+                    str(r.get("date", "")),
+                    r.get("asin", ""),
+                    r.get("category", ""),
+                    r.get("portfolio", ""),
+                    r.get("amz_stock", 0),
+                    r.get("amz_sales", 0),
+                    r.get("amz_doc", 0),
+                    r.get("amz_revenue", 0),
+                    r.get("amz_status", ""),
+                    r.get("reason", ""),
+                ] for r in rows]
+            elif _platform == "Flipkart":
+                headers = ["Date", "FSN", "Category", "Portfolio", "Stock", "DOC", "Revenue", "Status"]
+                table_rows = [[
+                    str(r.get("date", "")),
+                    r.get("fsn", ""),
+                    r.get("category", ""),
+                    r.get("portfolio", ""),
+                    r.get("fk_stock", 0),
+                    r.get("fk_doc", 0),
+                    r.get("fk_revenue", 0),
+                    r.get("fk_status", ""),
+                ] for r in rows]
+            else:  # All platforms
+                headers = ["Date", "ASIN", "FSN", "Category", "Portfolio", "Amz Stock", "Amz Sales", "Amz DOC", "Amz Revenue", "Amz Status", "FK Stock", "FK Sales", "FK DOC", "FK Revenue", "FK Status", "Calculation"]
+                table_rows = [[
+                    str(r.get("date", "")),
+                    r.get("asin", ""),
+                    r.get("fsn", ""),
+                    r.get("category", ""),
+                    r.get("portfolio", ""),
+                    r.get("amz_stock", 0),
+                    r.get("amz_sales", 0),
+                    r.get("amz_doc", 0),
+                    r.get("amz_revenue", 0),
+                    r.get("amz_status", ""),
+                    r.get("fk_stock", 0),
+                    r.get("fk_sales", 0),
+                    r.get("fk_doc", 0),
+                    r.get("fk_revenue", 0),
+                    r.get("fk_status", ""),
+                    r.get("reason", ""),
+                ] for r in rows]
+        else:
+            headers, table_rows = _rows_to_export_table(rows)
+
         if export_format == "csv":
             output = StringIO()
             writer = csv.writer(output)
@@ -1124,6 +1303,7 @@ def dashboard_modal_rows_view(request, view_name, modal_key):
             "rows_total": rows_total,
             "rows_shown": len(page_rows),
             "rows_truncated": len(page_rows) < rows_total,
+            "platform": (filters.get("platform") or "All"),
         },
         request=request,
     )
@@ -1189,7 +1369,7 @@ def dashboard_product_card_rows_view(request, view_name, card_key):
     rows = _resolve_payload_key((ctx.get("payload") or {}), payload_key)
     if not isinstance(rows, list):
         rows = []
-    rows = rows[:5]
+    rows = rows[:10]
 
     html = render_to_string(template_name, {"rows": rows}, request=request)
     cache.set(cache_key, html, timeout=300)
@@ -1217,6 +1397,7 @@ def dashboard_category_performance_rows_view(request, view_name):
         request.GET.get("page_size"), default=10, minimum=1, maximum=50
     )
     query = (request.GET.get("q") or "").strip().lower()
+    export_format = (request.GET.get("export") or "").strip().lower()
 
     ctx = get_dashboard_context(
         request,
@@ -1232,6 +1413,33 @@ def dashboard_category_performance_rows_view(request, view_name):
     if query:
         rows = [r for r in rows if query in str(r.get("category", "")).lower()]
 
+    if export_format in {"csv", "excel", "xlsx"}:
+        headers, table_rows = _category_performance_export_table(rows)
+        if export_format == "csv":
+            output = StringIO()
+            writer = csv.writer(output)
+            writer.writerow(headers)
+            writer.writerows(table_rows)
+            buf = BytesIO(output.getvalue().encode("utf-8"))
+            response = FileResponse(buf, content_type="text/csv")
+            response["Content-Disposition"] = (
+                f'attachment; filename="{_category_performance_export_filename(view_name, "csv")}"'
+            )
+            return response
+
+        buf = BytesIO()
+        pd.DataFrame(table_rows, columns=headers).to_excel(buf, index=False)
+        buf.seek(0)
+        response = FileResponse(
+            buf,
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        response["Content-Disposition"] = (
+            f'attachment; filename="{_category_performance_export_filename(view_name, "xlsx")}"'
+        )
+        return response
+
+    rows = rows[:10]
     total = len(rows)
     start = (page - 1) * page_size
     page_rows = rows[start : start + page_size]
@@ -1687,12 +1895,6 @@ def _demo_specs(today):
                     87,
                 ]
             ],
-        },
-        "fk_flex_stock": {
-            "kind": "csv",
-            "filename": "fk_flex_stock_demo.csv",
-            "columns": ["Date", "FSN", "Cluster", "Qty"],
-            "rows": [[day_ymd, "DEMOFSN00000001", "BANGALORE", 24]],
         },
         "fk_inventory": {
             "kind": "xlsx",

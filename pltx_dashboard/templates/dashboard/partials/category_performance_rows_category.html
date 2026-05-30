@@ -5,8 +5,8 @@
     <td class="num">{{ cat.amazon_revenue|fmt_rupee }}</td>
     <td class="num">{{ cat.flipkart_revenue|fmt_rupee }}</td>
     <td class="num">{{ cat.total_revenue|default:cat.revenue|fmt_rupee }}</td>
-    <td class="num {% if cat.growth >= 0 %}growth-up{% else %}growth-down{% endif %}">
-        <div>{% if cat.growth >= 0 %}▲{% else %}▼{% endif %} {{ cat.growth|abs_val }}%</div>
+    <td class="num {% if cat.mom_growth >= 0 %}growth-up{% else %}growth-down{% endif %}">
+        <div>{% if cat.mom_growth >= 0 %}▲{% else %}▼{% endif %} {{ cat.mom_growth|abs_val }}%</div>
         <div style="font-size:10px;color:var(--muted);font-weight:500;">
             {{ cat.mom_current_revenue|fmt_rupee }} vs {{ cat.mom_previous_revenue|fmt_rupee }}
         </div>

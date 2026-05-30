@@ -46,13 +46,14 @@ def process_category_file(file_obj, user):
             )
 
         if new_mappings:
-            CategoryMapping.objects.bulk_create(
-                new_mappings,
-                **get_upsert_kwargs(
-                    unique_fields=["user", "asin"],
-                    update_fields=["portfolio", "category", "subcategory"],
-                ),
-            )
+            for i in range(0, len(new_mappings), DB_BATCH_SIZE):
+                CategoryMapping.objects.bulk_create(
+                    new_mappings[i : i + DB_BATCH_SIZE],
+                    **get_upsert_kwargs(
+                        unique_fields=["user", "asin"],
+                        update_fields=["portfolio", "category", "subcategory"],
+                    ),
+                )
 
     if not any_chunk:
         raise ValueError("Category Mapping file is empty.")
@@ -86,12 +87,13 @@ def process_price_file(file_obj, user):
             )
 
         if new_prices:
-            PriceData.objects.bulk_create(
-                new_prices,
-                **get_upsert_kwargs(
-                    unique_fields=["user", "asin"], update_fields=["price"]
-                ),
-            )
+            for i in range(0, len(new_prices), DB_BATCH_SIZE):
+                PriceData.objects.bulk_create(
+                    new_prices[i : i + DB_BATCH_SIZE],
+                    **get_upsert_kwargs(
+                        unique_fields=["user", "asin"], update_fields=["price"]
+                    ),
+                )
 
     if not any_chunk:
         raise ValueError("Pricing Data file is empty.")
@@ -115,6 +117,7 @@ def process_spend_file(file_obj, user):
     touched_dates = set()
     any_chunk = False
     row_number = 1
+    _date_cache = {}
     for df in iter_file_chunks(file_obj):
         any_chunk = True
         require_columns(df, "spend")
@@ -128,12 +131,15 @@ def process_spend_file(file_obj, user):
             if not asin or asin.lower() == "nan":
                 continue
 
-            try:
-                row_date = parse_report_date(row.get("Date"), prefer_dayfirst=False)
-            except Exception as exc:
-                raise ValueError(
-                    f"Invalid Date value in Ads Spends at row {row_number}: {exc}"
-                )
+            raw_date = row.get("Date")
+            if raw_date not in _date_cache:
+                try:
+                    _date_cache[raw_date] = parse_report_date(raw_date, prefer_dayfirst=False)
+                except Exception as exc:
+                    raise ValueError(
+                        f"Invalid Date value in Ads Spends at row {row_number}: {exc}"
+                    )
+            row_date = _date_cache[raw_date]
             touched_dates.add(row_date)
 
             ad_type = str(row.get("Ad Type", "")).strip().upper()
@@ -277,6 +283,7 @@ def process_fba_stock_file(file_obj, user, id_columns=("ASIN",)):
     touched_dates = set()
     any_chunk = False
     row_number = 1
+    _date_cache = {}
     for df in iter_file_chunks(file_obj):
         any_chunk = True
         col_lookup = {}
@@ -307,14 +314,17 @@ def process_fba_stock_file(file_obj, user, id_columns=("ASIN",)):
             if not asin or asin.lower() == "nan":
                 continue
 
-            try:
-                row_date = parse_report_date(
-                    row.get(col_lookup["date"]), prefer_dayfirst=False
-                )
-            except Exception as exc:
-                raise ValueError(
-                    f"Invalid Date value in FBA Stock at row {row_number}: {exc}"
-                )
+            raw_date = row.get(col_lookup["date"])
+            if raw_date not in _date_cache:
+                try:
+                    _date_cache[raw_date] = parse_report_date(
+                        raw_date, prefer_dayfirst=False
+                    )
+                except Exception as exc:
+                    raise ValueError(
+                        f"Invalid Date value in FBA Stock at row {row_number}: {exc}"
+                    )
+            row_date = _date_cache[raw_date]
             touched_dates.add(row_date)
 
             records.append(
@@ -409,6 +419,7 @@ def process_flex_stock_file(file_obj, user, id_columns=("ASIN",)):
     touched_dates = set()
     any_chunk = False
     row_number = 1
+    _date_cache = {}
     for df in iter_file_chunks(file_obj):
         any_chunk = True
         col_lookup = {}
@@ -439,14 +450,17 @@ def process_flex_stock_file(file_obj, user, id_columns=("ASIN",)):
             if not asin or asin.lower() == "nan":
                 continue
 
-            try:
-                row_date = parse_report_date(
-                    row.get(col_lookup["date"]), prefer_dayfirst=False
-                )
-            except Exception as exc:
-                raise ValueError(
-                    f"Invalid Date value in Flex Stock at row {row_number}: {exc}"
-                )
+            raw_date = row.get(col_lookup["date"])
+            if raw_date not in _date_cache:
+                try:
+                    _date_cache[raw_date] = parse_report_date(
+                        raw_date, prefer_dayfirst=False
+                    )
+                except Exception as exc:
+                    raise ValueError(
+                        f"Invalid Date value in Flex Stock at row {row_number}: {exc}"
+                    )
+            row_date = _date_cache[raw_date]
             touched_dates.add(row_date)
 
             records.append(

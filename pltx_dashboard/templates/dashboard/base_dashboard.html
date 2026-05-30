@@ -1,4 +1,5 @@
 {% load dashboard_extras %}
+{% load static %}
 <!DOCTYPE html>
 <html lang="en">
 
@@ -332,9 +333,10 @@
     </div>
 
     <!-- Sidebar Navigation -->
+    <div class="sidebar-overlay" onclick="document.body.classList.remove('sidebar-open')"></div>
     <div class="app-sidebar">
         <div class="sidebar-brand">
-            <span class="brand-text">plante<span class="brand-x">x</span></span>
+            <img src="{% static 'logo/plantex_logo.png' %}" alt="Plantex" class="sidebar-logo">
         </div>
         <nav class="sidebar-nav">
             {% if 'ceo_dashboard' in user_features %}
@@ -429,6 +431,9 @@
     <!-- Main App Content -->
     <div class="app-main">
         <div class="topbar">
+            <button type="button" class="mobile-menu-btn" onclick="document.body.classList.toggle('sidebar-open')" title="Toggle Sidebar">
+                <span class="material-icons-round">menu</span>
+            </button>
             <div class="topbar-heading">
                 <div class="topbar-title" id="page-topbar-title">{% block dashboard_title %}Dashboard{% endblock %}</div>
                 <div class="topbar-subtitle" id="page-topbar-subtitle">{% block dashboard_subtitle %}Real-time business overview & performance insights{% endblock %}</div>
@@ -956,10 +961,12 @@
                 if (fpEl._flatpickr) {
                     fpEl._flatpickr.destroy();
                 }
+                var enableDates = {{ uploaded_dates_json|default:"[]"|safe }};
                 fpInstance = flatpickr(fpEl, {
                     mode: "range",
                     dateFormat: "Y-m-d",
                     defaultDate: defaultDates,
+                    enable: enableDates.length > 0 ? enableDates : undefined,
                     onChange: function (selectedDates, dateStr, instance) {
                         if (selectedDates.length === 2) {
                             document.getElementById('customStartDate').value = instance.formatDate(selectedDates[0], "Y-m-d");

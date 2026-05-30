@@ -894,7 +894,7 @@ def _build_top_product_rows(
     include_full_payload=False,
 ):
     if not include_full_payload:
-        limit = 5
+        limit = 10
         az_rows = _limited_current_product_rows(qs_f, "asin", asin_meta or {}, limit=limit)
         fk_rows = _limited_current_product_rows(fk_qs_f, "fsn", fsn_meta or {}, limit=limit)
 
@@ -948,7 +948,7 @@ def _build_top_product_rows(
         )
 
     rows.sort(key=lambda item: item["revenue"], reverse=True)
-    return rows if include_full_payload else rows[:5]
+    return rows if include_full_payload else rows[:10]
 
 
 def _build_declining_product_rows(
@@ -1037,7 +1037,7 @@ def _build_declining_product_rows(
             )
 
     rows.sort(key=lambda item: (item["revenue"], item["drop_pct"]))
-    return rows if include_full_payload else rows[:5]
+    return rows if include_full_payload else rows[:10]
 
 
 def run_kpi_only_computation(
@@ -1393,6 +1393,18 @@ def get_available_filters_orm(qs, fk_qs):
     portfolios = sorted(set(az_ports) | set(fk_ports))
     subcategories = sorted(set(az_subs) | set(fk_subs))
 
+    def clean_years(q):
+        if q is None: return []
+        try:
+            vals = q.exclude(date__isnull=True).values_list('date__year', flat=True).distinct()
+            return [int(v) for v in vals if v]
+        except Exception:
+            return []
+
+    az_years = clean_years(qs)
+    fk_years = clean_years(fk_qs)
+    years = sorted(list(set(az_years) | set(fk_years)), reverse=True)
+
     platforms = []
     if asins:
         platforms.append("Amazon")
@@ -1406,11 +1418,13 @@ def get_available_filters_orm(qs, fk_qs):
         "portfolios": portfolios,
         "subcategories": subcategories,
         "platforms": platforms,
+        "years": years,
         "dates": [],  # not used for UI dropdown
     }
 
 def get_available_filters_orm_cached(qs, fk_qs, data_owner_id, show_amazon=True, show_flipkart=True):
-    cache_key = f"dashboard_filters_{data_owner_id}_{show_amazon}_{show_flipkart}"
+    from apps.dashboard.services.cache_config import DASHBOARD_CACHE_SCHEMA_VERSION
+    cache_key = f"dashboard_filters_v{DASHBOARD_CACHE_SCHEMA_VERSION}_{data_owner_id}_{show_amazon}_{show_flipkart}"
     filters = cache.get(cache_key)
     if filters:
         return filters
@@ -2035,32 +2049,65 @@ def run_orm_computation(
 
     # 7. Category performance
     if use_summary_rollups:
-        cat_perf_dict = {
-            category: {"name": category, "revenue": revenue}
-            for category, revenue in _summary_revenue_by_dimension(
-                summary_qs_f, "category"
-            ).items()
-        }
+        cat_perf_dict = {}
+        for _row in summary_qs_f.values("platform", "category").annotate(rev=Sum("revenue")):
+            cat = str(_row.get("category") or "Unknown")
+            platform = _row.get("platform")
+            revenue = float(_row.get("rev") or 0.0)
+            item = cat_perf_dict.setdefault(
+                cat,
+                {
+                    "name": cat,
+                    "amazon_revenue": 0.0,
+                    "flipkart_revenue": 0.0,
+                    "revenue": 0.0,
+                },
+            )
+            if platform == "Amazon":
+                item["amazon_revenue"] += revenue
+            elif platform == "Flipkart":
+                item["flipkart_revenue"] += revenue
+            item["revenue"] += revenue
     else:
         cat_perf_dict = {}
         for r in table_data:
             cat = r.get("category") or "Unknown"
             if cat not in cat_perf_dict:
-                cat_perf_dict[cat] = {"name": cat, "revenue": 0.0}
-            cat_perf_dict[cat]["revenue"] += r["revenue"]
+                cat_perf_dict[cat] = {
+                    "name": cat,
+                    "amazon_revenue": 0.0,
+                    "flipkart_revenue": 0.0,
+                    "revenue": 0.0,
+                }
+            amazon_revenue = float(r.get("az_revenue") or 0.0)
+            flipkart_revenue = float(r.get("fk_revenue") or 0.0)
+            cat_perf_dict[cat]["amazon_revenue"] += amazon_revenue
+            cat_perf_dict[cat]["flipkart_revenue"] += flipkart_revenue
+            cat_perf_dict[cat]["revenue"] += amazon_revenue + flipkart_revenue
 
     cat_perf_list = []
     for v in cat_perf_dict.values():
         cat_name = v["name"]
-        cat_rev = v["revenue"]
-        cat_prev = prev_rev_by_cat.get(cat_name, 0)
+        # Explicit float() cast guards against string values from cached/serialized data
+        cat_rev = float(v.get("revenue") or 0.0)
+        cat_az_rev = float(v.get("amazon_revenue") or 0.0)
+        cat_fk_rev = float(v.get("flipkart_revenue") or 0.0)
+        cat_prev = float(prev_rev_by_cat.get(cat_name, 0.0) or 0.0)
+        growth = _safe_growth(cat_rev, cat_prev)
+        contribution = round(cat_rev / total_revenue * 100, 1) if total_revenue > 0 else 0.0
         cat_perf_list.append({
             "category": cat_name,
-            "revenue": cat_rev,
-            "growth": _safe_growth(cat_rev, cat_prev),
-            "contribution": round(cat_rev / total_revenue * 100, 1) if total_revenue > 0 else 0,
+            "amazon_revenue": round(cat_az_rev, 2),
+            "flipkart_revenue": round(cat_fk_rev, 2),
+            "revenue": round(cat_rev, 2),
+            "total_revenue": round(cat_rev, 2),
+            "growth": growth,
+            "mom_growth": growth,
+            "mom_current_revenue": round(cat_rev, 2),
+            "mom_previous_revenue": round(cat_prev, 2),
+            "contribution": contribution,
         })
-    cat_perf_list.sort(key=lambda x: (x["growth"], x["revenue"]), reverse=True)
+    cat_perf_list.sort(key=lambda x: float(x.get("revenue") or 0), reverse=True)
 
     # 8. Filter metadata for dropdowns
     filter_meta = cached_filter_metadata or get_available_filters_orm(qs, fk_qs)
@@ -2111,7 +2158,7 @@ def run_orm_computation(
 
     # Prefer precomputed inventory health summary rows for faster filtered reads.
     try:
-        summary_platform = "Flipkart" if is_flipkart_only else "Amazon"
+        summary_platform = "Combined"
         inv_sum_qs = DashboardInventoryHealthSummary.objects.filter(
             user=user, platform=summary_platform
         )
@@ -2128,7 +2175,8 @@ def run_orm_computation(
             inv_sum_qs = inv_sum_qs.filter(subcategory__in=sub_filter) if isinstance(sub_filter, (list, tuple)) else inv_sum_qs.filter(subcategory=sub_filter)
 
         if sku_filter:
-            inv_sum_qs = inv_sum_qs.filter(sku__in=sku_filter) if isinstance(sku_filter, (list, tuple)) else inv_sum_qs.filter(sku=sku_filter)
+            # sku_filter can match either asin or fsn
+            inv_sum_qs = inv_sum_qs.filter(models.Q(asin__in=sku_filter) | models.Q(fsn__in=sku_filter)) if isinstance(sku_filter, (list, tuple)) else inv_sum_qs.filter(models.Q(asin=sku_filter) | models.Q(fsn=sku_filter))
 
         # Single aggregate replaces: count() + two distinct date count() calls.
         _inv_agg = inv_sum_qs.aggregate(
@@ -2138,100 +2186,92 @@ def run_orm_computation(
         summary_total_rows = _inv_agg["total"] or 0
         _inv_num_sale_days = max(_inv_agg["n_dates"] or 1, 1)
         if summary_total_rows > 0:
-            status_rows = inv_sum_qs.values("status").annotate(
+            amz_status_rows = inv_sum_qs.values("status").annotate(
                 cnt=Count("id"), rev=Sum("revenue")
             )
-            status_count = {str(r["status"]): int(r["cnt"] or 0) for r in status_rows}
-            status_rev = {str(r["status"]): float(r["rev"] or 0.0) for r in status_rows}
+            fk_status_rows = inv_sum_qs.values("fk_status").annotate(
+                cnt=Count("id"), rev=Sum("fk_revenue")
+            )
+            
+            amz_status_count = {str(r["status"]): int(r["cnt"] or 0) for r in amz_status_rows if r["status"]}
+            fk_status_count = {str(r["fk_status"]): int(r["cnt"] or 0) for r in fk_status_rows if r["fk_status"]}
+            
+            amz_status_rev = {str(r["status"]): float(r["rev"] or 0.0) for r in amz_status_rows if r["status"]}
+            fk_status_rev = {str(r["fk_status"]): float(r["rev"] or 0.0) for r in fk_status_rows if r["fk_status"]}
+            
+            amz_in_stock = amz_status_count.get("In Stock", 0)
+            amz_low_stock = amz_status_count.get("Low Stock", 0)
+            amz_oos = amz_status_count.get("OOS", 0)
+            amz_overstock = amz_status_count.get("Overstock", 0)
 
-            if is_flipkart_only:
-                nearly_oos_count = status_count.get("Nearly OOS", 0)
-                understock_count = status_count.get("Understock", 0)
-                ideal_count = status_count.get("Ideal Stocking", 0)
-                fk_overstock_count = status_count.get("Over Stock", 0)
-                highly_overstock_count = status_count.get("Highly Over Stock", 0)
-                not_selling_count = status_count.get("Not Selling", 0)
-                oos_only = status_count.get("OOS", 0)
+            fk_nearly_oos = fk_status_count.get("Nearly OOS", 0)
+            fk_oos_only = fk_status_count.get("OOS", 0)
+            fk_low_stock = fk_status_count.get("Understock", 0)
+            fk_in_stock = fk_status_count.get("Ideal Stocking", 0)
+            fk_overstock_1 = fk_status_count.get("Over Stock", 0)
+            fk_overstock_2 = fk_status_count.get("Highly Over Stock", 0)
+            fk_not_selling = fk_status_count.get("Not Selling", 0)
 
-                in_stock_count = ideal_count
-                low_stock_count = understock_count
-                oos_count = nearly_oos_count + oos_only
-                overstock_count = (
-                    fk_overstock_count + highly_overstock_count + not_selling_count
-                )
-                total_lost_sales = status_rev.get("OOS", 0.0) + status_rev.get(
-                    "Nearly OOS", 0.0
-                )
-                inventory = {
-                    "in_stock": int(in_stock_count),
-                    "low_stock": int(low_stock_count),
-                    "oos": int(oos_count),
-                    "overstock": int(overstock_count),
-                    "nearly_oos": int(nearly_oos_count),
-                    "understock": int(understock_count),
-                    "ideal": int(ideal_count),
-                    "fk_overstock": int(fk_overstock_count),
-                    "highly_overstock": int(highly_overstock_count),
-                    "not_selling": int(not_selling_count),
-                    "is_fk_inventory": True,
-                    "details": [],
-                    "details_total": int(summary_total_rows),
-                    "details_shown": 0,
-                    "details_truncated": False,
-                    "has_stock_data": True,
-                    "num_sale_days": _inv_num_sale_days,
-                }
-                bucket_defs = [
-                    ("Nearly OOS (<5D)", "Nearly OOS", "red"),
-                    ("Understock (<15D)", "Understock", "amber"),
-                    ("Ideal (15–30D)", "Ideal Stocking", "green"),
-                    ("Over Stock (>30D)", "Over Stock", "orange"),
-                    ("Highly Over Stock (>90D)", "Highly Over Stock", "orange"),
-                    ("Not Selling (>180D)", "Not Selling", "gray"),
-                    ("Out of Stock", "OOS", "red"),
-                ]
-                tracked_rev = sum(status_rev.values())
-                pct_den = tracked_rev if tracked_rev > 0 else total_revenue
-                inventory_position = []
-                for label, key, color in bucket_defs:
-                    rev_val = float(status_rev.get(key, 0.0))
-                    pct = round(rev_val / pct_den * 100, 1) if pct_den > 0 else 0
-                    inventory_position.append(
-                        {"label": label, "revenue": rev_val, "pct": pct, "color": color}
-                    )
-            else:
-                in_stock_count = status_count.get("In Stock", 0)
-                low_stock_count = status_count.get("Low Stock", 0)
-                oos_count = status_count.get("OOS", 0)
-                overstock_count = status_count.get("Overstock", 0)
-                total_lost_sales = float(status_rev.get("OOS", 0.0))
-                inventory = {
-                    "in_stock": int(in_stock_count),
-                    "low_stock": int(low_stock_count),
-                    "oos": int(oos_count),
-                    "overstock": int(overstock_count),
-                    "details": [],
-                    "details_total": int(summary_total_rows),
-                    "details_shown": 0,
-                    "details_truncated": False,
-                    "has_stock_data": True,
-                    "num_sale_days": _inv_num_sale_days,
-                }
-                bucket_defs = [
-                    ("In Stock (15–60D)", "In Stock", "green"),
-                    ("Low Stock (<=15D)", "Low Stock", "amber"),
-                    ("Overstock (>60D)", "Overstock", "orange"),
-                    ("Out of Stock", "OOS", "red"),
-                ]
-                tracked_rev = sum(status_rev.values())
-                pct_den = tracked_rev if tracked_rev > 0 else total_revenue
-                inventory_position = []
-                for label, key, color in bucket_defs:
-                    rev_val = float(status_rev.get(key, 0.0))
-                    pct = round(rev_val / pct_den * 100, 1) if pct_den > 0 else 0
-                    inventory_position.append(
-                        {"label": label, "revenue": rev_val, "pct": pct, "color": color}
-                    )
+            fk_oos = fk_nearly_oos + fk_oos_only
+            fk_overstock = fk_overstock_1 + fk_overstock_2 + fk_not_selling
+            
+            total_lost_sales = (
+                amz_status_rev.get("OOS", 0.0)
+                + fk_status_rev.get("OOS", 0.0)
+                + fk_status_rev.get("Nearly OOS", 0.0)
+            )
+
+            inventory = {
+                "in_stock": int(amz_in_stock + fk_in_stock),
+                "low_stock": int(amz_low_stock + fk_low_stock),
+                "oos": int(amz_oos + fk_oos),
+                "overstock": int(amz_overstock + fk_overstock),
+                
+                "amz_in_stock": int(amz_in_stock),
+                "amz_low_stock": int(amz_low_stock),
+                "amz_oos": int(amz_oos),
+                "amz_overstock": int(amz_overstock),
+                
+                "fk_in_stock": int(fk_in_stock),
+                "fk_low_stock": int(fk_low_stock),
+                "fk_oos": int(fk_oos),
+                "fk_overstock": int(fk_overstock),
+
+                "details": [],
+                "details_total": int(summary_total_rows),
+                "details_shown": 0,
+                "details_truncated": False,
+                "has_stock_data": True,
+                "num_sale_days": _inv_num_sale_days,
+            }
+
+            rev_in_stock = amz_status_rev.get("In Stock", 0.0) + fk_status_rev.get("Ideal Stocking", 0.0)
+            rev_low_stock = amz_status_rev.get("Low Stock", 0.0) + fk_status_rev.get("Understock", 0.0)
+            rev_overstock = (
+                amz_status_rev.get("Overstock", 0.0) 
+                + fk_status_rev.get("Over Stock", 0.0) 
+                + fk_status_rev.get("Highly Over Stock", 0.0) 
+                + fk_status_rev.get("Not Selling", 0.0)
+            )
+            rev_oos = (
+                amz_status_rev.get("OOS", 0.0) 
+                + fk_status_rev.get("OOS", 0.0) 
+                + fk_status_rev.get("Nearly OOS", 0.0)
+            )
+
+            bucket_defs = [
+                ("In Stock (15–60D)", rev_in_stock, "green"),
+                ("Low Stock (<=15D)", rev_low_stock, "amber"),
+                ("Overstock (>60D)", rev_overstock, "orange"),
+                ("Out of Stock", rev_oos, "red"),
+            ]
+            
+            tracked_rev = rev_in_stock + rev_low_stock + rev_overstock + rev_oos
+            pct_den = tracked_rev if tracked_rev > 0 else total_revenue
+            inventory_position = []
+            for label, rev_val, color in bucket_defs:
+                pct = round(rev_val / pct_den * 100, 1) if pct_den > 0 else 0
+                inventory_position.append({"label": label, "revenue": rev_val, "pct": pct, "color": color})
 
             if include_full_payload:
                 details = []
@@ -2261,25 +2301,19 @@ def run_orm_computation(
 
             oos_impact = {
                 "lost_sales": round(total_lost_sales, 2),
-                "skus_affected": int(oos_count),
+                "skus_affected": int(inventory["oos"]),
                 "orders_lost": 0,
-                "selected_platform": "Flipkart" if is_flipkart_only else "Amazon",
-                "lost_sales_rule": (
-                    "Lost Sales is the revenue attached to inventory rows marked as OOS or Nearly OOS."
-                    if is_flipkart_only
-                    else "Lost Sales is the revenue attached to inventory rows marked as OOS."
-                ),
-                "sku_rule": (
-                    "SKUs Affected counts inventory rows marked as OOS plus Nearly OOS."
-                    if is_flipkart_only
-                    else "SKUs Affected counts inventory rows marked as OOS."
-                ),
+                "selected_platform": "Combined",
+                "lost_sales_rule": "Lost Sales is the revenue attached to inventory rows marked as OOS on either Amazon or Flipkart.",
+                "sku_rule": "SKUs Affected counts inventory rows marked as OOS on either Amazon or Flipkart.",
                 "orders_rule": "Orders Lost is currently fixed at 0 in the dashboard logic.",
             }
         else:
             _queue_inventory_summary_refresh(summary_platform)
-    except Exception:
-        _queue_inventory_summary_refresh("Flipkart" if is_flipkart_only else "Amazon")
+    except Exception as _inv_exc:
+        import logging
+        logging.getLogger(__name__).exception("Inventory health summary failed: %s", _inv_exc)
+        _queue_inventory_summary_refresh("Combined")
     # Use the dynamic `today` (latest data date) already computed above
     days_in_month = (today.replace(month=today.month % 12 + 1, day=1) - datetime.timedelta(days=1)).day if today.month < 12 else 31
     days_elapsed = max(today.day, 1)
@@ -2378,7 +2412,7 @@ def run_orm_computation(
             filters,
             asin_meta=_asin_meta,
             fsn_meta=_fsn_meta,
-            limit=5,
+            limit=10,
             include_full_payload=include_full_payload,
         )
         under_prods = build_declining_products_from_monthly(
@@ -2451,8 +2485,8 @@ def run_orm_computation(
         "inventory": inventory, "inventory_position": inventory_position, "forecast": forecast,
         "priorities": priorities, "marketing": marketing,
         "cluster_performance": cluster_performance,
-        "cat_top_products": top_prods[:5] if include_full_payload else top_prods,
-        "cat_under_products": under_prods[:5] if include_full_payload else under_prods,
+        "cat_top_products": top_prods[:10] if include_full_payload else top_prods,
+        "cat_under_products": under_prods[:10] if include_full_payload else under_prods,
         "cat_all_top_products": top_prods if include_full_payload else [],
         "cat_all_under_products": under_prods if include_full_payload else [],
         "growth_opportunities": [],
