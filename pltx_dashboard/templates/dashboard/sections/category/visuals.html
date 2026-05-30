@@ -12,6 +12,14 @@
                 <button class="ceo-trend-tab active" data-period="daily" id="cat-btn-daily">Daily</button>
                 <button class="ceo-trend-tab" data-period="weekly" id="cat-btn-weekly">Weekly</button>
                 <button class="ceo-trend-tab" data-period="monthly" id="cat-btn-monthly">Monthly</button>
+                <div class="chart-year-slicer" style="margin-left:8px;border-left:1px solid var(--border);padding-left:8px;">
+                    <select id="catChartYearSelect" class="chart-year-select" onchange="onChartYearChange(this)" title="Filter chart by year">
+                        <option value="">All Years</option>
+                        {% for y in payload.filters.years %}
+                        <option value="{{ y }}">{{ y }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
             </div>
         </div>
         <div class="ceo-trend-legend">
@@ -51,7 +59,6 @@
                             src="{% if name == 'Amazon' %}{% static 'logo/amazon_logo.png' %}{% else %}{% static 'logo/flipkart_logo.png' %}{% endif %}"
                             alt="{{ name }}"
                             class="ceo-platform-logo">
-                        <span class="ceo-platform-name">{{ name }}</span>
                         <span class="ceo-platform-pct">{{ data.pct }}%</span>
                         <span class="ceo-platform-rev">{{ data.revenue|fmt_rupee }}</span>
                         <span class="ceo-platform-growth {% if data.growth >= 0 %}up{% else %}down{% endif %}">
@@ -130,7 +137,7 @@
                         </tr>
                     </thead>
                     <tbody>
-                        {% include "dashboard/partials/product_cards/top_products_category_rows.html" with rows=payload.cat_top_products %}
+                        {% include "dashboard/partials/product_cards/top_products_category_rows.html" with rows=payload.cat_top_products|slice:":5" %}
                     </tbody>
                 </table>
             </div>
@@ -154,7 +161,7 @@
                     </tr>
                 </thead>
                 <tbody>
-                    {% include "dashboard/partials/product_cards/declining_products_rows.html" with rows=payload.cat_under_products %}
+                    {% include "dashboard/partials/product_cards/declining_products_rows.html" with rows=payload.cat_under_products|slice:":5" %}
                 </tbody>
             </table>
         </div>
@@ -170,63 +177,44 @@
             <button class="ceo-view-all-btn" onclick="openModal('catInventoryHealthModal')">View Details</button>
         </div>
         <div class="ceo-card-body">
-            {% if payload.inventory.is_fk_inventory %}
-            <div class="ceo-inv-grid" style="grid-template-columns: repeat(3, 1fr);">
-                <div class="ceo-inv-card">
-                    <div class="ceo-inv-icon danger">⚠</div>
-                    <div class="ceo-inv-label">Nearly OOS</div>
-                    <div class="ceo-inv-value danger">{{ payload.inventory.nearly_oos }} Rows</div>
-                </div>
-                <div class="ceo-inv-card">
-                    <div class="ceo-inv-icon warn">!</div>
-                    <div class="ceo-inv-label">Understock</div>
-                    <div class="ceo-inv-value warn">{{ payload.inventory.understock }} Rows</div>
-                </div>
-                <div class="ceo-inv-card">
-                    <div class="ceo-inv-icon good">✓</div>
-                    <div class="ceo-inv-label">Ideal</div>
-                    <div class="ceo-inv-value good">{{ payload.inventory.ideal }} Rows</div>
-                </div>
-                <div class="ceo-inv-card">
-                    <div class="ceo-inv-icon neutral">⬆</div>
-                    <div class="ceo-inv-label">Over Stock</div>
-                    <div class="ceo-inv-value neutral">{{ payload.inventory.fk_overstock }} Rows</div>
-                </div>
-                <div class="ceo-inv-card">
-                    <div class="ceo-inv-icon neutral">⬆⬆</div>
-                    <div class="ceo-inv-label">Highly Over Stock</div>
-                    <div class="ceo-inv-value neutral">{{ payload.inventory.highly_overstock }} Rows</div>
-                </div>
-                <div class="ceo-inv-card">
-                    <div class="ceo-inv-icon" style="color:var(--muted);">✕</div>
-                    <div class="ceo-inv-label">Not Selling</div>
-                    <div class="ceo-inv-value" style="color:var(--muted);">{{ payload.inventory.not_selling }} Rows</div>
-                </div>
-            </div>
-            {% else %}
             <div class="ceo-inv-grid">
                 <div class="ceo-inv-card">
                     <div class="ceo-inv-icon good">✓</div>
                     <div class="ceo-inv-label">In Stock</div>
                     <div class="ceo-inv-value good">{{ payload.inventory.in_stock }} Rows</div>
+                    <div style="font-size: 10px; color: var(--muted); margin-top: 6px; display: flex; justify-content: space-between; padding: 0 4px;">
+                        <span style="display:inline-flex;align-items:center;"><img src="{% static 'logo/amazon_logo.png' %}" alt="Amz" style="width:14px;height:14px;margin-right:4px;"> <strong style="color:var(--text-color);">{{ payload.inventory.amz_in_stock }}</strong></span>
+                        <span style="display:inline-flex;align-items:center;"><img src="{% static 'logo/flipkart_logo.png' %}" alt="FK" style="width:14px;height:14px;margin-right:4px;"> <strong style="color:var(--text-color);">{{ payload.inventory.fk_in_stock }}</strong></span>
+                    </div>
                 </div>
                 <div class="ceo-inv-card">
                     <div class="ceo-inv-icon warn">!</div>
                     <div class="ceo-inv-label">Low Stock</div>
                     <div class="ceo-inv-value warn">{{ payload.inventory.low_stock }} Rows</div>
+                    <div style="font-size: 10px; color: var(--muted); margin-top: 6px; display: flex; justify-content: space-between; padding: 0 4px;">
+                        <span style="display:inline-flex;align-items:center;"><img src="{% static 'logo/amazon_logo.png' %}" alt="Amz" style="width:14px;height:14px;margin-right:4px;"> <strong style="color:var(--text-color);">{{ payload.inventory.amz_low_stock }}</strong></span>
+                        <span style="display:inline-flex;align-items:center;"><img src="{% static 'logo/flipkart_logo.png' %}" alt="FK" style="width:14px;height:14px;margin-right:4px;"> <strong style="color:var(--text-color);">{{ payload.inventory.fk_low_stock }}</strong></span>
+                    </div>
                 </div>
                 <div class="ceo-inv-card">
                     <div class="ceo-inv-icon danger">✕</div>
                     <div class="ceo-inv-label">OOS</div>
                     <div class="ceo-inv-value danger">{{ payload.inventory.oos }} Rows</div>
+                    <div style="font-size: 10px; color: var(--muted); margin-top: 6px; display: flex; justify-content: space-between; padding: 0 4px;">
+                        <span style="display:inline-flex;align-items:center;"><img src="{% static 'logo/amazon_logo.png' %}" alt="Amz" style="width:14px;height:14px;margin-right:4px;"> <strong style="color:var(--text-color);">{{ payload.inventory.amz_oos }}</strong></span>
+                        <span style="display:inline-flex;align-items:center;"><img src="{% static 'logo/flipkart_logo.png' %}" alt="FK" style="width:14px;height:14px;margin-right:4px;"> <strong style="color:var(--text-color);">{{ payload.inventory.fk_oos }}</strong></span>
+                    </div>
                 </div>
                 <div class="ceo-inv-card">
                     <div class="ceo-inv-icon neutral">⬆</div>
                     <div class="ceo-inv-label">Overstock</div>
                     <div class="ceo-inv-value neutral">{{ payload.inventory.overstock }} Rows</div>
+                    <div style="font-size: 10px; color: var(--muted); margin-top: 6px; display: flex; justify-content: space-between; padding: 0 4px;">
+                        <span style="display:inline-flex;align-items:center;"><img src="{% static 'logo/amazon_logo.png' %}" alt="Amz" style="width:14px;height:14px;margin-right:4px;"> <strong style="color:var(--text-color);">{{ payload.inventory.amz_overstock }}</strong></span>
+                        <span style="display:inline-flex;align-items:center;"><img src="{% static 'logo/flipkart_logo.png' %}" alt="FK" style="width:14px;height:14px;margin-right:4px;"> <strong style="color:var(--text-color);">{{ payload.inventory.fk_overstock }}</strong></span>
+                    </div>
                 </div>
             </div>
-            {% endif %}
         </div>
     </div>
 </div>

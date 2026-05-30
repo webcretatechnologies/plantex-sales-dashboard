@@ -318,9 +318,8 @@ function _loadModalRowsOnDemand(modalEl, opts) {
 
     tbody.innerHTML = '<tr><td colspan="' + thCount + '" class="empty">Loading data...</td></tr>';
 
-    // Non-inventory modals use DataTables (client-side) — request all rows at once.
-    var isInventoryModal = modalEl.classList.contains('inventory-health-modal');
-    var useDataTable = !isInventoryModal && window.jQuery && $.fn.DataTable;
+    // Modals use DataTables (client-side) — request all rows at once.
+    var useDataTable = window.jQuery && $.fn.DataTable;
 
     var extraParams;
     if (useDataTable && !opts.page) {
@@ -542,9 +541,47 @@ function aggregateMultiData(labels, rawSets, chunkSize) {
 }
 
 /* ── Sales Trend Chart ── */
+var _currentTrendPeriod = 'daily';
+
+function _getChartYearFilter() {
+    // Find whichever year select is present in the DOM
+    var sel = document.querySelector('.chart-year-select');
+    return sel ? sel.value : '';
+}
+
+function onChartYearChange(selectEl) {
+    var data = window.DASHBOARD_PAYLOAD;
+    if (!data) return;
+    renderSalesTrend(data, _currentTrendPeriod);
+}
+
+function _filterTrendByYear(trend, year) {
+    if (!year) return trend; // no filter — show all
+    var indices = [];
+    var rawLabels = trend.labels || [];
+    rawLabels.forEach(function (lbl, i) {
+        // labels are ISO dates like "2026-01-15"
+        if (String(lbl).startsWith(year)) indices.push(i);
+    });
+    if (!indices.length) return trend; // year not in data — show all
+    function pick(arr) { return arr ? indices.map(function(i){ return arr[i]; }) : []; }
+    return Object.assign({}, trend, {
+        labels:           pick(trend.labels),
+        revenue:          pick(trend.revenue),
+        spend:            pick(trend.spend),
+        pageviews:        pick(trend.pageviews),
+        orders:           pick(trend.orders),
+        amazon_revenue:   pick(trend.amazon_revenue),
+        flipkart_revenue: pick(trend.flipkart_revenue),
+        prev_revenue:     trend.prev_revenue ? pick(trend.prev_revenue) : undefined,
+    });
+}
+
 function renderSalesTrend(data, period) {
     destroyChart('salesTrendChart');
-    var trend = data.charts.trend;
+    _currentTrendPeriod = period;
+    var yearFilter = _getChartYearFilter();
+    var trend = _filterTrendByYear(data.charts.trend, yearFilter);
     var labels = trend.labels.map(fmtDateLabel);
 
     var platformEl = document.getElementById('platformSelect');
@@ -626,7 +663,8 @@ function initTrendTabs(data) {
         tab.addEventListener('click', function () {
             tabs.forEach(function (t) { t.classList.remove('active'); });
             tab.classList.add('active');
-            renderSalesTrend(data, tab.getAttribute('data-period'));
+            _currentTrendPeriod = tab.getAttribute('data-period');
+            renderSalesTrend(data, _currentTrendPeriod);
         });
     });
 }

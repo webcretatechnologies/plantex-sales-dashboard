@@ -336,6 +336,9 @@ def _mark_batch_task_complete(
     fact_rebuild_types = (
         {"fk_search_traffic", "fk_pla"} if owner_is_flipkart else {"sales", "spend"}
     )
+    inventory_rebuild_types = (
+        {"fk_fba_stock", "fk_inventory"} if owner_is_flipkart else {"fba_stock", "flex_stock"}
+    )
     metadata_file_types = sorted(batch_file_types & full_rebuild_types)
 
     needs_full_rebuild = bool(batch_file_types & full_rebuild_types)
@@ -359,22 +362,35 @@ def _mark_batch_task_complete(
             effective_dates = []  # metadata-only refresh ignores dates
             effective_metadata_file_types = metadata_file_types or [effective_file_type]
             effective_entity_ids = batch_affected_entity_ids
-    else:
-        # Pick the dominant file type; prefer "sales"/"spend" for incremental.
+    elif batch_file_types & fact_rebuild_types:
+        fact_types_in_batch = batch_file_types & fact_rebuild_types
         if owner_is_flipkart:
-            if "fk_search_traffic" in batch_file_types:
-                effective_file_type = "fk_search_traffic"
-            elif "fk_pla" in batch_file_types:
-                effective_file_type = "fk_pla"
-            else:
-                effective_file_type = next(iter(batch_file_types), "fk_category")
+            effective_file_type = (
+                "fk_search_traffic" if "fk_search_traffic" in fact_types_in_batch else "fk_pla"
+            )
         else:
-            if "sales" in batch_file_types:
-                effective_file_type = "sales"
-            elif "spend" in batch_file_types:
-                effective_file_type = "spend"
-            else:
-                effective_file_type = next(iter(batch_file_types), "category")
+            effective_file_type = "sales" if "sales" in fact_types_in_batch else "spend"
+        effective_dates = batch_affected_dates
+        effective_metadata_file_types = []
+        effective_entity_ids = []
+    elif batch_file_types & inventory_rebuild_types:
+        inventory_types_in_batch = batch_file_types & inventory_rebuild_types
+        if owner_is_flipkart:
+            effective_file_type = (
+                "fk_fba_stock" if "fk_fba_stock" in inventory_types_in_batch else "fk_inventory"
+            )
+        else:
+            effective_file_type = (
+                "fba_stock" if "fba_stock" in inventory_types_in_batch else "flex_stock"
+            )
+        effective_dates = batch_affected_dates
+        effective_metadata_file_types = []
+        effective_entity_ids = []
+    else:
+        effective_file_type = next(
+            iter(batch_file_types),
+            "fk_category" if owner_is_flipkart else "category",
+        )
         effective_dates = batch_affected_dates
         effective_metadata_file_types = []
         effective_entity_ids = []
@@ -420,11 +436,11 @@ def _run_dashboard_refresh(
         update_price_in_processed_data,
         update_fk_category_in_processed_data,
         update_fk_price_in_processed_data,
+        update_inventory_category_in_summary,
+        update_fk_inventory_category_in_summary,
     )
     from apps.dashboard.services.invalidation import invalidate_dashboard_cache_for_user
     from apps.dashboard.models import (
-        FBAStockData,
-        FlexStockData,
         ProcessedDashboardData,
         Flipkartfba,
         FlipkartCategoryMap,
@@ -499,26 +515,11 @@ def _run_dashboard_refresh(
             refresh_types = metadata_file_types or {"fk_category"}
             if "fk_category" in refresh_types:
                 update_fk_category_in_processed_data(data_owner.id, fsns=affected_entity_ids)
+                update_fk_inventory_category_in_summary(data_owner.id, fsns=affected_entity_ids)
                 if affected_entity_ids:
                     affected_dates.update(
                         _collect_distinct_dates_for_entities(
                             FlipkartProcessedDashboardData,
-                            user_id=data_owner.id,
-                            entity_field="fsn",
-                            entity_ids=affected_entity_ids,
-                        )
-                    )
-                    affected_dates.update(
-                        _collect_distinct_dates_for_entities(
-                            Flipkartfba,
-                            user_id=data_owner.id,
-                            entity_field="fsn",
-                            entity_ids=affected_entity_ids,
-                        )
-                    )
-                    affected_dates.update(
-                        _collect_distinct_dates_for_entities(
-                            FlipkartInventoryStock,
                             user_id=data_owner.id,
                             entity_field="fsn",
                             entity_ids=affected_entity_ids,
@@ -530,7 +531,6 @@ def _run_dashboard_refresh(
             dashboard_refreshed = True
             if "fk_category" in refresh_types:
                 should_refresh_daily_summary = True
-                should_refresh_inventory_summary = True
                 should_refresh_asin_monthly_summary = True
                 should_enqueue_warmup = True
         elif file_type == "fk_price":
@@ -578,26 +578,11 @@ def _run_dashboard_refresh(
             refresh_types = metadata_file_types or {"category"}
             if "category" in refresh_types:
                 update_category_in_processed_data(data_owner.id, asins=affected_entity_ids)
+                update_inventory_category_in_summary(data_owner.id, asins=affected_entity_ids)
                 if affected_entity_ids:
                     affected_dates.update(
                         _collect_distinct_dates_for_entities(
                             ProcessedDashboardData,
-                            user_id=data_owner.id,
-                            entity_field="asin",
-                            entity_ids=affected_entity_ids,
-                        )
-                    )
-                    affected_dates.update(
-                        _collect_distinct_dates_for_entities(
-                            FBAStockData,
-                            user_id=data_owner.id,
-                            entity_field="asin",
-                            entity_ids=affected_entity_ids,
-                        )
-                    )
-                    affected_dates.update(
-                        _collect_distinct_dates_for_entities(
-                            FlexStockData,
                             user_id=data_owner.id,
                             entity_field="asin",
                             entity_ids=affected_entity_ids,
@@ -608,7 +593,6 @@ def _run_dashboard_refresh(
             invalidate_dashboard_cache_for_user(data_owner.id, clear_materialized=True)
             if "category" in refresh_types:
                 should_refresh_daily_summary = True
-                should_refresh_inventory_summary = True
                 should_refresh_asin_monthly_summary = True
                 should_enqueue_warmup = True
         dashboard_refreshed = True
@@ -636,6 +620,11 @@ def _run_dashboard_refresh(
             invalidate_dashboard_cache_for_user(data_owner.id, clear_materialized=True)
             should_enqueue_warmup = False
         dashboard_refreshed = True
+    elif file_type in {"fba_stock", "flex_stock", "fk_fba_stock", "fk_inventory"}:
+        invalidate_dashboard_cache_for_user(data_owner.id, clear_materialized=True)
+        dashboard_invalidated = True
+        should_refresh_inventory_summary = True
+        should_enqueue_warmup = False
     else:
         invalidate_dashboard_cache_for_user(data_owner.id, clear_materialized=True)
         dashboard_invalidated = True
@@ -914,7 +903,7 @@ def process_upload_file_task(
     file_type : str
         One of: 'sales', 'spend', 'category', 'price',
         'fk_search_traffic', 'fk_category', 'fk_price',
-        'fk_pla', 'fk_fba_stock', 'fk_flex_stock'.
+        'fk_pla', 'fk_fba_stock', 'fk_inventory'.
     user_id : int
         ID of the logged-in user (for WebSocket notifications).
     data_owner_id : int
@@ -940,7 +929,6 @@ def process_upload_file_task(
     )
     from apps.upload.flipkart import (
         process_fk_fba_stock_file,
-        process_fk_flex_stock_file,
         process_fk_inventory_file,
         process_fk_search_traffic,
         process_fk_category,
@@ -992,8 +980,6 @@ def process_upload_file_task(
                 affected_dates = process_fk_pla(fh, data_owner) or set()
             elif file_type == "fk_fba_stock":
                 affected_dates = process_fk_fba_stock_file(fh, data_owner) or set()
-            elif file_type == "fk_flex_stock":
-                affected_dates = process_fk_flex_stock_file(fh, data_owner) or set()
             elif file_type == "fk_inventory":
                 affected_dates = process_fk_inventory_file(fh, data_owner) or set()
             else:

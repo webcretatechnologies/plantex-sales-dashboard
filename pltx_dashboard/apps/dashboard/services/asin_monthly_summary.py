@@ -39,31 +39,45 @@ def rebuild_asin_monthly_summary_for_user(user, *, only_months=None):
     only_months: optional list of date objects (first day of month) to limit
     the rebuild to specific months; if omitted, all months are rebuilt.
     """
-    # Normalise to "YYYY-MM" strings for SQL IN clause
-    only_month_strs = []
+    # Normalise month inputs once, then use sargable date ranges in SQL.
+    only_month_starts = []
     if only_months:
         for m in only_months:
             try:
-                only_month_strs.append(str(m)[:7])  # "2026-05"
+                year, month = [int(part) for part in str(m)[:7].split("-")]
+                only_month_starts.append(datetime.date(year, month, 1))
             except Exception:
                 pass
-    only_month_strs = list(set(only_month_strs))
-
-    scoped = DashboardAsinMonthlySummary.objects.filter(user=user)
-    if only_month_strs:
-        from django.db.models import Q
-        q = Q()
-        for ym in only_month_strs:
-            q |= Q(year_month__startswith=ym)
-        scoped = scoped.filter(q)
-    scoped.delete()
+    only_month_starts = sorted(set(only_month_starts))
+    only_month_strs = [month_start.strftime("%Y-%m") for month_start in only_month_starts]
 
     month_filter_sql = ""
     month_params: list = []
-    if only_month_strs:
-        placeholders = ", ".join(["%s"] * len(only_month_strs))
-        month_filter_sql = f" AND DATE_FORMAT(date, '%%Y-%%m') IN ({placeholders})"
-        month_params = only_month_strs
+    month_ranges = []
+    if only_month_starts:
+        for month_start in only_month_starts:
+            next_month = (
+                datetime.date(month_start.year + 1, 1, 1)
+                if month_start.month == 12
+                else datetime.date(month_start.year, month_start.month + 1, 1)
+            )
+            month_ranges.append((month_start, next_month))
+
+    scoped = DashboardAsinMonthlySummary.objects.filter(user=user)
+    if month_ranges:
+        from django.db.models import Q
+        month_q = Q()
+        for month_start, next_month in month_ranges:
+            month_q |= Q(year_month__gte=month_start, year_month__lt=next_month)
+        scoped = scoped.filter(month_q)
+    scoped.delete()
+
+    if month_ranges:
+        clauses = []
+        for month_start, next_month in month_ranges:
+            clauses.append("(date >= %s AND date < %s)")
+            month_params.extend([month_start, next_month])
+        month_filter_sql = f" AND ({' OR '.join(clauses)})"
 
     tbl = DashboardAsinMonthlySummary._meta.db_table
     az_tbl = ProcessedDashboardData._meta.db_table

@@ -38,6 +38,7 @@ def process_fk_inventory_file(file_obj, user):
 
     required_cols = ["FSN", "Qty"]
     any_chunk = False
+    total_records = 0
     # Derive date from the file
     file_date = None
     if hasattr(file_obj, "name") and os.path.exists(file_obj.name):
@@ -50,6 +51,7 @@ def process_fk_inventory_file(file_obj, user):
         file_date = datetime.date.today()
 
     touched_dates = set()
+    _date_cache = {}
 
     for df in iter_file_chunks(file_obj):
         any_chunk = True
@@ -78,10 +80,12 @@ def process_fk_inventory_file(file_obj, user):
             if has_date_col:
                 raw_date = row.get(col_lookup["date"])
                 if raw_date is not None and str(raw_date).strip():
-                    try:
-                        row_date = parse_report_date(raw_date, prefer_dayfirst=True)
-                    except Exception:
-                        row_date = file_date
+                    if raw_date not in _date_cache:
+                        try:
+                            _date_cache[raw_date] = parse_report_date(raw_date, prefer_dayfirst=True)
+                        except Exception:
+                            _date_cache[raw_date] = file_date
+                    row_date = _date_cache[raw_date]
                 else:
                     row_date = file_date
             else:
@@ -110,6 +114,7 @@ def process_fk_inventory_file(file_obj, user):
                 )
             )
 
+        total_records += len(records)
         if records:
             for i in range(0, len(records), DB_BATCH_SIZE):
                 FlipkartInventoryStock.objects.bulk_create(
@@ -123,8 +128,7 @@ def process_fk_inventory_file(file_obj, user):
     if not any_chunk:
         raise ValueError("FK Inventory file is empty.")
 
-    total = FlipkartInventoryStock.objects.filter(user=user).count()
-    logger.info("[FlipkartInventoryStock] Processed. Total records for user: %s", total)
+    logger.info("[FlipkartInventoryStock] Processed %s uploaded rows.", total_records)
     return touched_dates
 
 
@@ -141,6 +145,7 @@ def process_fk_fba_stock_file(file_obj, user):
     total_records = 0
     touched_dates = set()
     row_number = 1
+    _date_cache = {}
 
     for df in iter_file_chunks(file_obj):
         any_chunk = True
@@ -176,12 +181,14 @@ def process_fk_fba_stock_file(file_obj, user):
                 raise ValueError(
                     f"Missing Date value in FK FBA Stock at row {row_number}."
                 )
-            try:
-                row_date = parse_report_date(raw_date, prefer_dayfirst=True)
-            except Exception as exc:
-                raise ValueError(
-                    f"Invalid Date value in FK FBA Stock at row {row_number}: {exc}"
-                )
+            if raw_date not in _date_cache:
+                try:
+                    _date_cache[raw_date] = parse_report_date(raw_date, prefer_dayfirst=True)
+                except Exception as exc:
+                    raise ValueError(
+                        f"Invalid Date value in FK FBA Stock at row {row_number}: {exc}"
+                    )
+            row_date = _date_cache[raw_date]
 
             touched_dates.add(row_date)
             live_on_website_qty = clean_number(row.get(live_col, 0))
@@ -238,110 +245,6 @@ def process_fk_fba_stock_file(file_obj, user):
     return touched_dates
 
 
-def process_fk_flex_stock_file(file_obj, user):
-    """
-    Parse Flipkart Flex stock file.
-    Required columns: FSN (or FSN ID/Flipkart Serial Number), Qty.
-    Note: Stored in FlipkartInventoryStock (FSN+Date level).
-    Date is derived from the file or defaults to today.
-    """
-    import datetime
-    import os
-
-    required_cols = ["Qty"]
-    id_candidates = ("FSN", "FSN ID", "Flipkart Serial Number")
-    any_chunk = False
-    total_records = 0
-    touched_dates = set()
-
-    # Derive date from the file
-    file_date = None
-    if hasattr(file_obj, "name") and os.path.exists(file_obj.name):
-        try:
-            mtime = os.path.getmtime(file_obj.name)
-            file_date = datetime.date.fromtimestamp(mtime)
-        except Exception:
-            pass
-    if file_date is None:
-        file_date = datetime.date.today()
-
-    for df in iter_file_chunks(file_obj):
-        any_chunk = True
-        col_lookup = {}
-        for c in df.columns:
-            key = str(c).replace("\ufeff", "").strip().lower()
-            if key and key not in col_lookup:
-                col_lookup[key] = c
-
-        id_col_key = None
-        for candidate in id_candidates:
-            candidate_key = candidate.strip().lower()
-            if candidate_key in col_lookup:
-                id_col_key = candidate_key
-                break
-
-        missing_cols = [c for c in required_cols if c.lower() not in col_lookup]
-        if id_col_key is None:
-            missing_cols.append("/".join(id_candidates))
-        if missing_cols:
-            raise ValueError(
-                "FK Flex Stock file missing required columns: " + ", ".join(missing_cols)
-            )
-
-        # Check for explicit Date column
-        has_date_col = "date" in col_lookup
-
-        records = []
-        for row in df.to_dict("records"):
-            fsn = str(row.get(col_lookup[id_col_key], "") or "").strip()
-            if not fsn or fsn.lower() == "nan":
-                continue
-
-            # Determine row-level date
-            if has_date_col:
-                raw_date = row.get(col_lookup["date"])
-                if raw_date is not None and str(raw_date).strip():
-                    try:
-                        row_date = parse_report_date(raw_date, prefer_dayfirst=True)
-                    except Exception:
-                        row_date = file_date
-                else:
-                    row_date = file_date
-            else:
-                row_date = file_date
-
-            touched_dates.add(row_date)
-
-            records.append(
-                FlipkartInventoryStock(
-                    user=user,
-                    date=row_date,
-                    fsn=fsn,
-                    sku="",
-                    product_status="",
-                    product_type="",
-                    qty=clean_number(row.get(col_lookup["qty"], 0)),
-                )
-            )
-
-        total_records += len(records)
-        if records:
-            for i in range(0, len(records), DB_BATCH_SIZE):
-                FlipkartInventoryStock.objects.bulk_create(
-                    records[i : i + DB_BATCH_SIZE],
-                    **get_upsert_kwargs(
-                        unique_fields=["user", "fsn", "date"],
-                        update_fields=["sku", "product_status", "product_type", "qty"],
-                    ),
-                )
-
-    if not any_chunk:
-        raise ValueError("FK Flex Stock file is empty.")
-
-    logger.info("[FK Flex Stock] Processed %s records.", total_records)
-    return touched_dates
-
-
 # ===========================================================================
 # SLIM FLIPKART PROCESSING FUNCTIONS
 # ===========================================================================
@@ -362,6 +265,7 @@ def process_fk_search_traffic(file_obj, user):
     touched_dates = set()
     all_key_totals = {}
     row_number = 1
+    _date_cache = {}
     for df in iter_file_chunks(file_obj):
         any_chunk = True
         require_columns(df, "fk_search_traffic")
@@ -373,12 +277,15 @@ def process_fk_search_traffic(file_obj, user):
                 continue
 
             fsn = listing_id[3:19]  # Mid(Listing Id, 4, 16)
-            try:
-                row_date = parse_report_date(row.get("Impression Date"), prefer_dayfirst=False)
-            except Exception as exc:
-                raise ValueError(
-                    f"Invalid Impression Date in FK Search Traffic at row {row_number}: {exc}"
-                )
+            raw_date = row.get("Impression Date")
+            if raw_date not in _date_cache:
+                try:
+                    _date_cache[raw_date] = parse_report_date(raw_date, prefer_dayfirst=False)
+                except Exception as exc:
+                    raise ValueError(
+                        f"Invalid Impression Date in FK Search Traffic at row {row_number}: {exc}"
+                    )
+            row_date = _date_cache[raw_date]
             touched_dates.add(row_date)
 
             sku = str(row.get("SKU Id", "") or "").strip().replace('"', "")
@@ -541,19 +448,20 @@ def process_fk_category(file_obj, user):
 
         total_records += len(records)
         if records:
-            FlipkartCategoryMap.objects.bulk_create(
-                records,
-                **get_upsert_kwargs(
-                    unique_fields=["user", "fsn"],
-                    update_fields=[
-                        "sku",
-                        "portfolio",
-                        "category",
-                        "subcategory",
-                        "product_status",
-                    ],
-                ),
-            )
+            for i in range(0, len(records), DB_BATCH_SIZE):
+                FlipkartCategoryMap.objects.bulk_create(
+                    records[i : i + DB_BATCH_SIZE],
+                    **get_upsert_kwargs(
+                        unique_fields=["user", "fsn"],
+                        update_fields=[
+                            "sku",
+                            "portfolio",
+                            "category",
+                            "subcategory",
+                            "product_status",
+                        ],
+                    ),
+                )
 
     if not any_chunk:
         raise ValueError("FK Category file is empty.")
@@ -595,12 +503,13 @@ def process_fk_price(file_obj, user):
 
         total_records += len(records)
         if records:
-            FlipkartPrice.objects.bulk_create(
-                records,
-                **get_upsert_kwargs(
-                    unique_fields=["user", "fsn"], update_fields=["price"]
-                ),
-            )
+            for i in range(0, len(records), DB_BATCH_SIZE):
+                FlipkartPrice.objects.bulk_create(
+                    records[i : i + DB_BATCH_SIZE],
+                    **get_upsert_kwargs(
+                        unique_fields=["user", "fsn"], update_fields=["price"]
+                    ),
+                )
 
     if not any_chunk:
         raise ValueError("FK Price file is empty.")
@@ -658,13 +567,14 @@ def process_fk_pla(file_obj, user):
         )
     total_records = len(records)
     if records:
-        FlipkartPLA.objects.bulk_create(
-            records,
-            **get_upsert_kwargs(
-                unique_fields=["user", "campaign_id", "fsn_id", "date"],
-                update_fields=["ad_spend"],
-            ),
-        )
+        for i in range(0, len(records), DB_BATCH_SIZE):
+            FlipkartPLA.objects.bulk_create(
+                records[i : i + DB_BATCH_SIZE],
+                **get_upsert_kwargs(
+                    unique_fields=["user", "campaign_id", "fsn_id", "date"],
+                    update_fields=["ad_spend"],
+                ),
+            )
 
     logger.info("[FK PLA] Processed %s records.", total_records)
     return {report_date}

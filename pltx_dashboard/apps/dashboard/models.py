@@ -168,6 +168,14 @@ class ProcessedDashboardData(models.Model):
             models.Index(fields=["user", "category", "asin"], name="idx_pdd_u_cat_asn"),
             models.Index(fields=["user", "portfolio", "asin"], name="idx_pdd_u_prt_asn"),
             models.Index(fields=["user", "subcategory", "asin"], name="idx_pdd_u_sub_asn"),
+            models.Index(
+                fields=["user", "category", "portfolio", "subcategory", "date"],
+                name="idx_pdd_u_c_p_s_d",
+            ),
+            models.Index(
+                fields=["user", "date", "category", "portfolio", "subcategory"],
+                name="idx_pdd_u_d_c_p_s",
+            ),
         ]
 
 
@@ -193,6 +201,9 @@ class FlipkartSearchTraffic(models.Model):
 
     class Meta:
         unique_together = ("user", "fsn", "date")
+        indexes = [
+            models.Index(fields=["user", "date", "fsn"], name="idx_fkst_u_d_fsn"),
+        ]
 
 
 class FlipkartCategoryMap(models.Model):
@@ -358,6 +369,14 @@ class FlipkartProcessedDashboardData(models.Model):
             models.Index(fields=["user", "category", "fsn"], name="idx_fkpd_u_cat_fsn"),
             models.Index(fields=["user", "portfolio", "fsn"], name="idx_fkpd_u_prt_fsn"),
             models.Index(fields=["user", "subcategory", "fsn"], name="idx_fkpd_u_sub_fsn"),
+            models.Index(
+                fields=["user", "category", "portfolio", "subcategory", "date"],
+                name="idx_fkpd_u_c_p_s_d",
+            ),
+            models.Index(
+                fields=["user", "date", "category", "portfolio", "subcategory"],
+                name="idx_fkpd_u_d_c_p_s",
+            ),
         ]
 
 
@@ -432,6 +451,9 @@ class DashboardDailySummary(models.Model):
             models.Index(fields=["user", "category", "date"], name="idx_dds_u_cat_d"),
             models.Index(fields=["user", "portfolio", "date"], name="idx_dds_u_port_d"),
             models.Index(fields=["user", "subcategory", "date"], name="idx_dds_u_sub_d"),
+            models.Index(fields=["user", "platform", "category", "date"], name="idx_dds_u_p_cat_d"),
+            models.Index(fields=["user", "platform", "portfolio", "date"], name="idx_dds_u_p_port_d"),
+            models.Index(fields=["user", "platform", "subcategory", "date"], name="idx_dds_u_p_sub_d"),
         ]
 
 
@@ -473,6 +495,10 @@ class DashboardAsinMonthlySummary(models.Model):
             models.Index(fields=["user", "category", "year_month"], name="idx_ams_u_cat_ym"),
             models.Index(fields=["user", "portfolio", "year_month"], name="idx_ams_u_port_ym"),
             models.Index(fields=["user", "platform", "asin"], name="idx_ams_u_plat_a"),
+            models.Index(fields=["user", "subcategory", "year_month"], name="idx_ams_u_sub_ym"),
+            models.Index(fields=["user", "platform", "category", "year_month"], name="idx_ams_u_p_cat_ym"),
+            models.Index(fields=["user", "platform", "portfolio", "year_month"], name="idx_ams_u_p_port_ym"),
+            models.Index(fields=["user", "platform", "subcategory", "year_month"], name="idx_ams_u_p_sub_ym"),
         ]
 
 
@@ -480,6 +506,8 @@ class DashboardInventoryHealthSummary(models.Model):
     """
     Precomputed inventory-health rows used by dashboard requests.
     One row per user/platform/date/sku.
+    For the combined cross-platform view (platform='Combined'), sku holds the ASIN,
+    and the fsn field holds the paired Flipkart FSN from AsinFsnMapping.
     """
 
     user = models.ForeignKey(
@@ -488,25 +516,40 @@ class DashboardInventoryHealthSummary(models.Model):
         related_name="dashboard_inventory_health_summaries",
     )
     date = models.DateField(db_index=True)
-    platform = models.CharField(max_length=20, db_index=True)  # Amazon / Flipkart
-    sku = models.CharField(max_length=80, db_index=True)
+    # 'Amazon', 'Flipkart', or 'Combined' for cross-platform paired rows
+    platform = models.CharField(max_length=20, db_index=True)
+    sku = models.CharField(max_length=80, db_index=True)  # ASIN for Amazon/Combined; FSN for Flipkart
+
+    # Cross-platform pairing (populated for Combined rows)
+    asin = models.CharField(max_length=50, null=True, blank=True, db_index=True)
+    fsn = models.CharField(max_length=80, null=True, blank=True, db_index=True)
 
     category = models.CharField(max_length=120, null=True, blank=True, db_index=True)
     portfolio = models.CharField(max_length=120, null=True, blank=True, db_index=True)
     subcategory = models.CharField(max_length=120, null=True, blank=True, db_index=True)
 
-    stock_qty = models.IntegerField(default=0)
+    # Amazon-side metrics
+    stock_qty = models.IntegerField(default=0)   # Total Amazon stock (FBA + Flex)
     fba_qty = models.IntegerField(default=0)
     flex_qty = models.IntegerField(default=0)
-    sale_qty = models.IntegerField(default=0)
+    sale_qty = models.IntegerField(default=0)    # Amazon same-day units
     total_sales_window = models.IntegerField(default=0)
     drr = models.FloatField(default=0.0)
-    doc = models.FloatField(default=0.0)
-    revenue = models.FloatField(default=0.0)
-
+    doc = models.FloatField(default=0.0)         # Amazon DOC
+    revenue = models.FloatField(default=0.0)     # Amazon revenue
     status = models.CharField(max_length=50, db_index=True)
     status_class = models.CharField(max_length=30, db_index=True)
     reason = models.TextField(blank=True, default="")
+
+    # Flipkart-side metrics (populated for Combined and pure Flipkart rows)
+    fk_stock_qty = models.IntegerField(default=0)
+    fk_fba_qty = models.IntegerField(default=0)   # FK live_on_website
+    fk_flex_qty = models.IntegerField(default=0)  # FK inventory qty
+    fk_sale_qty = models.IntegerField(default=0)
+    fk_doc = models.FloatField(default=0.0)
+    fk_revenue = models.FloatField(default=0.0)
+    fk_status = models.CharField(max_length=50, blank=True, default="")
+    fk_status_class = models.CharField(max_length=30, blank=True, default="")
 
     class Meta:
         unique_together = ("user", "date", "platform", "sku")
@@ -517,4 +560,39 @@ class DashboardInventoryHealthSummary(models.Model):
             models.Index(fields=["user", "platform", "portfolio"], name="idx_dihs_u_p_port"),
             models.Index(fields=["user", "platform", "subcategory"], name="idx_dihs_u_p_sub"),
             models.Index(fields=["user", "platform", "status"], name="idx_dihs_u_p_status"),
+            models.Index(fields=["user", "platform", "category", "date"], name="idx_dihs_u_p_cat_d"),
+            models.Index(fields=["user", "platform", "portfolio", "date"], name="idx_dihs_u_p_port_d"),
+            models.Index(fields=["user", "platform", "subcategory", "date"], name="idx_dihs_u_p_sub_d"),
+            models.Index(fields=["user", "asin", "date"], name="idx_dihs_u_asin_d"),
+            models.Index(fields=["user", "fsn", "date"], name="idx_dihs_u_fsn_d"),
         ]
+
+
+class AsinFsnMapping(models.Model):
+    """
+    Maps Amazon ASINs to Flipkart FSNs for cross-platform inventory health.
+    Populated by uploading the ASIN-FSN mapping Excel file.
+    """
+    user = models.ForeignKey(
+        "accounts.Users",
+        on_delete=models.CASCADE,
+        related_name="asin_fsn_mappings",
+    )
+    asin = models.CharField(max_length=50, db_index=True)
+    fsn = models.CharField(max_length=80, db_index=True)
+    category = models.CharField(max_length=120, null=True, blank=True, db_index=True)
+    portfolio = models.CharField(max_length=120, null=True, blank=True)
+    subcategory = models.CharField(max_length=120, null=True, blank=True)
+
+    class Meta:
+        unique_together = ("user", "asin", "fsn")
+        indexes = [
+            models.Index(fields=["user", "asin"], name="idx_afm_u_asin"),
+            models.Index(fields=["user", "fsn"], name="idx_afm_u_fsn"),
+            models.Index(fields=["user", "category"], name="idx_afm_u_cat"),
+        ]
+        verbose_name = "ASIN-FSN Mapping"
+        verbose_name_plural = "ASIN-FSN Mappings"
+
+    def __str__(self):
+        return f"{self.asin} ↔ {self.fsn} ({self.category})"

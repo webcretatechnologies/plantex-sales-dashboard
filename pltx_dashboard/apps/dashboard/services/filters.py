@@ -14,6 +14,7 @@ PAYLOAD_FILTER_FIELDS = [
     "fsn",
     "portfolio",
     "subcategory",
+    "year",
 ]
 
 

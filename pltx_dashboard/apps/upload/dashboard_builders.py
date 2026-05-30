@@ -324,6 +324,76 @@ def update_fk_price_in_processed_data(user_id, fsns=None):
     return total_rows
 
 
+def update_inventory_category_in_summary(user_id, asins=None):
+    """
+    In-place UPDATE for Amazon inventory-health metadata.
+    Category uploads do not change stock/DOC math, so refreshing labels here
+    avoids rebuilding all DashboardInventoryHealthSummary rows.
+    """
+    from apps.dashboard.models import DashboardInventoryHealthSummary
+
+    inv_tbl = DashboardInventoryHealthSummary._meta.db_table
+    cm_tbl = CategoryMapping._meta.db_table
+    total_rows = 0
+    scoped_batches = list(_identifier_batches(asins))
+    if not scoped_batches:
+        scoped_batches = [None]
+
+    with connection.cursor() as cursor:
+        for asin_batch in scoped_batches:
+            where_sql = "WHERE ih.user_id = %s AND ih.platform = 'Amazon'"
+            params = [user_id, user_id]
+            if asin_batch is not None:
+                placeholders = ", ".join(["%s"] * len(asin_batch))
+                where_sql += f" AND ih.sku IN ({placeholders})"
+                params.extend(asin_batch)
+            cursor.execute(f"""
+                UPDATE `{inv_tbl}` ih
+                LEFT JOIN `{cm_tbl}` cm ON cm.user_id = %s AND cm.asin = ih.sku
+                SET ih.portfolio   = COALESCE(cm.portfolio, ''),
+                    ih.category    = COALESCE(cm.category, 'Unknown'),
+                    ih.subcategory = COALESCE(cm.subcategory, '')
+                {where_sql}
+            """, params)
+            total_rows += max(int(cursor.rowcount or 0), 0)
+    logger.info("[Dashboard] inventory category UPDATE user=%s rows=%d scoped=%s", user_id, total_rows, bool(asins))
+    return total_rows
+
+
+def update_fk_inventory_category_in_summary(user_id, fsns=None):
+    """
+    In-place UPDATE for Flipkart inventory-health metadata.
+    """
+    from apps.dashboard.models import DashboardInventoryHealthSummary
+
+    inv_tbl = DashboardInventoryHealthSummary._meta.db_table
+    cm_tbl = FlipkartCategoryMap._meta.db_table
+    total_rows = 0
+    scoped_batches = list(_identifier_batches(fsns))
+    if not scoped_batches:
+        scoped_batches = [None]
+
+    with connection.cursor() as cursor:
+        for fsn_batch in scoped_batches:
+            where_sql = "WHERE ih.user_id = %s AND ih.platform = 'Flipkart'"
+            params = [user_id, user_id]
+            if fsn_batch is not None:
+                placeholders = ", ".join(["%s"] * len(fsn_batch))
+                where_sql += f" AND ih.sku IN ({placeholders})"
+                params.extend(fsn_batch)
+            cursor.execute(f"""
+                UPDATE `{inv_tbl}` ih
+                LEFT JOIN `{cm_tbl}` cm ON cm.user_id = %s AND cm.fsn = ih.sku
+                SET ih.portfolio   = COALESCE(cm.portfolio, ''),
+                    ih.category    = COALESCE(cm.category, 'Unknown'),
+                    ih.subcategory = COALESCE(cm.subcategory, '')
+                {where_sql}
+            """, params)
+            total_rows += max(int(cursor.rowcount or 0), 0)
+    logger.info("[Dashboard] fk inventory category UPDATE user=%s rows=%d scoped=%s", user_id, total_rows, bool(fsns))
+    return total_rows
+
+
 def _generate_dashboard_data_python(user, sales_qs, spend_qs, progress_callback):
     _notify_progress(progress_callback, "Loading category and price mappings...")
     category_by_asin = {}

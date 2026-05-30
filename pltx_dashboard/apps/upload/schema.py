@@ -46,10 +46,6 @@ UPLOAD_SCHEMAS = {
         "label": "FK FBA Stock",
         "required": ["Date", "FSN", "Live on Website"],
     },
-    "fk_flex_stock": {
-        "label": "FK Flex Stock",
-        "required": ["Date", "FSN", "Cluster", "Qty"],
-    },
     "fk_inventory": {"label": "FK Inventory", "required": ["FSN", "Qty"]},
 }
 
@@ -67,7 +63,6 @@ def validate_file_type(file_type):
         "fk_price",
         "fk_pla",
         "fk_fba_stock",
-        "fk_flex_stock",
         "fk_inventory",
     }
     if file_type not in allowed:
