@@ -7,13 +7,10 @@ def generate_bi_data_orm(qs, fk_qs, user=None, asin_meta=None, fsn_meta=None):
         # Group by asin only to avoid duplicates from varying category/portfolio values
         agg = qs.values("asin").annotate(
             revenue=Sum("revenue"),
-            total_spend=Sum("total_spend"),
+            total_spend=Sum("ad_spend"),
             orders=Sum("orders"),
-            pageviews=Sum("pageviews"),
-            units=Sum("units"),
-            spend_sp=Sum("spend_sp"),
-            spend_sb=Sum("spend_sb"),
-            spend_sd=Sum("spend_sd"),
+            pageviews=Sum("page_views"),
+            units=Sum("units_sold"),
         )
         # Build a separate lookup for the best category/portfolio per ASIN.
         # Use pre-fetched metadata if provided by the caller to avoid duplicate DB queries.
@@ -39,9 +36,9 @@ def generate_bi_data_orm(qs, fk_qs, user=None, asin_meta=None, fsn_meta=None):
                 "orders": int(r["orders"] or 0),
                 "pageviews": int(r["pageviews"] or 0),
                 "units": int(r["units"] or 0),
-                "spend_sp": float(r["spend_sp"] or 0),
-                "spend_sb": float(r["spend_sb"] or 0),
-                "spend_sd": float(r["spend_sd"] or 0),
+                "spend_sp": 0.0,
+                "spend_sb": 0.0,
+                "spend_sd": 0.0,
                 "az_revenue": float(r["revenue"] or 0),
                 "fk_revenue": 0.0,
                 "az_orders": int(r["orders"] or 0),
@@ -50,16 +47,18 @@ def generate_bi_data_orm(qs, fk_qs, user=None, asin_meta=None, fsn_meta=None):
                 "fk_units": 0,
                 "az_spend": float(r["total_spend"] or 0),
                 "fk_spend": 0.0,
+                "az_pageviews": int(r["pageviews"] or 0),
+                "fk_pageviews": 0,
             }
 
     if fk_qs is not None:
         # Group by fsn only to avoid duplicates
         agg_fk = fk_qs.values("fsn").annotate(
             revenue=Sum("revenue"),
-            total_spend=Sum("total_spend"),
+            total_spend=Sum("ad_spend"),
             orders=Sum("orders"),
-            pageviews=Sum("pageviews"),
-            units=Sum("units"),
+            pageviews=Sum("page_views"),
+            units=Sum("units_sold"),
         )
         # Use pre-fetched metadata if provided by the caller to avoid duplicate DB queries.
         if fsn_meta is None:
@@ -75,16 +74,18 @@ def generate_bi_data_orm(qs, fk_qs, user=None, asin_meta=None, fsn_meta=None):
         for r in agg_fk:
             fsn = r["fsn"]
             meta = fsn_meta.get(fsn, {"category": "", "portfolio": ""})
+            fk_pv = int(r["pageviews"] or 0)
             if fsn in az_asins:
                 az_asins[fsn]["revenue"] += float(r["revenue"] or 0)
                 az_asins[fsn]["total_spend"] += float(r["total_spend"] or 0)
                 az_asins[fsn]["orders"] += int(r["orders"] or 0)
-                az_asins[fsn]["pageviews"] += int(r["pageviews"] or 0)
+                az_asins[fsn]["pageviews"] += fk_pv
                 az_asins[fsn]["units"] += int(r["units"] or 0)
                 az_asins[fsn]["fk_revenue"] += float(r["revenue"] or 0)
                 az_asins[fsn]["fk_orders"] = az_asins[fsn].get("fk_orders", 0) + int(r["orders"] or 0)
                 az_asins[fsn]["fk_units"] = az_asins[fsn].get("fk_units", 0) + int(r["units"] or 0)
                 az_asins[fsn]["fk_spend"] = az_asins[fsn].get("fk_spend", 0.0) + float(r["total_spend"] or 0)
+                az_asins[fsn]["fk_pageviews"] = az_asins[fsn].get("fk_pageviews", 0) + fk_pv
             else:
                 az_asins[fsn] = {
                     "asin": fsn,
@@ -93,7 +94,7 @@ def generate_bi_data_orm(qs, fk_qs, user=None, asin_meta=None, fsn_meta=None):
                     "revenue": float(r["revenue"] or 0),
                     "total_spend": float(r["total_spend"] or 0),
                     "orders": int(r["orders"] or 0),
-                    "pageviews": int(r["pageviews"] or 0),
+                    "pageviews": fk_pv,
                     "units": int(r["units"] or 0),
                     "spend_sp": 0.0,
                     "spend_sb": 0.0,
@@ -106,7 +107,8 @@ def generate_bi_data_orm(qs, fk_qs, user=None, asin_meta=None, fsn_meta=None):
                     "fk_units": int(r["units"] or 0),
                     "az_spend": 0.0,
                     "fk_spend": float(r["total_spend"] or 0),
+                    "az_pageviews": 0,
+                    "fk_pageviews": fk_pv,
                 }
 
     return sorted(az_asins.values(), key=lambda x: x["revenue"], reverse=True)
-

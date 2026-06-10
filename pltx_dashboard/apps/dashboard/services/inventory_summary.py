@@ -1,4 +1,3 @@
-import collections
 from django.db import transaction
 from django.db.models import Sum
 
@@ -109,21 +108,33 @@ def _build_combined_inventory_rows(user, only_dates=None):
 
     def _status(stock, sale):
         doc = _safe_doc(stock, sale)
-        if stock <= 0: return "OOS", "danger"
-        elif sale <= 0: return "Overstock", "neutral"
-        elif doc <= 15: return "Low Stock", "warn"
-        elif doc > 60: return "Overstock", "neutral"
-        else: return "In Stock", "good"
+        if stock <= 0:
+            return "OOS", "danger"
+        elif sale <= 0:
+            return "Overstock", "neutral"
+        elif doc <= 15:
+            return "Low Stock", "warn"
+        elif doc > 60:
+            return "Overstock", "neutral"
+        else:
+            return "In Stock", "good"
 
     def _fk_status(stock, sale):
         doc = _safe_doc(stock, sale)
-        if stock <= 0: return "OOS", "danger"
-        elif doc < 5: return "Nearly OOS", "danger"
-        elif doc < 15: return "Understock", "warn"
-        elif doc <= 30: return "Ideal Stocking", "good"
-        elif doc <= 90: return "Over Stock", "neutral"
-        elif doc <= 180: return "Highly Over Stock", "neutral"
-        else: return "Not Selling", "neutral"
+        if stock <= 0:
+            return "OOS", "danger"
+        elif doc < 5:
+            return "Nearly OOS", "danger"
+        elif doc < 15:
+            return "Understock", "warn"
+        elif doc <= 30:
+            return "Ideal Stocking", "good"
+        elif doc <= 90:
+            return "Over Stock", "neutral"
+        elif doc <= 180:
+            return "Highly Over Stock", "neutral"
+        else:
+            return "Not Selling", "neutral"
 
     for _key, item in all_keys.items():
         asin = item["asin"]

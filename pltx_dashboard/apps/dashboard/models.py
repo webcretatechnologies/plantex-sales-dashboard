@@ -14,6 +14,9 @@ class SalesData(models.Model):
 
     class Meta:
         unique_together = ("user", "date", "asin")
+        indexes = [
+            models.Index(fields=["user", "asin", "date"], name="idx_sales_u_asin_d"),
+        ]
 
 
 class SpendData(models.Model):
@@ -37,6 +40,10 @@ class SpendData(models.Model):
                 fields=["user", "date"],
                 name="idx_spend_u_date",
             ),
+            models.Index(
+                fields=["user", "asin", "date"],
+                name="idx_spend_u_asin_d",
+            ),
         ]
 
 
@@ -48,6 +55,16 @@ class CategoryMapping(models.Model):
     portfolio = models.CharField(max_length=100)
     category = models.CharField(max_length=100)
     subcategory = models.CharField(max_length=100)
+    msku = models.CharField(max_length=200, null=True, blank=True)  # From "Skus" column in Category file
+    parent_asin = models.CharField(max_length=50, null=True, blank=True, db_index=True)
+    launch_date = models.DateField(null=True, blank=True, db_index=True)
+    category_manager = models.CharField(max_length=100, null=True, blank=True, db_index=True)
+    series_name = models.CharField(max_length=100, null=True, blank=True, db_index=True)
+    material = models.CharField(max_length=100, null=True, blank=True, db_index=True)
+    size = models.CharField(max_length=100, null=True, blank=True, db_index=True)
+    brand_name = models.CharField(max_length=100, null=True, blank=True, db_index=True)
+    ratings = models.CharField(max_length=50, null=True, blank=True, db_index=True)
+    finish = models.CharField(max_length=100, null=True, blank=True, db_index=True)
 
     class Meta:
         unique_together = ("user", "asin")
@@ -156,6 +173,7 @@ class ProcessedDashboardData(models.Model):
             models.Index(fields=["user", "date"], name="idx_user_date"),
             models.Index(fields=["user", "asin", "date"], name="idx_user_asin_date"),
             models.Index(fields=["user", "asin"], name="idx_pdd_u_asin"),
+            models.Index(fields=["user", "total_spend"], name="idx_pdd_u_spend"),
             models.Index(fields=["user", "category"], name="idx_pdd_u_cat"),
             models.Index(fields=["user", "portfolio"], name="idx_pdd_u_port"),
             models.Index(fields=["user", "subcategory"], name="idx_pdd_u_sub"),
@@ -203,6 +221,7 @@ class FlipkartSearchTraffic(models.Model):
         unique_together = ("user", "fsn", "date")
         indexes = [
             models.Index(fields=["user", "date", "fsn"], name="idx_fkst_u_d_fsn"),
+            models.Index(fields=["fsn", "date"], name="idx_fkst_fsn_date"),
         ]
 
 
@@ -213,11 +232,20 @@ class FlipkartCategoryMap(models.Model):
         "accounts.Users", on_delete=models.CASCADE, related_name="fk_category_maps"
     )
     fsn = models.CharField(max_length=50, db_index=True)
+    asin = models.CharField(max_length=50, null=True, blank=True, db_index=True)
     sku = models.CharField(max_length=100, null=True, blank=True)
     portfolio = models.CharField(max_length=100, null=True, blank=True)
     category = models.CharField(max_length=100, null=True, blank=True)
     subcategory = models.CharField(max_length=100, null=True, blank=True)
     product_status = models.CharField(max_length=30, null=True, blank=True, db_index=True)
+    launch_date = models.DateField(null=True, blank=True, db_index=True)
+    category_manager = models.CharField(max_length=100, null=True, blank=True, db_index=True)
+    series_name = models.CharField(max_length=100, null=True, blank=True, db_index=True)
+    material = models.CharField(max_length=100, null=True, blank=True, db_index=True)
+    size = models.CharField(max_length=100, null=True, blank=True, db_index=True)
+    brand_name = models.CharField(max_length=100, null=True, blank=True, db_index=True)
+    ratings = models.CharField(max_length=50, null=True, blank=True, db_index=True)
+    finish = models.CharField(max_length=100, null=True, blank=True, db_index=True)
 
     class Meta:
         unique_together = ("user", "fsn")
@@ -351,6 +379,7 @@ class FlipkartProcessedDashboardData(models.Model):
             models.Index(fields=["user", "date"], name="idx_fk_user_date"),
             models.Index(fields=["user", "fsn", "date"], name="idx_fk_user_fsn_date"),
             models.Index(fields=["user", "fsn"], name="idx_fkpdd_u_fsn"),
+            models.Index(fields=["user", "total_spend"], name="idx_fkpdd_u_spend"),
             models.Index(fields=["user", "category"], name="idx_fkpdd_u_cat"),
             models.Index(fields=["user", "portfolio"], name="idx_fkpdd_u_port"),
             models.Index(fields=["user", "subcategory"], name="idx_fkpdd_u_sub"),
@@ -454,6 +483,49 @@ class DashboardDailySummary(models.Model):
             models.Index(fields=["user", "platform", "category", "date"], name="idx_dds_u_p_cat_d"),
             models.Index(fields=["user", "platform", "portfolio", "date"], name="idx_dds_u_p_port_d"),
             models.Index(fields=["user", "platform", "subcategory", "date"], name="idx_dds_u_p_sub_d"),
+        ]
+
+
+class DashboardProductDailySummary(models.Model):
+    """
+    Pre-aggregated day-level metrics per ASIN/FSN.
+    Keeps product-level dashboard/report reads off the raw upload tables.
+    """
+
+    user = models.ForeignKey(
+        "accounts.Users",
+        on_delete=models.CASCADE,
+        related_name="dashboard_product_daily_summaries",
+    )
+    date = models.DateField(db_index=True)
+    platform = models.CharField(max_length=20, db_index=True)  # Amazon / Flipkart
+    sku = models.CharField(max_length=80, db_index=True)  # ASIN for Amazon, FSN for Flipkart
+    asin = models.CharField(max_length=50, null=True, blank=True, db_index=True)
+    fsn = models.CharField(max_length=80, null=True, blank=True, db_index=True)
+
+    portfolio = models.CharField(max_length=100, null=True, blank=True, db_index=True)
+    category = models.CharField(max_length=100, null=True, blank=True, db_index=True)
+    subcategory = models.CharField(max_length=100, null=True, blank=True, db_index=True)
+
+    revenue = models.FloatField(default=0.0)
+    units_sold = models.IntegerField(default=0)
+    page_views = models.IntegerField(default=0)
+    orders = models.IntegerField(default=0)
+    ad_spend = models.FloatField(default=0.0)
+    product_clicks = models.IntegerField(default=0)
+    sales = models.IntegerField(default=0)
+
+    class Meta:
+        unique_together = ("user", "date", "platform", "sku")
+        indexes = [
+            models.Index(fields=["user", "date", "platform"], name="idx_dpds_u_d_p"),
+            models.Index(fields=["user", "platform", "sku", "date"], name="idx_dpds_u_p_s_d"),
+            models.Index(fields=["user", "asin", "date"], name="idx_dpds_u_asn_d"),
+            models.Index(fields=["user", "fsn", "date"], name="idx_dpds_u_fsn_d"),
+            models.Index(fields=["user", "category", "date"], name="idx_dpds_u_cat_d"),
+            models.Index(fields=["user", "portfolio", "date"], name="idx_dpds_u_port_d"),
+            models.Index(fields=["user", "subcategory", "date"], name="idx_dpds_u_sub_d"),
+            models.Index(fields=["user", "platform", "category", "date"], name="idx_dpds_u_p_cat_d"),
         ]
 
 

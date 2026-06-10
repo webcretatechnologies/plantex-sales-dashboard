@@ -1,30 +1,106 @@
 {% load dashboard_extras %}
 {% for item in rows %}
 <tr>
-    <td>{{ item.date|date:"d M Y" }}</td>
+    <td style="white-space: nowrap;">{{ item.date|date:"d M Y" }}</td>
+
+    {% if platform == "Flipkart" %}
+    {# ── Flipkart-only: Date, SKU, FSN, Category, Stock, DOC, Revenue, Status, Calculation ── #}
     <td>
-        <div class="ceo-sku-cell">
-            <div class="ceo-sku-thumb">📦</div>
-            <span>{{ item.sku }}</span>
+        <div>
+            <div style="font-weight:700;font-size:13px;line-height:1.3;">{{ item.msku|default:"-" }}</div>
+            <div style="font-size:10px;color:var(--muted);font-family:monospace;line-height:1.2;">{{ item.fsn|default:"-" }}</div>
         </div>
     </td>
     <td>{{ item.category }}</td>
-    <td class="num">{{ item.stock_qty|fmt_num }}</td>
-    <td class="num">{{ item.sale_qty|fmt_num }}</td>
-    <td class="num" style="font-weight:600;">{{ item.doc }}</td>
-    <td class="num">{{ item.revenue|fmt_rupee }}</td>
+    <td class="num">{{ item.fk_stock|fmt_num }}</td>
+    <td class="num">{{ item.fk_sales|fmt_num }}</td>
+    <td class="num" style="font-family:monospace;">
+        {% if item.fk_doc >= 999 %}∞{% else %}{{ item.fk_doc }}{% endif %}
+    </td>
+    <td class="num">{{ item.fk_revenue|fmt_rupee }}</td>
     <td>
-        <span class="ceo-inv-value {{ item.status_class }}"
-            style="padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600;">
-            {{ item.status }}
+        <span class="ceo-inv-value {{ item.fk_status_class }}"
+            style="padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600;white-space:nowrap;">
+            {{ item.fk_status|default:"-" }}
         </span>
     </td>
-    <td style="font-size: 11px; color: var(--muted); font-family: 'JetBrains Mono', monospace;">
+    <td style="font-size:10px;color:var(--muted);font-family:'JetBrains Mono',monospace;line-height:1.3;">
+        {{ item.fk_reason|safe }}
+    </td>
+
+    {% elif platform == "Amazon" %}
+    {# ── Amazon-only: Date, SKU, ASIN, Category, Stock, Sales, DOC, Revenue, Status, Calculation ── #}
+    <td>
+        <div>
+            <div style="font-weight:700;font-size:13px;line-height:1.3;">{{ item.msku|default:"-" }}</div>
+            <div style="font-size:10px;color:var(--muted);font-family:monospace;line-height:1.2;">{{ item.asin|default:"-" }}</div>
+        </div>
+    </td>
+    <td>{{ item.category }}</td>
+    <td class="num">{{ item.amz_stock|fmt_num }}</td>
+    <td class="num">{{ item.amz_sales|fmt_num }}</td>
+    <td class="num" style="font-family:monospace;">
+        {% if item.amz_doc >= 999 %}∞{% else %}{{ item.amz_doc }}{% endif %}
+    </td>
+    <td class="num">{{ item.amz_revenue|fmt_rupee }}</td>
+    <td>
+        <span class="ceo-inv-value {{ item.amz_status_class }}"
+            style="padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600;white-space:nowrap;">
+            {{ item.amz_status|default:"-" }}
+        </span>
+    </td>
+    <td style="font-size:10px;color:var(--muted);font-family:'JetBrains Mono',monospace;line-height:1.3;">
         {{ item.reason|safe }}
     </td>
+
+    {% else %}
+    {# ── Combined (All): SKU, ASIN, FSN, Category + full Amz + FK breakdown ── #}
+    <td>
+        <div>
+            <div style="font-weight:700;font-size:13px;line-height:1.3;">{{ item.msku|default:"-" }}</div>
+            <div style="font-size:10px;color:var(--muted);font-family:monospace;line-height:1.2;">
+                {% if item.asin %}{{ item.asin }}{% endif %}
+                {% if item.asin and item.fsn %} / {% endif %}
+                {% if item.fsn %}{{ item.fsn }}{% endif %}
+            </div>
+        </div>
+    </td>
+    <td>{{ item.category }}</td>
+    <td class="num">{{ item.amz_stock|fmt_num }}</td>
+    <td class="num">{{ item.amz_sales|fmt_num }}</td>
+    <td class="num" style="font-family:monospace;">
+        {% if item.asin %}{% if item.amz_doc >= 999 %}∞{% else %}{{ item.amz_doc }}{% endif %}{% else %}-{% endif %}
+    </td>
+    <td class="num">{% if item.asin %}{{ item.amz_revenue|fmt_rupee }}{% else %}-{% endif %}</td>
+    <td>
+        {% if item.asin %}
+        <span class="ceo-inv-value {{ item.amz_status_class }}"
+            style="padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600;white-space:nowrap;">
+            {{ item.amz_status }}
+        </span>
+        {% else %}<span style="color:var(--muted);font-size:11px;">-</span>{% endif %}
+    </td>
+    <td class="num">{{ item.fk_stock|fmt_num }}</td>
+    <td class="num">{{ item.fk_sales|fmt_num }}</td>
+    <td class="num" style="font-family:monospace;">
+        {% if item.fsn %}{% if item.fk_doc >= 999 %}∞{% else %}{{ item.fk_doc }}{% endif %}{% else %}-{% endif %}
+    </td>
+    <td class="num">{% if item.fsn %}{{ item.fk_revenue|fmt_rupee }}{% else %}-{% endif %}</td>
+    <td>
+        {% if item.fsn %}
+        <span class="ceo-inv-value {{ item.fk_status_class }}"
+            style="padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600;white-space:nowrap;">
+            {{ item.fk_status }}
+        </span>
+        {% else %}<span style="color:var(--muted);font-size:11px;">-</span>{% endif %}
+    </td>
+    <td style="font-size:10px;color:var(--muted);font-family:'JetBrains Mono',monospace;line-height:1.3;">
+        {{ item.reason|safe }}
+    </td>
+    {% endif %}
 </tr>
 {% empty %}
 <tr>
-    <td colspan="9" class="empty">No inventory data available</td>
+    <td colspan="15" class="empty">No inventory data available for the selected filters</td>
 </tr>
 {% endfor %}

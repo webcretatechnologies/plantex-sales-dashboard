@@ -28,8 +28,9 @@ def invalidate_dashboard_cache_for_user(user_id, *, clear_materialized=True):
 
     # Bust the per-user category mapping caches so the next request reloads
     # fresh data after an upload changes CategoryMapping / FlipkartCategoryMap.
-    cache.delete(f"asin_meta_v1_{user_id}")
-    cache.delete(f"fsn_meta_v1_{user_id}")
+    for version in ("v1", "v2", "v3", "v4"):
+        cache.delete(f"asin_meta_{version}_{user_id}")
+        cache.delete(f"fsn_meta_{version}_{user_id}")
 
     if clear_materialized:
         try:

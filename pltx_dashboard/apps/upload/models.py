@@ -20,11 +20,13 @@ class UploadLog(models.Model):
     STATUS_QUEUED = "queued"
     STATUS_PROCESSING = "processing"
     STATUS_SUCCESS = "success"
+    STATUS_WARNING = "warning"   # Raw data saved; dashboard build partial or pending companion files
     STATUS_ERROR = "error"
     STATUS_CHOICES = [
         (STATUS_QUEUED, "Queued"),
         (STATUS_PROCESSING, "Processing"),
         (STATUS_SUCCESS, "Success"),
+        (STATUS_WARNING, "Warning"),
         (STATUS_ERROR, "Error"),
     ]
 

@@ -12,6 +12,7 @@ from .views import (
     dashboard_modal_rows_view,
     dashboard_product_card_rows_view,
     dashboard_category_performance_rows_view,
+    dashboard_asin_fsn_report_rows_view,
     filter_dropdown_options,
     dashboard_refresh_status,
     dashboard_refresh_now,
@@ -47,6 +48,11 @@ urlpatterns = [
         "dashboard/category-performance-rows/<str:view_name>/",
         dashboard_category_performance_rows_view,
         name="dashboard-category-performance-rows",
+    ),
+    path(
+        "dashboard/asin-fsn-report-rows/",
+        dashboard_asin_fsn_report_rows_view,
+        name="dashboard-asin-fsn-report-rows",
     ),
     path(
         "api/dashboard/filter-options/",

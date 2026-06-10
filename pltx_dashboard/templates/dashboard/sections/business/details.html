@@ -1,4 +1,5 @@
 {% load dashboard_extras %}
+{% include "dashboard/partials/npd_performance_modal.html" with npd_modal_id="bizNpdPerformanceModal" npd_chart_id="bizNpdPerformanceChart" npd_table_id="bizNpdPerformanceTable" npd_header_id="bizNpdPerformanceHeader" npd_view_name="business" %}
             <!-- ════════════ FULL CATEGORY PERFORMANCE TABLE ════════════ -->
             <div class="ceo-card" id="biz-full-category-perf" style="margin-top: 24px;">
                 <div class="ceo-card-header"
@@ -182,29 +183,50 @@
 
             <!-- Top Revenue Contributors Modal -->
             <div class="tbl-overlay" id="winningModal" data-lazy-url="{% url 'dashboard-modal-rows' 'business' 'top-products' %}">
-                <div class="tbl-overlay-inner">
+                <div class="tbl-overlay-inner" style="max-width:1200px;">
                     <div class="tbl-overlay-header">
                         <span class="tbl-overlay-title">Top Revenue Contributors</span>
                         <button class="tbl-overlay-close" onclick="closeModal('winningModal')">&#10005; Close</button>
                     </div>
                     <div class="tbl-overlay-scroll">
-                        <table class="ceo-table" style="min-width:600px;">
-                            <thead>
+                        <table class="ceo-table" style="min-width:600px;" id="bizWinningModalTable">
+                            <thead id="bizWinningModalHeader">
                                 <tr>
-                                    <th>SKU</th>
-                                    <th class="num">Revenue</th>
-                                    <th class="num">Growth</th>
+                                    <th>Amazon SKU</th>
+                                    <th>Flipkart SKU</th>
+                                    <th class="num">Amazon Revenue</th>
+                                    <th class="num">Flipkart Revenue</th>
+                                    <th class="num">Total Revenue</th>
+                                    <th class="num">Amazon MOM Growth</th>
+                                    <th class="num">Flipkart MOM Growth</th>
+                                    <th class="num">Amazon Contribution</th>
+                                    <th class="num">Flipkart Contribution</th>
+                                    <th class="num">Amazon Page Views</th>
+                                    <th class="num">Flipkart Page Views</th>
                                 </tr>
                             </thead>
                             <tbody data-modal-lazy="1">
-                                <tr>
-                                    <td colspan="3" class="empty">Loading data...</td>
-                                </tr>
+                                <tr><td colspan="11" class="empty">Loading data...</td></tr>
                             </tbody>
                         </table>
                     </div>
                 </div>
             </div>
+<script>
+(function(){
+    var BIZ_WIN_H = {
+        'All': '<tr><th data-field="asin">Amazon SKU</th><th data-field="fsn">Flipkart SKU</th><th class="num" data-field="az_revenue">Amazon Revenue</th><th class="num" data-field="fk_revenue">Flipkart Revenue</th><th class="num" data-field="total_revenue">Total Revenue</th><th class="num" data-field="az_growth">Amazon MOM Growth</th><th class="num" data-field="fk_growth">Flipkart MOM Growth</th><th class="num" data-field="az_contribution">Amazon Contribution</th><th class="num" data-field="fk_contribution">Flipkart Contribution</th><th class="num" data-field="az_pageviews">Amazon Page Views</th><th class="num" data-field="fk_pageviews">Flipkart Page Views</th></tr>',
+        'Amazon': '<tr><th data-field="asin">SKU</th><th class="num" data-field="az_revenue">Revenue</th><th class="num" data-field="az_growth">MoM Growth</th><th class="num" data-field="az_pageviews">Page Views</th></tr>',
+        'Flipkart': '<tr><th data-field="fsn">SKU</th><th class="num" data-field="fk_revenue">Revenue</th><th class="num" data-field="fk_growth">MoM Growth</th><th class="num" data-field="fk_pageviews">Page Views</th></tr>',
+    };
+    function updateBizWinHeader(p) { var h=document.getElementById('bizWinningModalHeader'); if(h) h.innerHTML=BIZ_WIN_H[p]||BIZ_WIN_H['All']; }
+    window._updateBizWinHeader = updateBizWinHeader;
+    function readPlatform() { var s=document.getElementById('platformSelect'); return s?(s.value||'All'):'All'; }
+    document.addEventListener('DOMContentLoaded', function(){ updateBizWinHeader(readPlatform()); });
+    var applyBtn = document.getElementById('applyFiltersBtn');
+    if (applyBtn) applyBtn.addEventListener('click', function(){ setTimeout(function(){ updateBizWinHeader(readPlatform()); }, 200); });
+})();
+</script>
 
 
 
@@ -236,8 +258,7 @@
                             <thead id="invHealthHeaderBiz">
                                 <tr>
                                     <th>Date</th>
-                                    <th>ASIN</th>
-                                    <th>FSN</th>
+                                    <th>SKU</th>
                                     <th>Category</th>
                                     <th class="num">Amz Stock</th>
                                     <th class="num">Amz Sales</th>
@@ -261,9 +282,9 @@
 <script>
 (function(){
     var HEADERS = {
-        'All': '<tr><th>Date</th><th>ASIN</th><th>FSN</th><th>Category</th><th class="num">Amz Stock</th><th class="num">Amz Sales</th><th class="num">Amz DOC</th><th class="num">Amz Revenue</th><th>Amz Status</th><th class="num">FK Stock</th><th class="num">FK Sales</th><th class="num">FK DOC</th><th class="num">FK Revenue</th><th>FK Status</th><th>Calculation</th></tr>',
-        'Amazon': '<tr><th>Date</th><th>ASIN</th><th>Category</th><th class="num">Stock</th><th class="num">Sales</th><th class="num">DOC</th><th class="num">Revenue</th><th>Status</th><th>Calculation</th></tr>',
-        'Flipkart': '<tr><th>Date</th><th>FSN</th><th>Category</th><th class="num">Stock</th><th class="num">DOC</th><th class="num">Revenue</th><th>Status</th><th>Calculation</th></tr>',
+        'All': '<tr><th data-field="date">Date</th><th data-field="sku">Amazon SKU / Flipkart SKU</th><th data-field="category">Category</th><th class="num" data-field="amz_stock">Amz Stock</th><th class="num" data-field="amz_sales">Amz Sales</th><th class="num" data-field="amz_doc">Amz DOC</th><th class="num" data-field="amz_revenue">Amz Revenue</th><th data-field="amz_status">Amz Status</th><th class="num" data-field="fk_stock">FK Stock</th><th class="num" data-field="fk_sales">FK Sales</th><th class="num" data-field="fk_doc">FK DOC</th><th class="num" data-field="fk_revenue">FK Revenue</th><th data-field="fk_status">FK Status</th><th data-field="reason">Calculation</th></tr>',
+        'Amazon': '<tr><th data-field="date">Date</th><th data-field="asin">SKU</th><th data-field="category">Category</th><th class="num" data-field="amz_stock">Stock</th><th class="num" data-field="amz_sales">Sales</th><th class="num" data-field="amz_doc">DOC</th><th class="num" data-field="amz_revenue">Revenue</th><th data-field="amz_status">Status</th><th data-field="reason">Calculation</th></tr>',
+        'Flipkart': '<tr><th data-field="date">Date</th><th data-field="fsn">SKU</th><th data-field="category">Category</th><th class="num" data-field="fk_stock">Stock</th><th class="num" data-field="fk_sales">Sales</th><th class="num" data-field="fk_doc">DOC</th><th class="num" data-field="fk_revenue">Revenue</th><th data-field="fk_status">Status</th><th data-field="fk_reason">Calculation</th></tr>',
     };
     function updateInvHealthHeaderBiz(platform) {
         var hdr = document.getElementById('invHealthHeaderBiz');
@@ -293,29 +314,50 @@
 
             <!-- Declining Products (MOM) — Full View Modal -->
             <div class="tbl-overlay" id="bizDecliningModal" data-lazy-url="{% url 'dashboard-modal-rows' 'business' 'declining-products' %}">
-                <div class="tbl-overlay-inner">
+                <div class="tbl-overlay-inner" style="max-width:1100px;">
                     <div class="tbl-overlay-header">
                         <span class="tbl-overlay-title">Declining Products (MOM) — Full View</span>
-                        <button class="tbl-overlay-close" onclick="closeModal('bizDecliningModal')">✕ Close</button>
+                        <button class="tbl-overlay-close" onclick="closeModal('bizDecliningModal')">&#10005; Close</button>
                     </div>
                     <div class="tbl-overlay-scroll">
-                        <table class="ceo-table" style="min-width:600px;">
-                            <thead>
+                        <table class="ceo-table" style="min-width:600px;" id="bizDecliningTable">
+                            <thead id="bizDecliningHeader">
                                 <tr>
-                                    <th>SKU</th>
-                                    <th class="num">MOM Drop %</th>
-                                    <th class="num">Impact (₹)</th>
+                                    <th>Amazon SKU</th>
+                                    <th>Flipkart SKU</th>
+                                    <th class="num">Amazon MOM Drop %</th>
+                                    <th class="num">Flipkart MOM Drop %</th>
+                                    <th class="num">Total MOM Drop %</th>
+                                    <th class="num">Amazon Impact (₹)</th>
+                                    <th class="num">Flipkart Impact (₹)</th>
+                                    <th class="num">Total Impact (₹)</th>
+                                    <th class="num">Amazon Page Views</th>
+                                    <th class="num">Flipkart Page Views</th>
+                                    <th class="num">Total Page Views</th>
                                 </tr>
                             </thead>
                             <tbody data-modal-lazy="1">
-                                <tr>
-                                    <td colspan="3" class="empty">Loading data...</td>
-                                </tr>
+                                <tr><td colspan="11" class="empty">Loading data...</td></tr>
                             </tbody>
                         </table>
                     </div>
                 </div>
             </div>
+<script>
+(function(){
+    var BIZ_DEC_H = {
+        'All': '<tr><th data-field="asin">Amazon SKU</th><th data-field="fsn">Flipkart SKU</th><th class="num" data-field="az_drop">Amazon MOM Drop %</th><th class="num" data-field="fk_drop">Flipkart MOM Drop %</th><th class="num" data-field="total_drop">Total MOM Drop %</th><th class="num" data-field="az_impact">Amazon Impact (₹)</th><th class="num" data-field="fk_impact">Flipkart Impact (₹)</th><th class="num" data-field="total_impact">Total Impact (₹)</th><th class="num" data-field="az_pageviews">Amazon Page Views</th><th class="num" data-field="fk_pageviews">Flipkart Page Views</th><th class="num" data-field="total_pageviews">Total Page Views</th></tr>',
+        'Amazon': '<tr><th data-field="asin">SKU</th><th class="num" data-field="az_drop">MOM Drop %</th><th class="num" data-field="az_impact">Impact (₹)</th></tr>',
+        'Flipkart': '<tr><th data-field="fsn">SKU</th><th class="num" data-field="fk_drop">MOM Drop %</th><th class="num" data-field="fk_impact">Impact (₹)</th></tr>',
+    };
+    function updateBizDecHeader(p) { var h=document.getElementById('bizDecliningHeader'); if(h) h.innerHTML=BIZ_DEC_H[p]||BIZ_DEC_H['All']; }
+    window._updateBizDecHeader = updateBizDecHeader;
+    function readPlatform() { var s=document.getElementById('platformSelect'); return s?(s.value||'All'):'All'; }
+    document.addEventListener('DOMContentLoaded', function(){ updateBizDecHeader(readPlatform()); });
+    var applyBtn = document.getElementById('applyFiltersBtn');
+    if (applyBtn) applyBtn.addEventListener('click', function(){ updateBizDecHeader(readPlatform()); });
+})();
+</script>
 
             <!-- OOS Impact Details Modal -->
             <div class="tbl-overlay oos-calc-modal" id="bizOosImpactModal">
@@ -351,10 +393,22 @@
 
                         <div class="oos-calc-metrics">
                             <div class="oos-calc-stat danger">
-                                <span class="oos-calc-stat-label">Lost Sales</span>
+                                <span class="oos-calc-stat-label">Lost Sales (Total)</span>
                                 <strong class="oos-calc-stat-value">{{ payload.oos_impact.lost_sales|fmt_rupee }}</strong>
                                 <span class="oos-calc-stat-note">Revenue currently sitting in the OOS bucket</span>
                             </div>
+                            {% if not request.GET.platform or request.GET.platform == 'All' %}
+                            <div class="oos-calc-stat" style="border-left:3px solid #f59e0b;">
+                                <span class="oos-calc-stat-label">Amazon Lost Sales</span>
+                                <strong class="oos-calc-stat-value">{{ payload.oos_impact.az_lost_sales|default:0|fmt_rupee }}</strong>
+                                <span class="oos-calc-stat-note">Amazon OOS rows ({{ payload.oos_impact.az_skus_affected|default:0 }} SKUs)</span>
+                            </div>
+                            <div class="oos-calc-stat" style="border-left:3px solid #38bdf8;">
+                                <span class="oos-calc-stat-label">Flipkart Lost Sales</span>
+                                <strong class="oos-calc-stat-value">{{ payload.oos_impact.fk_lost_sales|default:0|fmt_rupee }}</strong>
+                                <span class="oos-calc-stat-note">Flipkart OOS/Nearly OOS rows ({{ payload.oos_impact.fk_skus_affected|default:0 }} SKUs)</span>
+                            </div>
+                            {% endif %}
                             <div class="oos-calc-stat">
                                 <span class="oos-calc-stat-label">SKUs Affected</span>
                                 <strong class="oos-calc-stat-value">{{ payload.oos_impact.skus_affected|fmt_num }}</strong>

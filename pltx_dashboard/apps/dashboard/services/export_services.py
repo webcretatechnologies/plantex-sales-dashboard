@@ -27,7 +27,7 @@ def _get_filtered_querysets(user, filters):
     qs = ProcessedDashboardData.objects.filter(user=data_owner)
     fk_qs = FlipkartProcessedDashboardData.objects.filter(user=data_owner)
 
-    qs, fk_qs = apply_dashboard_entity_filters(qs, fk_qs, filters)
+    qs, fk_qs = apply_dashboard_entity_filters(qs, fk_qs, filters, user=data_owner)
     qs = apply_global_filters_orm(qs, filters)
     fk_qs = apply_global_filters_orm(fk_qs, filters)
 

@@ -1,3 +1,4 @@
+from apps.dashboard.services.exports import (_clean_export_value, _rows_to_export_table, _npd_export_table, _modal_rows_export_filename, _category_performance_export_filename, _asin_fsn_report_export_filename, _asin_fsn_report_export_table, _category_performance_export_table)
 import csv
 import datetime
 import json
@@ -10,7 +11,7 @@ from io import BytesIO, StringIO
 import pandas as pd
 from django.conf import settings
 from django.core.cache import cache
-from django.db.models import F, Max, Q
+from django.db.models import F, Max, Q, Sum
 from django.http import FileResponse, HttpResponse, JsonResponse
 from django.shortcuts import render, redirect
 from django.template.loader import render_to_string
@@ -28,13 +29,17 @@ from apps.dashboard.models import (
     FlipkartSearchTraffic,
     FlipkartPLA,
     DashboardInventoryHealthSummary,
+    DashboardProductDailySummary,
+    DashboardDailySummary,
     CategoryMapping,
     FlipkartCategoryMap,
 )
 from apps.dashboard.services.filters import (
+    LIST_FILTER_FIELDS,
     apply_dashboard_entity_filters,
     build_filters_from_querydict,
     cache_filter_string,
+    launch_date_allow_lists,
     normalize_payload_filters,
     selected_filter_payload,
 )
@@ -73,17 +78,18 @@ DASHBOARD_MODAL_ROWS_TEMPLATE_MAP = {
     ("business", "category-growth"): ("dashboard/modals/rows/category_growth_rows.html", "category_performance"),
     ("ceo", "inventory-health"): ("dashboard/modals/rows/inventory_health_rows.html", "inventory.details"),
     ("ceo", "top-products"): ("dashboard/modals/rows/top_products_simple_rows.html", "cat_all_top_products"),
+    ("ceo", "npd-performance"): ("dashboard/modals/rows/npd_performance_rows.html", "npd_products_all"),
     ("ceo", "declining-products"): ("dashboard/modals/rows/declining_products_rows.html", "cat_all_under_products"),
     ("business", "inventory-health"): ("dashboard/modals/rows/inventory_health_rows.html", "inventory.details"),
     ("business", "top-products"): ("dashboard/modals/rows/top_products_simple_rows.html", "cat_all_top_products"),
+    ("business", "npd-performance"): ("dashboard/modals/rows/npd_performance_rows.html", "npd_products_all"),
     ("business", "declining-products"): ("dashboard/modals/rows/declining_products_rows.html", "cat_all_under_products"),
     ("category", "cluster-performance"): ("dashboard/modals/rows/cluster_performance_rows.html", "cluster_performance"),
     ("category", "inventory-health"): ("dashboard/modals/rows/inventory_health_rows.html", "inventory.details"),
     ("category", "top-products"): ("dashboard/modals/rows/top_products_category_rows.html", "cat_all_top_products"),
+    ("category", "npd-performance"): ("dashboard/modals/rows/npd_performance_rows.html", "npd_products_all"),
     ("category", "declining-products"): ("dashboard/modals/rows/declining_products_rows.html", "cat_all_under_products"),
 }
-MODAL_ROWS_DISPLAY_LIMIT = 25
-
 DASHBOARD_PRODUCT_CARD_TEMPLATE_MAP = {
     ("business", "top-products"): "dashboard/partials/product_cards/top_products_business_rows.html",
     ("business", "declining-products"): "dashboard/partials/product_cards/declining_products_rows.html",
@@ -124,109 +130,84 @@ def _resolve_payload_key(payload, payload_key):
     return rows or []
 
 
-def _clean_export_value(value):
-    if value is None:
-        return ""
-    if isinstance(value, (datetime.datetime, datetime.date)):
-        return value.isoformat()
-    if isinstance(value, (dict, list, tuple, set)):
-        return json.dumps(value, cls=DashboardEncoder)
-    return str(value)
 
 
-def _rows_to_export_table(rows):
-    if not rows:
-        return [], []
-    if isinstance(rows[0], dict):
-        keys = []
-        for row in rows:
-            for key in row.keys():
-                if key not in keys:
-                    keys.append(key)
-        headers = [str(k).replace("_", " ").title() for k in keys]
-        table_rows = [[_clean_export_value(row.get(k)) for k in keys] for row in rows]
-        return headers, table_rows
-    headers = ["Value"]
-    table_rows = [[_clean_export_value(r)] for r in rows]
-    return headers, table_rows
 
 
-def _modal_rows_export_filename(view_name, modal_key, ext):
-    stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    safe_view = str(view_name).strip().replace(" ", "_").lower()
-    safe_modal = str(modal_key).strip().replace(" ", "_").replace("-", "_").lower()
-    return f"{safe_view}_{safe_modal}_{stamp}.{ext}"
 
 
-def _category_performance_export_filename(view_name, ext):
-    stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    safe_view = str(view_name).strip().replace(" ", "_").lower()
-    return f"{safe_view}_category_performance_{stamp}.{ext}"
+def _resolve_asin_fsn_report_bounds(date_range):
+    date_range = str(date_range or "all").strip().lower()
+    today = timezone.localdate()
+
+    if date_range == "last_7_days":
+        return today - datetime.timedelta(days=6), today
+    if date_range == "last_14_days":
+        return today - datetime.timedelta(days=13), today
+    if date_range == "last_21_days":
+        return today - datetime.timedelta(days=20), today
+    if date_range == "last_28_days":
+        return today - datetime.timedelta(days=27), today
+    if date_range == "last_month":
+        current_month_start = today.replace(day=1)
+        end = current_month_start - datetime.timedelta(days=1)
+        return end.replace(day=1), end
+    if date_range == "current_month":
+        return today.replace(day=1), today
+    return None, None
 
 
-def _export_number(value):
-    """Robustly convert a value (including strings like '1234.56') to a float."""
-    if value is None:
-        return 0.0
-    if isinstance(value, (int, float)):
-        return round(float(value), 2)
-    # Handle string values that may come from cached/serialized data
-    try:
-        cleaned = str(value).replace(",", "").strip()
-        return round(float(cleaned), 2) if cleaned else 0.0
-    except (TypeError, ValueError):
-        return 0.0
+def _apply_asin_fsn_report_date_range(qs, date_range):
+    start, end = _resolve_asin_fsn_report_bounds(date_range)
+    if start and end:
+        return qs.filter(date__gte=start, date__lte=end)
+    return qs
 
 
-def _fmt_rupee_export(value):
-    """Format a numeric revenue value as a readable rupee string for exports."""
-    num = _export_number(value)
-    if num >= 10_000_000:
-        return f"\u20b9{num / 10_000_000:.2f}Cr"
-    if num >= 100_000:
-        return f"\u20b9{num / 100_000:.2f}L"
-    if num >= 1_000:
-        return f"\u20b9{num / 1_000:.2f}K"
-    return f"\u20b9{num:.2f}"
+def _asin_fsn_monthly_filters(filters, report_date_range):
+    report_date_range = str(report_date_range or "all").strip().lower()
+    if report_date_range not in {"all", "last_month", "current_month"}:
+        return None
+
+    monthly_filters = dict(filters or {})
+    monthly_filters.pop("date_range", None)
+    monthly_filters.pop("start_date", None)
+    monthly_filters.pop("end_date", None)
+    if report_date_range == "last_month":
+        monthly_filters["date_range"] = "last_month"
+    elif report_date_range == "current_month":
+        today = timezone.localdate()
+        monthly_filters["date_range"] = "custom"
+        monthly_filters["start_date"] = today.replace(day=1).isoformat()
+        monthly_filters["end_date"] = today.isoformat()
+    return monthly_filters
 
 
-def _category_performance_export_table(rows):
-    headers = [
-        "Category",
-        "Amazon Revenue",
-        "Flipkart Revenue",
-        "Total Revenue",
-        "MoM Growth",
-        "Contribution",
-    ]
-    table_rows = []
-    for row in rows:
-        current_revenue = _export_number(row.get("mom_current_revenue", row.get("revenue")))
-        previous_revenue = _export_number(row.get("mom_previous_revenue"))
-        growth = _export_number(row.get("mom_growth", row.get("growth")))
-        contribution = _export_number(row.get("contribution"))
-        direction = "+" if growth >= 0 else ""
-        mom_cell = (
-            f"{direction}{growth}% "
-            f"({_fmt_rupee_export(current_revenue)} vs {_fmt_rupee_export(previous_revenue)})"
-        )
-        table_rows.append(
-            [
-                _clean_export_value(row.get("category") or "Unknown"),
-                _export_number(row.get("amazon_revenue")),
-                _export_number(row.get("flipkart_revenue")),
-                _export_number(row.get("total_revenue", row.get("revenue"))),
-                mom_cell,
-                f"{contribution}%",
-            ]
-        )
-    return headers, table_rows
+
+
 
 
 def _strip_non_dashboard_filters(filters):
     cleaned = dict(filters or {})
-    for key in ("scope", "q", "page", "page_size", "export"):
-        cleaned.pop(key, None)
+    keys_to_remove = {
+        "scope",
+        "q",
+        "page",
+        "page_size",
+        "export",
+        "report_limit",
+        "report_date_range",
+        "draw",
+        "start",
+        "length",
+        "order_field",
+        "order_dir",
+        "_",
+        "all",
+    }
+    for key in list(cleaned.keys()):
+        if key in keys_to_remove or key.startswith("search[") or key.startswith("order[") or key.startswith("columns["):
+            cleaned.pop(key, None)
     return cleaned
 
 
@@ -260,10 +241,435 @@ def _paginate_rows(rows, page, page_size):
     return total, rows[start : start + page_size]
 
 
+def _sort_rows_by_field(rows, field, direction):
+    """Sort a list of row dicts by a field name. direction: 'asc' or 'desc'."""
+    if not field or not rows:
+        return rows
+    reverse = (str(direction).lower() == "desc")
+    def _key(row):
+        v = row.get(field)
+        if v is None:
+            return (1, 0, "")  # None sorts last
+        if isinstance(v, (int, float)):
+            return (0, v, "")
+        try:
+            return (0, float(v), "")
+        except (TypeError, ValueError):
+            return (0, 0, str(v).lower())
+    try:
+        return sorted(rows, key=_key, reverse=reverse)
+    except Exception:
+        return rows
+
+
+def _extract_dt_cells_from_html(html):
+    """
+    Parse HTML containing <tr>…</tr> rows and return a list of row-arrays,
+    where each row-array is a list of full <td>…</td> HTML strings.
+    Used for DataTables serverSide responses that pre-render cell HTML.
+    """
+    from html.parser import HTMLParser
+
+    class _Extractor(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.rows = []
+            self._row = None
+            self._cell = None
+            self._in_tr = False
+            self._in_td = False
+
+        def handle_starttag(self, tag, attrs):
+            tag = tag.lower()
+            if tag == "tr" and not self._in_tr:
+                self._in_tr = True
+                self._row = []
+                return
+            if not self._in_tr:
+                return
+            if tag == "td" and not self._in_td:
+                self._in_td = True
+                self._cell = [self._rebuild(tag, attrs)]
+                return
+            if self._in_td:
+                self._cell.append(self._rebuild(tag, attrs))
+
+        def handle_endtag(self, tag):
+            tag = tag.lower()
+            if self._in_td:
+                if tag == "td":
+                    self._cell.append("</td>")
+                    if self._row is not None:
+                        self._row.append("".join(self._cell))
+                    self._in_td = False
+                    self._cell = None
+                    return
+                self._cell.append(f"</{tag}>")
+                return
+            if tag == "tr" and self._in_tr:
+                if self._row:
+                    self.rows.append(self._row)
+                self._in_tr = False
+                self._row = None
+
+        def handle_data(self, data):
+            if self._in_td and self._cell is not None:
+                self._cell.append(data)
+
+        def handle_entityref(self, name):
+            if self._in_td and self._cell is not None:
+                self._cell.append(f"&{name};")
+
+        def handle_charref(self, name):
+            if self._in_td and self._cell is not None:
+                self._cell.append(f"&#{name};")
+
+        @staticmethod
+        def _rebuild(tag, attrs):
+            parts = [f"<{tag}"]
+            for name, val in attrs:
+                if val is None:
+                    parts.append(f" {name}")
+                else:
+                    parts.append(f" {name}=\"{val}\"")
+            parts.append(">")
+            return "".join(parts)
+
+    ex = _Extractor()
+    ex.feed(str(html or ""))
+    return ex.rows
+
+
 def _get_filtered_processed_querysets(data_owner, filters):
     qs = ProcessedDashboardData.objects.filter(user=data_owner)
     fk_qs = FlipkartProcessedDashboardData.objects.filter(user=data_owner)
-    return apply_dashboard_entity_filters(qs, fk_qs, filters)
+    return apply_dashboard_entity_filters(qs, fk_qs, filters, user=data_owner)
+
+
+def _get_asin_fsn_report_monthly_rows(data_owner, filters, report_date_range, report_limit):
+    monthly_filters = _asin_fsn_monthly_filters(filters, report_date_range)
+    if monthly_filters is None:
+        return None
+
+    try:
+        from apps.dashboard.services.asin_monthly_summary import get_ams_qs
+    except Exception:
+        return None
+
+    ams_qs = get_ams_qs(data_owner, monthly_filters)
+    if ams_qs is None:
+        return None
+
+    asin_filter = monthly_filters.get("asin")
+    fsn_filter = monthly_filters.get("fsn")
+    platform = monthly_filters.get("platform") or "All"
+    show_amazon = platform != "Flipkart" and not (fsn_filter and not asin_filter)
+    show_flipkart = platform != "Amazon" and not (asin_filter and not fsn_filter)
+
+    asin_rows = []
+    fsn_rows = []
+    if show_amazon:
+        asin_rows = list(
+            ams_qs.filter(platform="Amazon")
+            .exclude(asin__isnull=True)
+            .exclude(asin="")
+            .values("asin")
+            .annotate(
+                pageviews=Sum("pageviews"),
+                units=Sum("units"),
+                revenue=Sum("revenue"),
+                ad_spend=Sum("total_spend"),
+            )
+            .order_by("-revenue", "-units", "-pageviews", "asin")[:report_limit]
+        )
+    if show_flipkart:
+        fsn_rows = list(
+            ams_qs.filter(platform="Flipkart")
+            .exclude(asin__isnull=True)
+            .exclude(asin="")
+            .values("asin")
+            .annotate(
+                pageviews=Sum("pageviews"),
+                units=Sum("units"),
+                revenue=Sum("revenue"),
+                ad_spend=Sum("total_spend"),
+            )
+            .order_by("-revenue", "-units", "-pageviews", "asin")[:report_limit]
+        )
+
+    if not asin_rows and not fsn_rows:
+        return None
+
+    asin_skus = {
+        row["asin"]: row["msku"] or ""
+        for row in CategoryMapping.objects.filter(
+            user=data_owner,
+            asin__in=[row.get("asin") for row in asin_rows if row.get("asin")],
+        ).values("asin", "msku")
+    }
+    fsn_skus = {
+        row["fsn"]: row["sku"] or ""
+        for row in FlipkartCategoryMap.objects.filter(
+            user=data_owner,
+            fsn__in=[row.get("asin") for row in fsn_rows if row.get("asin")],
+        ).values("fsn", "sku")
+    }
+
+    rows = [
+        {
+            "product_id": row.get("asin") or "",
+            "sku": asin_skus.get(row.get("asin"), ""),
+            "platform": "Amazon",
+            "pageviews": int(row.get("pageviews") or 0),
+            "units": int(row.get("units") or 0),
+            "revenue": float(row.get("revenue") or 0),
+            "ad_spend": float(row.get("ad_spend") or 0),
+        }
+        for row in asin_rows
+    ]
+    rows.extend(
+        {
+            "product_id": row.get("asin") or "",
+            "sku": fsn_skus.get(row.get("asin"), ""),
+            "platform": "Flipkart",
+            "pageviews": int(row.get("pageviews") or 0),
+            "units": int(row.get("units") or 0),
+            "revenue": float(row.get("revenue") or 0),
+            "ad_spend": float(row.get("ad_spend") or 0),
+        }
+        for row in fsn_rows
+    )
+    rows.sort(
+        key=lambda row: (
+            float(row.get("revenue") or 0),
+            int(row.get("units") or 0),
+            int(row.get("pageviews") or 0),
+        ),
+        reverse=True,
+    )
+    return rows[:report_limit]
+
+
+def _get_asin_fsn_report_product_daily_rows(data_owner, filters, report_date_range, report_limit):
+    # Summary table has product ids and dashboard dimensions, but not mapping-only
+    # filters such as CM/material/rating/launch-date. Preserve exact behavior by
+    # falling back to the raw processed tables for those cases.
+    unsupported_fields = (
+        "parent_asin",
+        "sku",
+        "category_manager",
+        "series_name",
+        "material",
+        "size",
+        "brand_name",
+        "ratings",
+        "finish",
+        "inventory_health",
+        "launch_date_range",
+        "launch_start_date",
+        "launch_end_date",
+    )
+    if any(filters.get(field) for field in unsupported_fields):
+        return None
+
+    qs = DashboardProductDailySummary.objects.filter(user=data_owner)
+    qs = _apply_asin_fsn_report_date_range(qs, report_date_range)
+    qs = _list_or_scalar_filter(qs, "category", filters.get("category"))
+    qs = _list_or_scalar_filter(qs, "portfolio", filters.get("portfolio"))
+    qs = _list_or_scalar_filter(qs, "subcategory", filters.get("subcategory"))
+
+    asin_filter = filters.get("asin")
+    fsn_filter = filters.get("fsn")
+    platform = filters.get("platform") or "All"
+    show_amazon = platform != "Flipkart" and not (fsn_filter and not asin_filter)
+    show_flipkart = platform != "Amazon" and not (asin_filter and not fsn_filter)
+
+    asin_rows = []
+    fsn_rows = []
+    if show_amazon:
+        az_qs = qs.filter(platform="Amazon")
+        az_qs = _list_or_scalar_filter(az_qs, "asin", asin_filter)
+        asin_rows = list(
+            az_qs.exclude(sku__isnull=True)
+            .exclude(sku="")
+            .values("sku")
+            .annotate(
+                pageviews=Sum("page_views"),
+                units=Sum("units_sold"),
+                revenue=Sum("revenue"),
+                ad_spend=Sum("ad_spend"),
+            )
+            .order_by("-revenue", "-units", "-pageviews", "sku")[:report_limit]
+        )
+
+    if show_flipkart:
+        fk_qs = qs.filter(platform="Flipkart")
+        fk_qs = _list_or_scalar_filter(fk_qs, "fsn", fsn_filter)
+        fsn_rows = list(
+            fk_qs.exclude(sku__isnull=True)
+            .exclude(sku="")
+            .values("sku")
+            .annotate(
+                pageviews=Sum("page_views"),
+                units=Sum("units_sold"),
+                revenue=Sum("revenue"),
+                ad_spend=Sum("ad_spend"),
+            )
+            .order_by("-revenue", "-units", "-pageviews", "sku")[:report_limit]
+        )
+
+    if not asin_rows and not fsn_rows:
+        return None
+
+    asin_skus = {
+        row["asin"]: row["msku"] or ""
+        for row in CategoryMapping.objects.filter(
+            user=data_owner,
+            asin__in=[row.get("sku") for row in asin_rows if row.get("sku")],
+        ).values("asin", "msku")
+    }
+    fsn_skus = {
+        row["fsn"]: row["sku"] or ""
+        for row in FlipkartCategoryMap.objects.filter(
+            user=data_owner,
+            fsn__in=[row.get("sku") for row in fsn_rows if row.get("sku")],
+        ).values("fsn", "sku")
+    }
+
+    rows = [
+        {
+            "product_id": row.get("sku") or "",
+            "sku": asin_skus.get(row.get("sku"), ""),
+            "platform": "Amazon",
+            "pageviews": int(row.get("pageviews") or 0),
+            "units": int(row.get("units") or 0),
+            "revenue": float(row.get("revenue") or 0),
+            "ad_spend": float(row.get("ad_spend") or 0),
+        }
+        for row in asin_rows
+    ]
+    rows.extend(
+        {
+            "product_id": row.get("sku") or "",
+            "sku": fsn_skus.get(row.get("sku"), ""),
+            "platform": "Flipkart",
+            "pageviews": int(row.get("pageviews") or 0),
+            "units": int(row.get("units") or 0),
+            "revenue": float(row.get("revenue") or 0),
+            "ad_spend": float(row.get("ad_spend") or 0),
+        }
+        for row in fsn_rows
+    )
+    rows.sort(
+        key=lambda row: (
+            float(row.get("revenue") or 0),
+            int(row.get("units") or 0),
+            int(row.get("pageviews") or 0),
+        ),
+        reverse=True,
+    )
+    return rows[:report_limit]
+
+
+def _get_asin_fsn_report_rows(data_owner, filters, report_date_range, report_limit):
+    report_limit = _parse_positive_int(
+        report_limit, default=10, minimum=1, maximum=100
+    )
+    monthly_rows = _get_asin_fsn_report_monthly_rows(
+        data_owner, filters, report_date_range, report_limit
+    )
+    if monthly_rows is not None:
+        return monthly_rows
+    product_daily_rows = _get_asin_fsn_report_product_daily_rows(
+        data_owner, filters, report_date_range, report_limit
+    )
+    if product_daily_rows is not None:
+        return product_daily_rows
+
+    qs, fk_qs = _get_filtered_processed_querysets(data_owner, filters)
+    qs = _apply_asin_fsn_report_date_range(qs, report_date_range)
+    fk_qs = _apply_asin_fsn_report_date_range(fk_qs, report_date_range)
+
+    asin_rows = []
+    fsn_rows = []
+    platform = filters.get("platform") or "All"
+
+    if platform != "Flipkart":
+        asin_rows = list(
+            qs.exclude(asin__isnull=True)
+            .exclude(asin="")
+            .values("asin")
+            .annotate(
+                pageviews=Sum("pageviews"),
+                units=Sum("units"),
+                revenue=Sum("revenue"),
+                ad_spend=Sum("total_spend"),
+            )
+            .order_by("-revenue", "-units", "-pageviews", "asin")[:report_limit]
+        )
+
+    if platform != "Amazon":
+        fsn_rows = list(
+            fk_qs.exclude(fsn__isnull=True)
+            .exclude(fsn="")
+            .values("fsn")
+            .annotate(
+                pageviews=Sum("pageviews"),
+                units=Sum("units"),
+                revenue=Sum("revenue"),
+                ad_spend=Sum("total_spend"),
+            )
+            .order_by("-revenue", "-units", "-pageviews", "fsn")[:report_limit]
+        )
+
+    asin_skus = {
+        row["asin"]: row["msku"] or ""
+        for row in CategoryMapping.objects.filter(
+            user=data_owner,
+            asin__in=[row.get("asin") for row in asin_rows if row.get("asin")],
+        ).values("asin", "msku")
+    }
+    fsn_skus = {
+        row["fsn"]: row["sku"] or ""
+        for row in FlipkartCategoryMap.objects.filter(
+            user=data_owner,
+            fsn__in=[row.get("fsn") for row in fsn_rows if row.get("fsn")],
+        ).values("fsn", "sku")
+    }
+
+    rows = [
+        {
+            "product_id": row.get("asin") or "",
+            "sku": asin_skus.get(row.get("asin"), ""),
+            "platform": "Amazon",
+            "pageviews": int(row.get("pageviews") or 0),
+            "units": int(row.get("units") or 0),
+            "revenue": float(row.get("revenue") or 0),
+            "ad_spend": float(row.get("ad_spend") or 0),
+        }
+        for row in asin_rows
+    ]
+    rows.extend(
+        {
+            "product_id": row.get("fsn") or "",
+            "sku": fsn_skus.get(row.get("fsn"), ""),
+            "platform": "Flipkart",
+            "pageviews": int(row.get("pageviews") or 0),
+            "units": int(row.get("units") or 0),
+            "revenue": float(row.get("revenue") or 0),
+            "ad_spend": float(row.get("ad_spend") or 0),
+        }
+        for row in fsn_rows
+    )
+    rows.sort(
+        key=lambda row: (
+            float(row.get("revenue") or 0),
+            int(row.get("units") or 0),
+            int(row.get("pageviews") or 0),
+        ),
+        reverse=True,
+    )
+    return rows[:report_limit]
 
 
 def _get_light_filter_metadata(data_owner_id, data_version):
@@ -283,21 +689,18 @@ def _get_light_filter_metadata(data_owner_id, data_version):
         platforms.append("Flipkart")
 
     # Collect distinct years from both Amazon and Flipkart processed data
-    az_years = list(
-        ProcessedDashboardData.objects
-        .filter(user_id=data_owner_id)
-        .exclude(date__isnull=True)
-        .values_list("date__year", flat=True)
-        .distinct()
-    )
-    fk_years = list(
-        FlipkartProcessedDashboardData.objects
-        .filter(user_id=data_owner_id)
-        .exclude(date__isnull=True)
-        .values_list("date__year", flat=True)
-        .distinct()
-    )
-    years = sorted(list(set(az_years) | set(fk_years)), reverse=True)
+    from django.db.models import Min, Max
+    az_bounds = ProcessedDashboardData.objects.filter(user_id=data_owner_id).aggregate(min_d=Min("date"), max_d=Max("date"))
+    fk_bounds = FlipkartProcessedDashboardData.objects.filter(user_id=data_owner_id).aggregate(min_d=Min("date"), max_d=Max("date"))
+
+    years = set()
+    for bounds in (az_bounds, fk_bounds):
+        min_d = bounds.get("min_d")
+        max_d = bounds.get("max_d")
+        if min_d and max_d:
+            years.update(range(min_d.year, max_d.year + 1))
+    
+    years = sorted(list(years), reverse=True)
 
     metadata = {
         "asins": [],
@@ -305,6 +708,14 @@ def _get_light_filter_metadata(data_owner_id, data_version):
         "categories": [],
         "portfolios": [],
         "subcategories": [],
+        "category_managers": [],
+        "series_names": [],
+        "materials": [],
+        "sizes": [],
+        "brand_names": [],
+        "ratings": [],
+        "parent_asins": [],
+        "finishes": [],
         "platforms": platforms,
         "years": years,
         "dates": [],
@@ -318,6 +729,7 @@ def _get_top_product_modal_rows(data_owner, filters):
     from apps.dashboard.services.analytics_services_orm_pipeline import (
         apply_global_filters_orm,
         _build_top_product_rows,
+        _get_product_daily_summary_querysets,
         get_prev_period_qs,
     )
 
@@ -326,14 +738,41 @@ def _get_top_product_modal_rows(data_owner, filters):
     fk_qs_f = apply_global_filters_orm(fk_qs, filters)
     qs_prev = get_prev_period_qs(qs, filters)
     fk_prev = get_prev_period_qs(fk_qs, filters)
+    summary_az_base, summary_fk_base = _get_product_daily_summary_querysets(
+        data_owner, filters, apply_date_filter=False
+    )
+    summary_az_f = apply_global_filters_orm(summary_az_base, filters)
+    summary_fk_f = apply_global_filters_orm(summary_fk_base, filters)
     asin_meta = {
-        row["asin"]: {"portfolio": row["portfolio"] or ""}
-        for row in CategoryMapping.objects.filter(user=data_owner).values("asin", "portfolio")
+        row["asin"]: {
+            "portfolio": row["portfolio"] or "",
+            "msku": row["msku"] or "",
+        }
+        for row in CategoryMapping.objects.filter(user=data_owner).values("asin", "portfolio", "msku")
     }
     fsn_meta = {
-        row["fsn"]: {"portfolio": row["portfolio"] or ""}
-        for row in FlipkartCategoryMap.objects.filter(user=data_owner).values("fsn", "portfolio")
+        row["fsn"]: {
+            "portfolio": row["portfolio"] or "",
+            "sku": row["sku"] or "",
+        }
+        for row in FlipkartCategoryMap.objects.filter(user=data_owner).values("fsn", "portfolio", "sku")
     }
+
+    try:
+        from apps.dashboard.services.asin_monthly_summary import build_top_products_from_monthly
+
+        monthly_rows = build_top_products_from_monthly(
+            data_owner,
+            filters,
+            asin_meta=asin_meta,
+            fsn_meta=fsn_meta,
+            limit=200,
+            include_full_payload=True,
+        )
+        if monthly_rows is not None:
+            return monthly_rows
+    except Exception:
+        pass
 
     return _build_top_product_rows(
         qs_f,
@@ -343,12 +782,17 @@ def _get_top_product_modal_rows(data_owner, filters):
         asin_meta=asin_meta,
         fsn_meta=fsn_meta,
         include_full_payload=True,
+        summary_qs_f=summary_az_f,
+        fk_summary_qs_f=summary_fk_f,
+        summary_prev_f=get_prev_period_qs(summary_az_base, filters),
+        fk_summary_prev_f=get_prev_period_qs(summary_fk_base, filters),
     )
 
 
 def _get_declining_product_modal_rows(data_owner, filters):
     from apps.dashboard.services.analytics_services_orm_pipeline import (
         _build_declining_product_rows,
+        _get_product_daily_summary_querysets,
         resolve_growth_period,
         safe_shift_month,
     )
@@ -367,9 +811,45 @@ def _get_declining_product_modal_rows(data_owner, filters):
     cm_start, cm_end = resolve_growth_period(filters, reference_date)
     pm_start = safe_shift_month(cm_start, -1)
     pm_end = safe_shift_month(cm_end, -1)
-    period_start = min(cm_start, pm_start)
-    period_end = max(cm_end, pm_end)
 
+    # Build meta dicts with SKU data for the msku column
+    asin_meta = {
+        row["asin"]: {
+            "portfolio": row["portfolio"] or "",
+            "msku": row["msku"] or "",
+        }
+        for row in CategoryMapping.objects.filter(user=data_owner).values("asin", "portfolio", "msku")
+    }
+    fsn_meta = {
+        row["fsn"]: {
+            "portfolio": row["portfolio"] or "",
+            "sku": row["sku"] or "",
+        }
+        for row in FlipkartCategoryMap.objects.filter(user=data_owner).values("fsn", "portfolio", "sku")
+    }
+
+    try:
+        from apps.dashboard.services.asin_monthly_summary import build_declining_products_from_monthly
+
+        monthly_rows = build_declining_products_from_monthly(
+            data_owner,
+            filters,
+            cm_start,
+            cm_end,
+            pm_start,
+            pm_end,
+            include_full_payload=True,
+            asin_meta=asin_meta,
+            fsn_meta=fsn_meta,
+        )
+        if monthly_rows is not None:
+            return monthly_rows
+    except Exception:
+        pass
+
+    summary_az_base, summary_fk_base = _get_product_daily_summary_querysets(
+        data_owner, filters, apply_date_filter=False
+    )
     return _build_declining_product_rows(
         qs,
         fk_qs,
@@ -378,16 +858,11 @@ def _get_declining_product_modal_rows(data_owner, filters):
         pm_start,
         pm_end,
         include_full_payload=True,
+        asin_meta=asin_meta,
+        fsn_meta=fsn_meta,
+        summary_qs=summary_az_base,
+        fk_summary_qs=summary_fk_base,
     )
-
-
-def _inventory_summary_platform(filters):
-    platform = (filters.get("platform") or "").strip()
-    asin_filter = filters.get("asin")
-    fsn_filter = filters.get("fsn")
-    if platform == "Flipkart" or (fsn_filter and not asin_filter):
-        return "Flipkart"
-    return "Amazon"
 
 
 def _get_inventory_modal_queryset(data_owner, filters, query):
@@ -404,12 +879,23 @@ def _get_inventory_modal_queryset(data_owner, filters, query):
     qs = _list_or_scalar_filter(qs, "portfolio", filters.get("portfolio"))
     qs = _list_or_scalar_filter(qs, "subcategory", filters.get("subcategory"))
 
+    platform_filter = filters.get("platform")
+    if platform_filter == "Amazon":
+        qs = qs.exclude(Q(asin="") | Q(asin__isnull=True))
+    elif platform_filter == "Flipkart":
+        qs = qs.exclude(Q(fsn="") | Q(fsn__isnull=True))
+
+
     sku_filter = filters.get("fsn") or filters.get("asin")
     if sku_filter:
         if isinstance(sku_filter, (list, tuple)):
             qs = qs.filter(Q(asin__in=sku_filter) | Q(fsn__in=sku_filter))
         else:
             qs = qs.filter(Q(asin=sku_filter) | Q(fsn=sku_filter))
+
+    launch_asins, launch_fsns = launch_date_allow_lists(data_owner, filters)
+    if launch_asins is not None or launch_fsns is not None:
+        qs = qs.filter(Q(asin__in=launch_asins or []) | Q(fsn__in=launch_fsns or []))
 
     if query:
         needle = str(query).strip()
@@ -427,12 +913,28 @@ def _get_inventory_modal_queryset(data_owner, filters, query):
     return qs.order_by("-date", "-revenue", "sku")
 
 
-def _inventory_summary_row_dict(row):
+def _get_npd_modal_rows(data_owner, filters):
+    from apps.dashboard.services.analytics_services_orm_pipeline import apply_global_filters_orm
+    from apps.dashboard.services.npd import build_npd_performance
+
+    qs, fk_qs = _get_filtered_processed_querysets(data_owner, filters)
+    qs_f = apply_global_filters_orm(qs, filters)
+    fk_qs_f = apply_global_filters_orm(fk_qs, filters)
+    return (build_npd_performance(data_owner, filters, qs_f, fk_qs_f).get("rows") or [])
+
+
+def _inventory_summary_row_dict(row, msku_map=None):
+    _msku_map = msku_map or {}
+    # For Amazon: asin→msku; for Flipkart: fsn→sku; Combined: check both
+    _asin = row.asin or ""
+    _fsn = row.fsn or ""
+    _msku = _msku_map.get(_asin) or _msku_map.get(_fsn) or ""
     return {
         "date": row.date,
         "sku": row.sku,
-        "asin": row.asin or "",
-        "fsn": row.fsn or "",
+        "msku": _msku,
+        "asin": _asin,
+        "fsn": _fsn,
         "category": row.category or "Unknown",
         
         # Amazon Metrics
@@ -450,6 +952,17 @@ def _inventory_summary_row_dict(row):
         "fk_revenue": round(float(row.fk_revenue or 0), 2),
         "fk_status": row.fk_status or "",
         "fk_status_class": row.fk_status_class or "",
+        
+        # Calculate fk_reason dynamically since only amz_reason is stored in DB
+        "fk_reason": (
+            f"Stock Qty = 0 (Website: {int(row.fk_fba_qty or 0)}, Inventory: {int(row.fk_flex_qty or 0)})"
+            if int(row.fk_stock_qty or 0) <= 0
+            else (
+                f"DOC = ∞ (Stock: {int(row.fk_stock_qty or 0)}, No sales)"
+                if int(row.fk_sale_qty or 0) <= 0
+                else f"DOC = {round(float(row.fk_doc or 0), 2)} days (Stock: {int(row.fk_stock_qty or 0)} / Same-Day Sales: {int(row.fk_sale_qty or 0)})"
+            )
+        ),
         
         # Combined / Legacy (for sorting/fallback)
         "revenue": round(float(row.revenue or 0) + float(row.fk_revenue or 0), 2),
@@ -475,6 +988,7 @@ def _trim_payload_for_initial_load(payload):
     payload = deepcopy(payload)
     payload["cat_all_top_products"] = []
     payload["cat_all_under_products"] = []
+    payload["npd_products_all"] = []
     if isinstance(payload.get("category_performance"), list):
         payload["category_performance"] = payload["category_performance"][:25]
     if isinstance(payload.get("cluster_performance"), list):
@@ -757,26 +1271,44 @@ def get_dashboard_context(
     selected_filters = selected_filter_payload(filters)
 
     data_version_dates = cache.get(f"dashboard_data_version_{data_owner.id}", 0)
-    uploaded_dates_key = f"dashboard_uploaded_dates_v1_{data_owner.id}_{data_version_dates}"
+    uploaded_dates_key = f"dashboard_uploaded_dates_v3_{data_owner.id}_{data_version_dates}"
+    pending_dates_key = f"dashboard_pending_dates_v3_{data_owner.id}_{data_version_dates}"
     uploaded_dates = cache.get(uploaded_dates_key)
-    if uploaded_dates is None:
+    pending_dates = cache.get(pending_dates_key)
+    if uploaded_dates is None or pending_dates is None:
         az_dates = set(
-            ProcessedDashboardData.objects
-            .filter(user_id=data_owner.id)
-            .exclude(date__isnull=True)
-            .values_list("date", flat=True)
-            .distinct()
+            DashboardDailySummary.objects
+            .filter(user_id=data_owner.id, platform="Amazon")
+            .dates("date", "day")
         )
         fk_dates = set(
-            FlipkartProcessedDashboardData.objects
-            .filter(user_id=data_owner.id)
-            .exclude(date__isnull=True)
-            .values_list("date", flat=True)
-            .distinct()
+            DashboardDailySummary.objects
+            .filter(user_id=data_owner.id, platform="Flipkart")
+            .dates("date", "day")
         )
-        all_dts = sorted(list(az_dates | fk_dates))
+        all_processed_dates = az_dates | fk_dates
+
+        # Dates that have raw uploads but no processed output yet — shown with orange/pending dot
+        raw_fk_dates = set(
+            FlipkartSearchTraffic.objects
+            .filter(user_id=data_owner.id)
+            .dates("date", "day")
+        )
+        raw_az_dates = set(
+            SalesData.objects
+            .filter(user_id=data_owner.id)
+            .dates("date", "day")
+        )
+        all_raw_dates = raw_fk_dates | raw_az_dates
+        # Pending = raw exists but NO processed data for that date
+        pending_only_dates = all_raw_dates - all_processed_dates
+
+        # Blue tick dates = processed data ready (union of all sources for selectability)
+        all_dts = sorted(list(all_processed_dates | all_raw_dates))
         uploaded_dates = [d.strftime("%Y-%m-%d") for d in all_dts if d]
+        pending_dates = sorted([d.strftime("%Y-%m-%d") for d in pending_only_dates if d])
         cache.set(uploaded_dates_key, uploaded_dates, timeout=86400)
+        cache.set(pending_dates_key, pending_dates, timeout=86400)
 
     if not include_payload:
         refresh_status = _get_dashboard_refresh_status(data_owner.id)
@@ -791,6 +1323,7 @@ def get_dashboard_context(
             "dashboard_refresh_status": refresh_status,
             "dashboard_refresh_status_json": json.dumps(refresh_status),
             "uploaded_dates_json": json.dumps(uploaded_dates),
+            "pending_dates_json": json.dumps(pending_dates),
         }
 
     _ensure_processed_tables_if_missing(data_owner)
@@ -802,7 +1335,7 @@ def get_dashboard_context(
     filter_key_str = cache_filter_string(filters)
     cache_hash = hashlib.md5(filter_key_str.encode("utf-8")).hexdigest()
 
-    qs, fk_qs = apply_dashboard_entity_filters(qs, fk_qs, filters)
+    qs, fk_qs = apply_dashboard_entity_filters(qs, fk_qs, filters, user=data_owner)
 
     presence_cache_key = (
         f"dashboard_presence_v1_{data_owner.id}_{data_version}_{cache_hash}"
@@ -825,6 +1358,7 @@ def get_dashboard_context(
             "dashboard_refresh_status": refresh_status,
             "dashboard_refresh_status_json": json.dumps(refresh_status),
             "uploaded_dates_json": json.dumps(uploaded_dates),
+            "pending_dates_json": json.dumps(pending_dates),
         }
 
     # Apply same entity filters to spend data at DB level
@@ -835,6 +1369,23 @@ def get_dashboard_context(
             spend_qs = spend_qs.filter(asin__in=asin_filter)
         else:
             spend_qs = spend_qs.filter(asin=asin_filter)
+    if (
+        filters.get("category")
+        or filters.get("portfolio")
+        or filters.get("subcategory")
+        or filters.get("category_manager")
+        or filters.get("series_name")
+        or filters.get("material")
+        or filters.get("size")
+        or filters.get("brand_name")
+        or filters.get("ratings")
+        or filters.get("parent_asin")
+        or filters.get("finish")
+        or filters.get("launch_date_range")
+        or filters.get("launch_start_date")
+        or filters.get("launch_end_date")
+    ):
+        spend_qs = spend_qs.filter(asin__in=qs.values("asin").distinct())
 
     from apps.dashboard.services.analytics_services_orm_pipeline import run_orm_computation
 
@@ -966,6 +1517,7 @@ def get_dashboard_context(
         "dashboard_refresh_status": refresh_status,
         "dashboard_refresh_status_json": json.dumps(refresh_status),
         "uploaded_dates_json": json.dumps(uploaded_dates),
+        "pending_dates_json": json.dumps(pending_dates),
     }
 
 
@@ -1074,7 +1626,7 @@ def dashboard_section_view(request, view_name, section):
         include_payload=True,
         cache_view_type=f"{view_name}-dashboard",
         section_scope=section,
-        compute_scope="kpis" if section == "overview" else "full",
+        compute_scope="kpis" if section == "overview" and view_name != "ceo" else "full",
     )
     if ctx is None:
         return JsonResponse({"error": "Not authenticated"}, status=401)
@@ -1103,11 +1655,20 @@ def dashboard_modal_rows_view(request, view_name, modal_key):
     template_name, payload_key = modal_tpl
 
     export_format = (request.GET.get("export") or "").strip().lower()
-    query = (request.GET.get("q") or "").strip().lower()
-    page = _parse_positive_int(request.GET.get("page"), default=1, minimum=1, maximum=10_000)
-    page_size = _parse_positive_int(
-        request.GET.get("page_size"), default=50, minimum=10, maximum=200
-    )
+    
+    dt_draw = request.GET.get("draw")
+    if dt_draw:
+        query = (request.GET.get("search[value]") or "").strip().lower()
+        dt_start = _parse_positive_int(request.GET.get("start"), default=0, minimum=0)
+        dt_length = _parse_positive_int(request.GET.get("length"), default=25, minimum=10, maximum=200)
+        page_size = dt_length
+        page = (dt_start // page_size) + 1
+    else:
+        query = (request.GET.get("q") or "").strip().lower()
+        page = _parse_positive_int(request.GET.get("page"), default=1, minimum=1, maximum=10_000)
+        page_size = _parse_positive_int(
+            request.GET.get("page_size"), default=50, minimum=10, maximum=200
+        )
 
     data_owner = user.created_by if user.created_by else user
     data_version = cache.get(f"dashboard_data_version_{data_owner.id}", 0)
@@ -1115,7 +1676,7 @@ def dashboard_modal_rows_view(request, view_name, modal_key):
     filter_hash = hashlib.md5(cache_filter_string(filters).encode("utf-8")).hexdigest()
 
     modal_rows_cache_key = (
-        "dashboard_modal_rows_v2_"
+        "dashboard_modal_rows_v5_"
         f"{data_owner.id}_{view_name}_{modal_key}_{data_version}_{filter_hash}_"
         f"{hashlib.md5(query.encode('utf-8')).hexdigest()}_{page}_{page_size}"
     )
@@ -1126,14 +1687,16 @@ def dashboard_modal_rows_view(request, view_name, modal_key):
     # DataTables mode: client handles all pagination/search — return all rows at once.
     load_all = request.GET.get("all") == "1"
 
-    if export_format not in {"csv", "excel", "xlsx"} and not load_all:
+    # Skip legacy per-page cache for DataTables server-side requests
+    if export_format not in {"csv", "excel", "xlsx"} and not load_all and not dt_draw:
         cached_modal_payload = cache.get(modal_rows_cache_key)
         if cached_modal_payload:
             return JsonResponse(cached_modal_payload)
 
+
     # All-rows cache: keyed without page/page_size so page 2+ hits this and paginates in Python.
     all_rows_cache_key = (
-        "dashboard_modal_all_rows_v3_"
+        "dashboard_modal_all_rows_v6_"
         f"{data_owner.id}_{view_name}_{modal_key}_{data_version}_{filter_hash}_"
         f"{hashlib.md5(query.encode('utf-8')).hexdigest()}"
     )
@@ -1149,7 +1712,16 @@ def dashboard_modal_rows_view(request, view_name, modal_key):
             if export_format in {"csv", "excel", "xlsx"}
             else inventory_qs[(page - 1) * page_size : page * page_size]
         )
-        rows = [_inventory_summary_row_dict(row) for row in row_qs]
+        # Build ASIN→msku and FSN→sku lookup maps for the SKU column
+        from apps.dashboard.models import CategoryMapping, FlipkartCategoryMap
+        _inv_msku_map = {}
+        for _r in CategoryMapping.objects.filter(user=data_owner).values("asin", "msku"):
+            if _r["asin"] and _r["msku"]:
+                _inv_msku_map[_r["asin"]] = _r["msku"]
+        for _r in FlipkartCategoryMap.objects.filter(user=data_owner).values("fsn", "sku"):
+            if _r["fsn"] and _r["sku"]:
+                _inv_msku_map[_r["fsn"]] = _r["sku"]
+        rows = [_inventory_summary_row_dict(row, msku_map=_inv_msku_map) for row in row_qs]
     else:
         # Fast path 1: per-page HTML already cached (only for non-DataTables mode)
         # (handled above via modal_rows_cache_key check)
@@ -1180,6 +1752,8 @@ def dashboard_modal_rows_view(request, view_name, modal_key):
         if rows is None:
             if modal_key == "top-products":
                 rows = _filter_rows_by_query(_get_top_product_modal_rows(data_owner, filters), query)
+            elif modal_key == "npd-performance":
+                rows = _filter_rows_by_query(_get_npd_modal_rows(data_owner, filters), query)
             elif modal_key == "declining-products":
                 rows = _filter_rows_by_query(
                     _get_declining_product_modal_rows(data_owner, filters), query
@@ -1226,16 +1800,18 @@ def dashboard_modal_rows_view(request, view_name, modal_key):
                     r.get("reason", ""),
                 ] for r in rows]
             elif _platform == "Flipkart":
-                headers = ["Date", "FSN", "Category", "Portfolio", "Stock", "DOC", "Revenue", "Status"]
+                headers = ["Date", "FSN", "Category", "Portfolio", "Stock", "Sales", "DOC", "Revenue", "Status", "Calculation"]
                 table_rows = [[
                     str(r.get("date", "")),
                     r.get("fsn", ""),
                     r.get("category", ""),
                     r.get("portfolio", ""),
                     r.get("fk_stock", 0),
+                    r.get("fk_sales", 0),
                     r.get("fk_doc", 0),
                     r.get("fk_revenue", 0),
                     r.get("fk_status", ""),
+                    r.get("fk_reason", ""),
                 ] for r in rows]
             else:  # All platforms
                 headers = ["Date", "ASIN", "FSN", "Category", "Portfolio", "Amz Stock", "Amz Sales", "Amz DOC", "Amz Revenue", "Amz Status", "FK Stock", "FK Sales", "FK DOC", "FK Revenue", "FK Status", "Calculation"]
@@ -1256,6 +1832,57 @@ def dashboard_modal_rows_view(request, view_name, modal_key):
                     r.get("fk_revenue", 0),
                     r.get("fk_status", ""),
                     r.get("reason", ""),
+                ] for r in rows]
+        elif modal_key == "npd-performance":
+            headers, table_rows = _npd_export_table(rows, filters.get("platform") or "All")
+        elif modal_key == "top-products":
+            _platform = filters.get("platform") or "All"
+            if _platform == "Amazon":
+                headers = ["MSKU", "ASIN", "Portfolio", "Revenue", "Prev Revenue", "MoM Growth %", "Contribution %", "Page Views", "Units Sold"]
+                table_rows = [[
+                    r.get("msku", ""), r.get("az_sku", ""), r.get("cluster", ""),
+                    r.get("az_revenue", 0), r.get("az_prev_revenue", 0),
+                    r.get("az_mom_growth", 0), r.get("az_contribution", 0),
+                    r.get("az_pageviews", 0), r.get("units_sold", 0)
+                ] for r in rows]
+            elif _platform == "Flipkart":
+                headers = ["MSKU", "FSN", "Portfolio", "Revenue", "Prev Revenue", "MoM Growth %", "Contribution %", "Page Views", "Units Sold"]
+                table_rows = [[
+                    r.get("msku", ""), r.get("fk_sku", ""), r.get("cluster", ""),
+                    r.get("fk_revenue", 0), r.get("fk_prev_revenue", 0),
+                    r.get("fk_mom_growth", 0), r.get("fk_contribution", 0),
+                    r.get("fk_pageviews", 0), r.get("fk_units", 0)
+                ] for r in rows]
+            else:
+                headers = ["Amazon SKU", "Flipkart SKU", "Amazon Revenue", "Flipkart Revenue", "Total Revenue", "Amazon MOM Growth", "Flipkart MOM Growth", "Amazon Contribution", "Flipkart Contribution", "Amazon Page Views", "Flipkart Page Views"]
+                table_rows = [[
+                    r.get("az_sku", ""), r.get("fk_sku", ""),
+                    r.get("az_revenue", 0), r.get("fk_revenue", 0), r.get("revenue", 0),
+                    r.get("az_mom_growth", 0), r.get("fk_mom_growth", 0),
+                    r.get("az_contribution", 0), r.get("fk_contribution", 0),
+                    r.get("az_pageviews", 0), r.get("fk_pageviews", 0)
+                ] for r in rows]
+        elif modal_key == "declining-products":
+            _platform = filters.get("platform") or "All"
+            if _platform == "Amazon":
+                headers = ["MSKU", "ASIN", "MOM Drop %", "Impact", "Page Views"]
+                table_rows = [[
+                    r.get("msku", ""), r.get("az_sku", ""),
+                    r.get("az_drop", 0), r.get("az_impact", 0), r.get("az_pageviews", 0)
+                ] for r in rows]
+            elif _platform == "Flipkart":
+                headers = ["MSKU", "FSN", "MOM Drop %", "Impact", "Page Views"]
+                table_rows = [[
+                    r.get("msku", ""), r.get("fk_sku", ""),
+                    r.get("fk_drop", 0), r.get("fk_impact", 0), r.get("fk_pageviews", 0)
+                ] for r in rows]
+            else:
+                headers = ["Amazon SKU", "Flipkart SKU", "Amazon MOM Drop %", "Flipkart MOM Drop %", "Total MOM Drop %", "Amazon Impact", "Flipkart Impact", "Total Impact", "Amazon Page Views", "Flipkart Page Views", "Total Page Views"]
+                table_rows = [[
+                    r.get("az_sku", ""), r.get("fk_sku", ""),
+                    r.get("az_drop", 0), r.get("fk_drop", 0), r.get("total_drop", 0),
+                    r.get("az_impact", 0), r.get("fk_impact", 0), r.get("total_impact", 0),
+                    r.get("az_pageviews", 0), r.get("fk_pageviews", 0), r.get("pageviews", 0)
                 ] for r in rows]
         else:
             headers, table_rows = _rows_to_export_table(rows)
@@ -1284,6 +1911,57 @@ def dashboard_modal_rows_view(request, view_name, modal_key):
         )
         return response
 
+    # ── DataTables server-side path ──────────────────────────────────────────
+    if dt_draw:
+        order_field = (request.GET.get("order_field") or "").strip()
+        order_dir = (request.GET.get("order_dir") or "desc").strip().lower()
+
+        if modal_key == "inventory-health":
+            # inventory-health uses ORM — apply ordering and re-slice
+            if order_field:
+                _orm_field = order_field
+                if order_dir == "desc":
+                    _orm_field = f"-{order_field}"
+                inventory_qs = _get_inventory_modal_queryset(data_owner, filters, query)
+                total = inventory_qs.count()
+                row_qs = inventory_qs.order_by(_orm_field)[(page - 1) * page_size : page * page_size]
+                from apps.dashboard.models import CategoryMapping, FlipkartCategoryMap
+                _inv_msku_map = {}
+                for _r in CategoryMapping.objects.filter(user=data_owner).values("asin", "msku"):
+                    if _r["asin"] and _r["msku"]:
+                        _inv_msku_map[_r["asin"]] = _r["msku"]
+                for _r in FlipkartCategoryMap.objects.filter(user=data_owner).values("fsn", "sku"):
+                    if _r["fsn"] and _r["sku"]:
+                        _inv_msku_map[_r["fsn"]] = _r["sku"]
+                rows = [_inventory_summary_row_dict(row, msku_map=_inv_msku_map) for row in row_qs]
+            rows_total = total
+            page_rows = rows
+        else:
+            # List-based modals: sort in Python then paginate
+            if order_field:
+                rows = _sort_rows_by_field(rows or [], order_field, order_dir)
+            rows_total, page_rows = _paginate_rows(rows or [], page, page_size)
+
+        html = render_to_string(
+            template_name,
+            {
+                "rows": page_rows,
+                "rows_total": rows_total,
+                "rows_shown": len(page_rows),
+                "rows_truncated": False,
+                "platform": (filters.get("platform") or "All"),
+            },
+            request=request,
+        )
+        dt_data = _extract_dt_cells_from_html(html)
+        return JsonResponse({
+            "draw": int(dt_draw),
+            "recordsTotal": rows_total,
+            "recordsFiltered": rows_total,
+            "data": dt_data,
+        })
+
+    # ── Legacy HTML/pagination path ───────────────────────────────────────────
     if modal_key == "inventory-health":
         rows_total, page_rows = total, rows
         total_pages = math.ceil(rows_total / page_size) if rows_total > 0 else 0
@@ -1324,6 +2002,7 @@ def dashboard_modal_rows_view(request, view_name, modal_key):
     return JsonResponse(payload)
 
 
+
 @no_cache_for_htmx
 def dashboard_product_card_rows_view(request, view_name, card_key):
     user = get_logged_in_user(request)
@@ -1348,7 +2027,7 @@ def dashboard_product_card_rows_view(request, view_name, card_key):
     filters = _strip_non_dashboard_filters(build_filters_from_querydict(request.GET))
     filter_hash = hashlib.md5(cache_filter_string(filters).encode("utf-8")).hexdigest()
     cache_key = (
-        "dashboard_product_card_rows_v1_"
+        "dashboard_product_card_rows_v2_"
         f"{data_owner.id}_{view_name}_{card_key}_{data_version}_{filter_hash}"
     )
 
@@ -1463,6 +2142,102 @@ def dashboard_category_performance_rows_view(request, view_name):
                 "total_pages": total_pages,
                 "has_prev": page > 1,
                 "has_next": page < total_pages,
+            },
+        }
+    )
+
+
+@no_cache_for_htmx
+def dashboard_asin_fsn_report_rows_view(request):
+    user = get_logged_in_user(request)
+    if not user:
+        return JsonResponse({"error": "Not authenticated"}, status=401)
+    if not _user_has_feature(user, "category_dashboard"):
+        return JsonResponse({"error": "Permission denied."}, status=403)
+
+    data_owner = user.created_by if user.created_by else user
+    page = _parse_positive_int(request.GET.get("page"), default=1, minimum=1, maximum=10_000)
+    page_size = _parse_positive_int(
+        request.GET.get("page_size"), default=10, minimum=1, maximum=100
+    )
+    report_limit = _parse_positive_int(
+        request.GET.get("report_limit"), default=10, minimum=1, maximum=100
+    )
+    report_date_range = (request.GET.get("report_date_range") or "all").strip().lower()
+    export_format = (request.GET.get("export") or "").strip().lower()
+    load_all = request.GET.get("all") == "1"
+    filters = _strip_non_dashboard_filters(build_filters_from_querydict(request.GET))
+
+    data_version = cache.get(f"dashboard_data_version_{data_owner.id}", 0)
+    filter_hash = hashlib.md5(cache_filter_string(filters).encode("utf-8")).hexdigest()
+    report_cache_key = (
+        "dashboard_asin_fsn_report_rows_v2_"
+        f"{data_owner.id}_{data_version}_{filter_hash}_{report_date_range}"
+    )
+    report_cache_ttl = int(
+        getattr(settings, "DASHBOARD_MODAL_ROWS_CACHE_TTL_SECONDS", 180)
+    )
+    cached_rows = cache.get(report_cache_key)
+    if cached_rows is None:
+        cached_rows = _get_asin_fsn_report_rows(
+            data_owner=data_owner,
+            filters=filters,
+            report_date_range=report_date_range,
+            report_limit=100,
+        )
+        cache.set(report_cache_key, cached_rows or [], timeout=report_cache_ttl)
+    rows = (cached_rows or [])[:report_limit]
+
+    if export_format in {"csv", "excel", "xlsx"}:
+        headers, table_rows = _asin_fsn_report_export_table(rows)
+        if export_format == "csv":
+            output = StringIO()
+            writer = csv.writer(output)
+            writer.writerow(headers)
+            writer.writerows(table_rows)
+            buf = BytesIO(output.getvalue().encode("utf-8"))
+            response = FileResponse(buf, content_type="text/csv")
+            response["Content-Disposition"] = (
+                f'attachment; filename="{_asin_fsn_report_export_filename("csv")}"'
+            )
+            return response
+
+        buf = BytesIO()
+        pd.DataFrame(table_rows, columns=headers).to_excel(buf, index=False)
+        buf.seek(0)
+        response = FileResponse(
+            buf,
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        response["Content-Disposition"] = (
+            f'attachment; filename="{_asin_fsn_report_export_filename("xlsx")}"'
+        )
+        return response
+
+    total = len(rows)
+    if load_all:
+        page_rows = rows
+        total_pages = 1 if total else 0
+    else:
+        start = (page - 1) * page_size
+        page_rows = rows[start : start + page_size]
+        total_pages = math.ceil(total / page_size) if total > 0 else 0
+    html = render_to_string(
+        "dashboard/partials/asin_fsn_report_rows.html",
+        {"rows": page_rows},
+        request=request,
+    )
+    return JsonResponse(
+        {
+            "html": html,
+            "use_datatable": load_all,
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total": total,
+                "total_pages": total_pages,
+                "has_prev": (not load_all) and page > 1,
+                "has_next": (not load_all) and page < total_pages,
             },
         }
     )
@@ -1597,24 +2372,26 @@ def _search_paginated_single_source(base_qs, field_name, q, offset, page_size):
     return total, [str(r["option_value"]).strip() for r in rows if r["option_value"]]
 
 
-def _search_paginated_dual_source(az_qs, fk_qs, field_name, q, offset, page_size):
-    az_values = _distinct_option_values_qs(az_qs, field_name)
-    fk_values = _distinct_option_values_qs(fk_qs, field_name)
+def _search_paginated_dual_source(az_qs, fk_qs, field_name, q, offset, page_size, az_field=None, fk_field=None):
+    az_field = az_field or field_name
+    fk_field = fk_field or field_name
+    az_values = _distinct_option_values_qs(az_qs, az_field)
+    fk_values = _distinct_option_values_qs(fk_qs, fk_field)
     if not q:
         merged_qs = az_values.union(fk_values).order_by("option_value")
         total = merged_qs.count()
         rows = list(merged_qs[offset : offset + page_size])
         return total, [str(r["option_value"]).strip() for r in rows if r["option_value"]]
 
-    az_starts = az_values.filter(**{f"{field_name}__istartswith": q})
-    fk_starts = fk_values.filter(**{f"{field_name}__istartswith": q})
+    az_starts = az_values.filter(**{f"{az_field}__istartswith": q})
+    fk_starts = fk_values.filter(**{f"{fk_field}__istartswith": q})
     starts_qs = az_starts.union(fk_starts).order_by("option_value")
 
-    az_contains = az_values.filter(**{f"{field_name}__icontains": q}).exclude(
-        **{f"{field_name}__istartswith": q}
+    az_contains = az_values.filter(**{f"{az_field}__icontains": q}).exclude(
+        **{f"{az_field}__istartswith": q}
     )
-    fk_contains = fk_values.filter(**{f"{field_name}__icontains": q}).exclude(
-        **{f"{field_name}__istartswith": q}
+    fk_contains = fk_values.filter(**{f"{fk_field}__icontains": q}).exclude(
+        **{f"{fk_field}__istartswith": q}
     )
     contains_qs = az_contains.union(fk_contains).order_by("option_value")
 
@@ -1654,7 +2431,7 @@ def filter_dropdown_options(request):
 
     data_owner = user.created_by if user.created_by else user
     field = (request.GET.get("field") or "").strip().lower()
-    if field not in {"category", "asin", "fsn", "portfolio", "subcategory"}:
+    if field not in LIST_FILTER_FIELDS:
         return JsonResponse({"error": "Invalid field."}, status=400)
 
     q = (request.GET.get("q") or "").strip()
@@ -1677,7 +2454,7 @@ def filter_dropdown_options(request):
         cache_filter_string(filters).encode("utf-8")
     ).hexdigest()
     dropdown_cache_key = (
-        f"dashboard_filter_options_v2_{data_owner.id}_{data_version}_{field}_"
+        f"dashboard_filter_options_v3_{data_owner.id}_{data_version}_{field}_"
         f"{hashlib.md5(q.lower().encode('utf-8')).hexdigest()}_{page}_{page_size}_{dropdown_cache_hash}"
     )
     cached_payload = cache.get(dropdown_cache_key)
@@ -1686,7 +2463,7 @@ def filter_dropdown_options(request):
 
     qs = ProcessedDashboardData.objects.filter(user=data_owner)
     fk_qs = FlipkartProcessedDashboardData.objects.filter(user=data_owner)
-    qs, fk_qs = apply_dashboard_entity_filters(qs, fk_qs, filters)
+    qs, fk_qs = apply_dashboard_entity_filters(qs, fk_qs, filters, user=data_owner)
 
     results = []
     total = 0
@@ -1701,6 +2478,94 @@ def filter_dropdown_options(request):
         total, results = _search_paginated_single_source(
             fsn_qs, "fsn", q, offset, page_size
         )
+    elif field == "parent_asin":
+        az_map_qs = CategoryMapping.objects.filter(
+            user=data_owner,
+            asin__in=qs.values("asin"),
+        )
+        linked_fk_asins = FlipkartCategoryMap.objects.filter(
+            user=data_owner,
+            fsn__in=fk_qs.values("fsn"),
+        ).exclude(asin__isnull=True).exclude(asin="").values("asin")
+        fk_parent_qs = CategoryMapping.objects.filter(
+            user=data_owner,
+            asin__in=linked_fk_asins,
+        )
+        total, results = _search_paginated_dual_source(
+            az_map_qs,
+            fk_parent_qs,
+            "parent_asin",
+            q,
+            offset,
+            page_size,
+        )
+    elif field == "sku":
+        az_map_qs = CategoryMapping.objects.filter(
+            user=data_owner,
+            asin__in=qs.values("asin"),
+        ).exclude(msku__isnull=True).exclude(msku="")
+        fk_map_qs = FlipkartCategoryMap.objects.filter(
+            user=data_owner,
+            fsn__in=fk_qs.values("fsn"),
+        ).exclude(sku__isnull=True).exclude(sku="")
+        total, results = _search_paginated_dual_source(
+            az_map_qs,
+            fk_map_qs,
+            "sku",
+            q,
+            offset,
+            page_size,
+            az_field="msku",
+            fk_field="sku",
+        )
+    elif field == "ratings":
+        ranges = ["0 - 1", "1 - 3", "3 - 3.5", "3.5 - 4", "4 - 4.2", "4.2 - 4.5", "4.5+"]
+        if q:
+            ranges = [r for r in ranges if q.lower() in r.lower()]
+        total = len(ranges)
+        results = ranges[offset : offset + page_size]
+    elif field in {
+        "category_manager",
+        "series_name",
+        "material",
+        "size",
+        "brand_name",
+        "finish",
+    }:
+        az_map_qs = CategoryMapping.objects.filter(
+            user=data_owner,
+            asin__in=qs.values("asin"),
+        ).exclude(**{f"{field}__isnull": True}).exclude(**{field: ""}).exclude(**{field: "0"})
+        fk_map_qs = FlipkartCategoryMap.objects.filter(
+            user=data_owner,
+            fsn__in=fk_qs.values("fsn"),
+        ).exclude(**{f"{field}__isnull": True}).exclude(**{field: ""}).exclude(**{field: "0"})
+        total, results = _search_paginated_dual_source(
+            az_map_qs,
+            fk_map_qs,
+            field,
+            q,
+            offset,
+            page_size,
+        )
+    elif field == "inventory_health":
+        from apps.dashboard.models import DashboardInventoryHealthSummary
+        from django.db.models import Max
+        max_date = DashboardInventoryHealthSummary.objects.filter(user=data_owner).aggregate(Max('date'))['date__max']
+        az_statuses = []
+        fk_statuses = []
+        if max_date:
+            az_statuses = DashboardInventoryHealthSummary.objects.filter(
+                user=data_owner, date=max_date, asin__in=qs.values("asin")
+            ).exclude(status="").values_list("status", flat=True).distinct()
+            fk_statuses = DashboardInventoryHealthSummary.objects.filter(
+                user=data_owner, date=max_date, fsn__in=fk_qs.values("fsn")
+            ).exclude(fk_status="").values_list("fk_status", flat=True).distinct()
+        all_statuses = sorted(list(set(az_statuses) | set(fk_statuses)))
+        if q:
+            all_statuses = [s for s in all_statuses if q.lower() in s.lower()]
+        total = len(all_statuses)
+        results = all_statuses[offset : offset + page_size]
     else:
         az_qs = qs.exclude(**{f"{field}__isnull": True}).exclude(**{f"{field}": ""})
         fk_field_qs = fk_qs.exclude(**{f"{field}__isnull": True}).exclude(

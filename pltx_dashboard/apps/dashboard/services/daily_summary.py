@@ -1,5 +1,4 @@
 from django.db import transaction, connection
-from django.db.models import Sum, Value, CharField
 
 from apps.dashboard.models import (
     DashboardDailySummary,

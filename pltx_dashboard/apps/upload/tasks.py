@@ -100,6 +100,25 @@ def _enqueue_daily_summary_refresh(data_owner_id, affected_dates=None):
         )
 
 
+def _enqueue_product_daily_summary_refresh(data_owner_id, affected_dates=None):
+    try:
+        from django.conf import settings
+
+        if not getattr(settings, "DASHBOARD_PRODUCT_DAILY_SUMMARY_ENABLED", True):
+            return
+        from apps.dashboard.tasks import refresh_dashboard_product_daily_summary_task
+
+        refresh_dashboard_product_daily_summary_task.delay(
+            data_owner_id=data_owner_id,
+            only_dates=list(affected_dates or []),
+        )
+    except Exception:
+        logger.exception(
+            "[UploadTask] Failed to enqueue product daily summary refresh for user=%s",
+            data_owner_id,
+        )
+
+
 def _enqueue_inventory_summary_refresh(data_owner_id, affected_dates=None):
     try:
         from django.conf import settings
@@ -184,6 +203,64 @@ def _collect_distinct_dates_for_entities(model, *, user_id, entity_field, entity
     return dates
 
 
+def _get_redis_cache_client():
+    try:
+        redis_cache = getattr(cache, "_cache", None)
+        if redis_cache and hasattr(redis_cache, "get_client"):
+            return redis_cache.get_client(write=True)
+    except Exception:
+        logger.debug("[BatchTracker] Redis client unavailable; using cache fallback.", exc_info=True)
+    return None
+
+
+def _decode_cache_set_values(values):
+    decoded = set()
+    for value in values or []:
+        if isinstance(value, bytes):
+            value = value.decode("utf-8")
+        item = str(value or "").strip()
+        if item:
+            decoded.add(item)
+    return decoded
+
+
+def _batch_set_add(cache_key, values, ttl):
+    cleaned = [str(value or "").strip() for value in (values or []) if str(value or "").strip()]
+    if not cleaned:
+        return
+
+    client = _get_redis_cache_client()
+    if client is not None:
+        try:
+            client.sadd(cache_key, *cleaned)
+            client.expire(cache_key, ttl)
+            return
+        except Exception:
+            logger.warning(
+                "[BatchTracker] Redis SADD failed for key=%s; using cache fallback.",
+                cache_key,
+                exc_info=True,
+            )
+
+    existing = cache.get(cache_key) or set()
+    existing.update(cleaned)
+    cache.set(cache_key, existing, timeout=ttl)
+
+
+def _batch_set_members(cache_key):
+    client = _get_redis_cache_client()
+    if client is not None:
+        try:
+            return _decode_cache_set_values(client.smembers(cache_key))
+        except Exception:
+            logger.warning(
+                "[BatchTracker] Redis SMEMBERS failed for key=%s; using cache fallback.",
+                cache_key,
+                exc_info=True,
+            )
+    return _decode_cache_set_values(cache.get(cache_key) or set())
+
+
 def _mark_batch_task_complete(
     *,
     batch_id,
@@ -209,37 +286,16 @@ def _mark_batch_task_complete(
     dates_key = upload_batch_key(batch_id, "affected_dates")
     entity_ids_key = upload_batch_key(batch_id, "affected_entity_ids")
 
-    # Accumulate file types and affected dates from each task.
-    # Note: get-modify-set has a small race window with concurrent workers.
-    # Worst case: a file_type or date is lost, causing a full rebuild instead
-    # of incremental — safe but slower. We retry once to minimise this.
+    # Accumulate file types and affected dates atomically. These workers finish
+    # concurrently, so Redis SADD avoids losing dates during read-modify-write.
     if file_type:
-        for _attempt in range(3):
-            existing_types = cache.get(file_types_key) or set()
-            existing_types.add(file_type)
-            cache.set(file_types_key, existing_types, timeout=ttl)
-            # Verify the write stuck
-            verify = cache.get(file_types_key)
-            if verify and file_type in verify:
-                break
+        _batch_set_add(file_types_key, [file_type], ttl)
 
     if affected_dates:
-        for _attempt in range(3):
-            existing_dates = cache.get(dates_key) or set()
-            for d in affected_dates:
-                existing_dates.add(str(d))
-            cache.set(dates_key, existing_dates, timeout=ttl)
-            break  # dates are additive; minor race loss is acceptable
+        _batch_set_add(dates_key, affected_dates, ttl)
 
     if affected_entity_ids:
-        for _attempt in range(3):
-            existing_ids = cache.get(entity_ids_key) or set()
-            for value in affected_entity_ids:
-                item = str(value or "").strip()
-                if item:
-                    existing_ids.add(item)
-            cache.set(entity_ids_key, existing_ids, timeout=ttl)
-            break
+        _batch_set_add(entity_ids_key, affected_entity_ids, ttl)
 
     expected = cache.get(expected_key)
     if expected is None:
@@ -308,9 +364,9 @@ def _mark_batch_task_complete(
     owner_is_flipkart = bool(meta.get("is_flipkart")) if "is_flipkart" in meta else bool(is_flipkart)
 
     # Determine smart file_type and affected_dates from accumulated batch data.
-    batch_file_types = cache.get(file_types_key) or set()
-    batch_affected_dates = sorted(cache.get(dates_key) or set())
-    batch_affected_entity_ids = sorted(cache.get(entity_ids_key) or set())
+    batch_file_types = _batch_set_members(file_types_key)
+    batch_affected_dates = sorted(_batch_set_members(dates_key))
+    batch_affected_entity_ids = sorted(_batch_set_members(entity_ids_key))
 
     logger.info(
         "[BatchTracker] batch=%s FINALIZING — completed=%d expected=%d failed=%d owner=%d flipkart=%s",
@@ -456,6 +512,7 @@ def _run_dashboard_refresh(
     affected_entity_ids = [str(item).strip() for item in (affected_entity_ids or []) if str(item).strip()]
     dashboard_invalidated = False
     should_refresh_daily_summary = False
+    should_refresh_product_daily_summary = False
     should_refresh_inventory_summary = False
     should_refresh_asin_monthly_summary = False
     should_enqueue_warmup = False
@@ -465,8 +522,7 @@ def _run_dashboard_refresh(
         _send_ws(user_id, message, "processing")
 
     if is_flipkart:
-        # Batch all 6 existence checks into one query per table using
-        # a single COUNT per model — avoids 6 sequential DB round trips.
+        # Check which companion file types are present.
         uid = data_owner.id
         has_fk_category = FlipkartCategoryMap.objects.filter(user_id=uid).values("id")[:1].exists()
         has_fk_traffic = FlipkartSearchTraffic.objects.filter(user_id=uid).values("id")[:1].exists()
@@ -475,10 +531,36 @@ def _run_dashboard_refresh(
         has_fk_processed = (
             FlipkartProcessedDashboardData.objects.filter(user_id=uid).values("id")[:1].exists()
         )
-        if not (has_fk_category and has_fk_traffic and has_fk_pla and has_fk_price):
-            raise ValueError(
-                "Flipkart requires Search Traffic, Category, PLA, and Price reports."
+
+        # Log warnings for missing companion files but DO NOT hard-block the rebuild.
+        # The SQL builder gracefully handles missing tables via LEFT JOINs:
+        # - Missing category → portfolio/category/subcategory show as empty strings.
+        # - Missing price     → price column shows 0.
+        # - Missing PLA       → spend columns show 0.
+        # Only if traffic itself is absent AND there is no PLA spend data do we skip.
+        missing_types = []
+        if not has_fk_category:
+            missing_types.append("Category")
+        if not has_fk_pla:
+            missing_types.append("PLA/Spend")
+        if not has_fk_price:
+            missing_types.append("Price")
+
+        if missing_types:
+            logger.warning(
+                "[DashboardRefresh] user=%s missing FK file types: %s — "
+                "dashboard will be built without those columns (data will be partial).",
+                data_owner.id, ", ".join(missing_types),
             )
+
+        # If this is a traffic/PLA upload but traffic is still absent globally,
+        # there is nothing to merge. Skip gracefully.
+        if file_type in {"fk_search_traffic", "fk_pla"} and not has_fk_traffic and not has_fk_pla:
+            logger.warning(
+                "[DashboardRefresh] user=%s no FK traffic or PLA data found — skipping rebuild.",
+                data_owner.id,
+            )
+            return
 
         has_fba_stock = Flipkartfba.objects.filter(user_id=uid).values("id")[:1].exists()
         has_fk_inventory = FlipkartInventoryStock.objects.filter(user_id=uid).values("id")[:1].exists()
@@ -508,6 +590,7 @@ def _run_dashboard_refresh(
             )
             dashboard_refreshed = True
             should_refresh_daily_summary = True
+            should_refresh_product_daily_summary = True
             should_refresh_inventory_summary = True
             should_refresh_asin_monthly_summary = True
             should_enqueue_warmup = True
@@ -531,17 +614,21 @@ def _run_dashboard_refresh(
             dashboard_refreshed = True
             if "fk_category" in refresh_types:
                 should_refresh_daily_summary = True
+                should_refresh_product_daily_summary = True
                 should_refresh_asin_monthly_summary = True
                 should_enqueue_warmup = True
         elif file_type == "fk_price":
             refresh_types = metadata_file_types or {"fk_price"}
             if "fk_category" in refresh_types:
                 update_fk_category_in_processed_data(data_owner.id, fsns=affected_entity_ids)
+                should_refresh_daily_summary = True
+                should_refresh_product_daily_summary = True
+                should_refresh_asin_monthly_summary = True
+                should_enqueue_warmup = True
             if "fk_price" in refresh_types:
                 update_fk_price_in_processed_data(data_owner.id, fsns=affected_entity_ids)
             invalidate_dashboard_cache_for_user(data_owner.id, clear_materialized=True)
             dashboard_refreshed = True
-            should_enqueue_warmup = False
         else:
             invalidate_dashboard_cache_for_user(data_owner.id, clear_materialized=True)
             dashboard_invalidated = True
@@ -556,6 +643,7 @@ def _run_dashboard_refresh(
             generate_dashboard_data(data_owner, progress_callback=_dashboard_progress)
         dashboard_refreshed = True
         should_refresh_daily_summary = True
+        should_refresh_product_daily_summary = True
         should_refresh_inventory_summary = True
         should_refresh_asin_monthly_summary = True
         should_enqueue_warmup = True
@@ -571,6 +659,7 @@ def _run_dashboard_refresh(
             )
             generate_dashboard_data(data_owner, progress_callback=_dashboard_progress)
             should_refresh_daily_summary = True
+            should_refresh_product_daily_summary = True
             should_refresh_inventory_summary = True
             should_refresh_asin_monthly_summary = True
             should_enqueue_warmup = True
@@ -593,6 +682,7 @@ def _run_dashboard_refresh(
             invalidate_dashboard_cache_for_user(data_owner.id, clear_materialized=True)
             if "category" in refresh_types:
                 should_refresh_daily_summary = True
+                should_refresh_product_daily_summary = True
                 should_refresh_asin_monthly_summary = True
                 should_enqueue_warmup = True
         dashboard_refreshed = True
@@ -608,6 +698,7 @@ def _run_dashboard_refresh(
             )
             generate_dashboard_data(data_owner, progress_callback=_dashboard_progress)
             should_refresh_daily_summary = True
+            should_refresh_product_daily_summary = True
             should_refresh_inventory_summary = True
             should_refresh_asin_monthly_summary = True
             should_enqueue_warmup = True
@@ -615,10 +706,13 @@ def _run_dashboard_refresh(
             refresh_types = metadata_file_types or {"price"}
             if "category" in refresh_types:
                 update_category_in_processed_data(data_owner.id, asins=affected_entity_ids)
+                should_refresh_daily_summary = True
+                should_refresh_product_daily_summary = True
+                should_refresh_asin_monthly_summary = True
+                should_enqueue_warmup = True
             if "price" in refresh_types:
                 update_price_in_processed_data(data_owner.id, asins=affected_entity_ids)
             invalidate_dashboard_cache_for_user(data_owner.id, clear_materialized=True)
-            should_enqueue_warmup = False
         dashboard_refreshed = True
     elif file_type in {"fba_stock", "flex_stock", "fk_fba_stock", "fk_inventory"}:
         invalidate_dashboard_cache_for_user(data_owner.id, clear_materialized=True)
@@ -629,6 +723,7 @@ def _run_dashboard_refresh(
         invalidate_dashboard_cache_for_user(data_owner.id, clear_materialized=True)
         dashboard_invalidated = True
         should_refresh_daily_summary = True
+        should_refresh_product_daily_summary = True
         should_refresh_inventory_summary = True
         should_refresh_asin_monthly_summary = True
         should_enqueue_warmup = True
@@ -663,14 +758,22 @@ def _run_dashboard_refresh(
                 )
                 _enqueue_daily_summary_refresh(data_owner.id, affected_dates=sorted_dates)
 
-        if should_refresh_inventory_summary or should_refresh_asin_monthly_summary:
+        if should_refresh_inventory_summary or should_refresh_asin_monthly_summary or should_refresh_product_daily_summary:
             try:
                 from celery import group as celery_group
                 from apps.dashboard.tasks import (
                     refresh_dashboard_inventory_summary_task,
                     refresh_dashboard_asin_monthly_summary_task,
+                    refresh_dashboard_product_daily_summary_task,
                 )
                 signatures = []
+                if should_refresh_product_daily_summary:
+                    signatures.append(
+                        refresh_dashboard_product_daily_summary_task.si(
+                            data_owner_id=data_owner.id,
+                            only_dates=list(sorted_dates),
+                        )
+                    )
                 if should_refresh_inventory_summary:
                     signatures.append(
                         refresh_dashboard_inventory_summary_task.si(
@@ -689,10 +792,11 @@ def _run_dashboard_refresh(
                     celery_group(*signatures).apply_async()
                     logger.info(
                         "[DashboardRefreshTask] Dispatched background summary tasks "
-                        "for owner=%s (dates=%d, months=%d, inventory=%s, monthly=%s)",
+                        "for owner=%s (dates=%d, months=%d, product_daily=%s, inventory=%s, monthly=%s)",
                         data_owner.id,
                         len(sorted_dates),
                         len(affected_months),
+                        should_refresh_product_daily_summary,
                         should_refresh_inventory_summary,
                         should_refresh_asin_monthly_summary,
                     )
@@ -705,6 +809,8 @@ def _run_dashboard_refresh(
                     _enqueue_inventory_summary_refresh(data_owner.id, affected_dates=sorted_dates)
                 if should_refresh_asin_monthly_summary:
                     _enqueue_asin_monthly_summary_refresh(data_owner.id, affected_dates=sorted_dates)
+                if should_refresh_product_daily_summary:
+                    _enqueue_product_daily_summary_refresh(data_owner.id, affected_dates=sorted_dates)
 
         if should_enqueue_warmup:
             _enqueue_dashboard_warmup(
@@ -1033,8 +1139,46 @@ def process_upload_file_task(
             _send_ws(user_id, f"{file_type} processed successfully.", "partial")
 
         if upload_log:
-            upload_log.status = UploadLog.STATUS_SUCCESS
-            upload_log.message = "Processed successfully."
+            if file_type in {"fk_search_traffic", "fk_pla", "fk_category", "fk_price", "fk_fba_stock", "fk_inventory"}:
+                # Check if all required companion files exist so we can give an honest status
+                from apps.dashboard.models import (
+                    FlipkartCategoryMap, FlipkartSearchTraffic, FlipkartPLA, FlipkartPrice,
+                )
+                _uid = data_owner.id
+                _has_cat = FlipkartCategoryMap.objects.filter(user_id=_uid).values("id")[:1].exists()
+                _has_trf = FlipkartSearchTraffic.objects.filter(user_id=_uid).values("id")[:1].exists()
+                _has_pla = FlipkartPLA.objects.filter(user_id=_uid).values("id")[:1].exists()
+                _has_prc = FlipkartPrice.objects.filter(user_id=_uid).values("id")[:1].exists()
+                _missing = []
+                if not _has_cat:
+                    _missing.append("Category")
+                if not _has_trf:
+                    _missing.append("Search Traffic")
+                if not _has_pla:
+                    _missing.append("PLA/Spend")
+                if not _has_prc:
+                    _missing.append("Price")
+
+                if _missing:
+                    upload_log.status = UploadLog.STATUS_SUCCESS
+                    upload_log.message = (
+                        f"Raw data saved. Dashboard will update once the following companion "
+                        f"files are also uploaded: {', '.join(_missing)}."
+                    )
+                else:
+                    upload_log.status = UploadLog.STATUS_SUCCESS
+                    upload_log.message = (
+                        "File processed successfully. Dashboard is being updated with the new data."
+                    )
+            elif file_type in {"sales", "spend"}:
+                upload_log.status = UploadLog.STATUS_SUCCESS
+                upload_log.message = (
+                    "Raw data saved successfully. "
+                    "Dashboard will refresh automatically once all files in this batch are processed."
+                )
+            else:
+                upload_log.status = UploadLog.STATUS_SUCCESS
+                upload_log.message = "Raw data saved successfully."
             upload_log.save(update_fields=["status", "message", "updated_at"])
 
         return {

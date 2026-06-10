@@ -52,110 +52,301 @@
 <!-- OOB swap for the SECONDARY FILTER BAR -->
 <div class="secondary-filter-bar" id="secondaryFilters" hx-swap-oob="true" {% if request.resolver_match.url_name != 'ceo-dashboard' and request.resolver_match.url_name != 'business-dashboard' and request.resolver_match.url_name != 'category-dashboard' %}style="display:none;"{% endif %}>
     {% if request.resolver_match.url_name == 'ceo-dashboard' or request.resolver_match.url_name == 'business-dashboard' or request.resolver_match.url_name == 'category-dashboard' %}
-    <form method="GET" action="{{ request.path }}" class="topbar-filters" style="margin:0;" id="dashboardFilterForm"
-        hx-get="{{ request.path }}" hx-target=".dash-body" hx-push-url="true" hx-swap="innerHTML" hx-trigger="submit" hx-sync="body:abort">
+            <form method="GET" action="" class="topbar-filters"
+                style="margin:0; display:flex; width:100%; flex-wrap:wrap; align-items:center;" id="dashboardFilterForm"
+                hx-get="{{ request.path }}" hx-target=".dash-body" hx-push-url="true" hx-swap="innerHTML"
+                hx-trigger="submit" hx-sync="body:abort">
 
-        <div class="topbar-filter-group filter-group-uniform">
-            <span class="filter-label">Date Range</span>
-            <select class="filter-select-top" id="dateRangeSelect" name="date_range"
-                onchange="handleDateRangeChange(event, this)">
-                <option value="">All Time</option>
-                <option value="yesterday" {% if request.GET.date_range == "yesterday" %}selected{% endif %}>Yesterday
-                </option>
-                <option value="last_7_days" {% if request.GET.date_range == "last_7_days" %}selected{% endif %}>Last 7
-                    Days</option>
-                <option value="last_15_days" {% if request.GET.date_range == "last_15_days" %}selected{% endif %}>Last 15
-                    Days</option>
-                <option value="last_month" {% if request.GET.date_range == "last_month" %}selected{% endif %}>Last Month
-                </option>
-                <option value="last_3_months" {% if request.GET.date_range == "last_3_months" %}selected{% endif %}>Last 3
-                    Months</option>
-                <option value="last_6_months" {% if request.GET.date_range == "last_6_months" %}selected{% endif %}>Last 6
-                    Months</option>
-                <option value="last_1_year" {% if request.GET.date_range == "last_1_year" %}selected{% endif %}>Last 1
-                    Year</option>
-                <option value="custom" {% if request.GET.date_range == "custom" %}selected{% endif %}>Custom Dates
-                </option>
-            </select>
-        </div>
-        <div class="topbar-filter-group custom-date-group" id="customDateGroup"
-            style="display: {% if request.GET.date_range == 'custom' %}flex{% else %}none{% endif %}; margin-left: 4px;">
-            <span class="filter-label">&nbsp;</span>
-            <div style="display: flex; flex-direction: row; align-items: center; gap: 8px;">
-                <input type="text" id="flatpickrRange" placeholder="Select Dates..."
-                    style="width: 220px; background: #ffffff; border: 1px solid #cbd5e1; border-radius: 6px; padding: 7px 12px; font-size: 13px; font-family: 'Inter', sans-serif; color: #0f172a; outline: none; cursor: pointer; transition: border-color 0.2s;"
-                    onfocus="this.style.borderColor='#3b82f6'">
-                <input type="hidden" id="customStartDate" name="start_date" value="{{ request.GET.start_date }}">
-                <input type="hidden" id="customEndDate" name="end_date" value="{{ request.GET.end_date }}">
-                <button type="button"
-                    style="padding: 7px 16px; background: #2563eb; color: #ffffff; border: none; border-radius: 6px; font-family: 'Inter', sans-serif; font-weight: 600; font-size: 12px; cursor: pointer; transition: all 0.2s; box-shadow: 0 2px 4px rgba(37,99,235,0.2);"
-                    onmouseover="this.style.background='#1d4ed8'; this.style.transform='translateY(-1px)';"
-                    onmouseout="this.style.background='#2563eb'; this.style.transform='translateY(0)';"
-                    onclick="submitCustomDate()">Apply</button>
-            </div>
-        </div>
-        <div class="topbar-filter-group filter-group-uniform">
-            <span class="filter-label">Platform</span>
-            <select class="filter-select-top" id="platformSelect" name="platform"
-                onchange="syncFilterVisibility(); markFiltersDirty()">
-                <option value="">All</option>
-                <option value="Amazon" {% if request.GET.platform == "Amazon" %}selected{% endif %}>Amazon</option>
-                <option value="Flipkart" {% if request.GET.platform == "Flipkart" %}selected{% endif %}>Flipkart</option>
-            </select>
-        </div>
+                <div style="display:flex; align-items:center; gap:12px; width:100%; flex-wrap: wrap;">
+                    <div id="topbarDefaultFilters" style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+                        <div class="topbar-filter-group filter-group-uniform">
+                            <span class="filter-label">Date Range</span>
+                            <select class="filter-select-top" id="dateRangeSelect" name="date_range"
+                                onchange="handleDateRangeChange(event, this)">
+                                <option value="">All Time</option>
+                                <option value="yesterday" {% if request.GET.date_range == 'yesterday' %}selected{% endif %}>Yesterday</option>
+                                <option value="last_7_days" {% if request.GET.date_range == 'last_7_days' %}selected{% endif %}>Last 7 Days</option>
+                                <option value="last_15_days" {% if request.GET.date_range == 'last_15_days' %}selected{% endif %}>Last 15 Days</option>
+                                <option value="last_month" {% if request.GET.date_range == 'last_month' %}selected{% endif %}>LastMonth</option>
+                                <option value="last_3_months" {% if request.GET.date_range == 'last_3_months' %}selected{% endif %}>Last 3 Months</option>
+                                <option value="last_6_months" {% if request.GET.date_range == 'last_6_months' %}selected{% endif %}>Last 6 Months</option>
+                                <option value="last_1_year" {% if request.GET.date_range == 'last_1_year' %}selected{% endif %}>Last 1 Year</option>
+                                <option value="custom" {% if request.GET.date_range == 'custom' %}selected{% endif %}>
+                                    Custom Dates
+                                </option>
+                            </select>
+                        </div>
+                        <div class="topbar-filter-group custom-date-group" id="customDateGroup"
+                            style="display: {% if request.GET.date_range == 'custom' %}flex{% else %}none{% endif %};">
+                            <span class="filter-label">&nbsp;</span>
+                            <div style="display: flex; flex-direction: row; align-items: center; gap: 8px;">
+                                <div style="position: relative; width: 100%; overflow: visible;">
+                                    <input type="text" id="flatpickrRange" placeholder="Select Dates..."
+                                        style="width: 100%; background: #ffffff; border: 1px solid #cbd5e1; border-radius: 6px; padding: 7px 12px; padding-right: 36px; font-size: 13px; font-family: 'Inter', sans-serif; color: #0f172a; outline: none; cursor: pointer; transition: border-color 0.2s; position: relative; z-index: 1;"
+                                        onfocus="this.style.borderColor='#3b82f6'">
+                                    <span class="material-icons-round"
+                                        onclick="document.getElementById('flatpickrRange').click()"
+                                        style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); cursor: pointer; font-size: 18px; color: #64748b; transition: color 0.2s; z-index: 2; pointer-events: auto;"
+                                        onmouseover="this.style.color='#0f172a'"
+                                        onmouseout="this.style.color='#64748b'">calendar_month</span>
+                                </div>
+                                <input type="hidden" id="customStartDate" name="start_date"
+                                    value="{{ request.GET.start_date }}">
+                                <input type="hidden" id="customEndDate" name="end_date"
+                                    value="{{ request.GET.end_date }}">
+                                <button type="button"
+                                    style="padding: 7px 16px; background: #2563eb; color: #ffffff; border: none; border-radius: 6px; font-family: 'Inter', sans-serif; font-weight: 600; font-size: 12px; cursor: pointer; transition: all 0.2s; box-shadow: 0 2px 4px rgba(37,99,235,0.2);"
+                                    onmouseover="this.style.background='#1d4ed8'; this.style.transform='translateY(-1px)';"
+                                    onmouseout="this.style.background='#2563eb'; this.style.transform='translateY(0)';"
+                                    onclick="submitCustomDate()">Apply</button>
+                            </div>
+                        </div>
 
-        <div class="topbar-filter-group filter-group-multi filter-group-uniform">
-            <span class="filter-label">
-                <span class="material-icons-round"
-                    style="font-size:11px;vertical-align:middle;margin-right:3px;">category</span>Category
-            </span>
-            <select id="categorySelect" name="category" class="filter-select-top" multiple
-                onchange="markFiltersDirty()">
-                {% for c in selected_filters.categories %}
-                <option value="{{ c }}" selected>{{ c }}</option>
-                {% endfor %}
-            </select>
-        </div>
-        <div class="topbar-filter-group filter-group-multi filter-group-asin filter-group-uniform">
-            <span class="filter-label">
-                <span class="material-icons-round"
-                    style="font-size:11px;vertical-align:middle;margin-right:3px;">qr_code</span>ASIN
-            </span>
-            <select id="asinSelect" name="asin" class="filter-select-top" multiple
-                onchange="markFiltersDirty()">
-                {% for a in selected_filters.asins %}
-                <option value="{{ a }}" selected>{{ a }}</option>
-                {% endfor %}
-            </select>
-        </div>
-        <div class="topbar-filter-group filter-group-multi filter-group-uniform" id="fsnFilterGroup" style="display:none;">
-            <span class="filter-label">
-                <span class="material-icons-round"
-                    style="font-size:11px;vertical-align:middle;margin-right:3px;">qr_code</span>FSN
-            </span>
-            <select id="fsnSelect" name="fsn" class="filter-select-top" multiple
-                onchange="markFiltersDirty()">
-                {% for f in selected_filters.fsns %}
-                <option value="{{ f }}" selected>{{ f }}</option>
-                {% endfor %}
-            </select>
-        </div>
+                        <!-- Platform -->
+                        <div class="topbar-filter-group filter-group-uniform">
+                            <span class="filter-label">Platform</span>
+                            <select class="filter-select-top" id="platformSelect" name="platform"
+                                onchange="syncFilterVisibility(); markFiltersDirty()">
+                                <option value="">All</option>
+                                <option value="Amazon" {% if request.GET.platform == 'Amazon' %}selected{% endif %}>Amazon
+                                </option>
+                                <option value="Flipkart" {% if request.GET.platform == 'Flipkart' %}selected{% endif %}>
+                                    Flipkart</option>
+                            </select>
+                        </div>
 
-        <div class="topbar-filter-group topbar-filter-action-group">
-            <span class="filter-label filter-label-spacer" aria-hidden="true">Actions</span>
-            <button type="button" class="filter-action-btn" id="applyFiltersBtn" data-pending="0"
-                data-loading="0" onclick="applyDashboardFilters()" title="Apply selected filters">
-                <span class="material-icons-round" aria-hidden="true">filter_alt</span>
-                <span class="filter-action-btn__label" data-role="label">Apply Filters</span>
-            </button>
-        </div>
+                        <div class="topbar-filter-group filter-group-multi filter-group-uniform">
+                            <span class="filter-label">
+                                <span class="material-icons-round"
+                                    style="font-size:11px;vertical-align:middle;margin-right:3px;">category</span>Category
+                            </span>
+                            <select id="categorySelect" name="category" class="filter-select-top" multiple
+                                onchange="markFiltersDirty()">
+                                {% for c in selected_filters.categories %}
+                                <option value="{{ c }}" selected>{{ c }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="topbar-filter-group filter-group-multi filter-group-asin filter-group-uniform">
+                            <span class="filter-label">
+                                <span class="material-icons-round"
+                                    style="font-size:11px;vertical-align:middle;margin-right:3px;">qr_code</span>ASIN
+                            </span>
+                            <select id="asinSelect" name="asin" class="filter-select-top" multiple
+                                onchange="markFiltersDirty()">
+                                {% for a in selected_filters.asins %}
+                                <option value="{{ a }}" selected>{{ a }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="topbar-filter-group filter-group-multi filter-group-uniform" id="fsnFilterGroup"
+                            style="display:none;">
+                            <span class="filter-label">
+                                <span class="material-icons-round"
+                                    style="font-size:11px;vertical-align:middle;margin-right:3px;">qr_code</span>FSN
+                            </span>
+                            <select id="fsnSelect" name="fsn" class="filter-select-top" multiple
+                                onchange="markFiltersDirty()">
+                                {% for f in selected_filters.fsns %}
+                                <option value="{{ f }}" selected>{{ f }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
 
-        <div class="topbar-filter-group topbar-filter-action-group">
-            <span class="filter-label filter-label-spacer" aria-hidden="true">Actions</span>
-            <button type="button" class="btn-text-reset" onclick="window.location.href=window.location.pathname"
-                title="Reset all filters">Reset Filters</button>
-        </div>
-    </form>
+
+
+                    </div>
+                    <!-- Actions (Reset) -->
+
+                    <div style="flex:1"></div>
+                    <button type="button" class="btn-open-drawer" data-dashboard-action="open-filters" onclick="toggleFilterDrawer()">
+                        <span class="material-icons-round" style="font-size:18px;">filter_list</span>
+                        More Filters
+                    </button>
+                </div>
+
+
+                <div id="filterDrawerOverlay" class="drawer-overlay"></div>
+                <div id="filterDrawer" class="filter-drawer">
+                    <div class="filter-drawer-header">
+                        <h3><span class="material-icons-round">tune</span> Dashboard Filters</h3>
+                        <button type="button" class="filter-drawer-close" onclick="toggleFilterDrawer()">
+                            <span class="material-icons-round">close</span>
+                        </button>
+                    </div>
+                    <div class="filter-drawer-body">
+                        <div id="drawerDefaultFilters"
+                            style="display:flex; flex-direction:column; gap:20px; margin-bottom: 20px;"></div>
+                        <hr id="drawerDefaultFiltersDivider"
+                            style="width: 100%; border: 0; border-top: 1px solid #e2e8f0; margin: 0 0 20px 0; display: none;">
+
+
+
+                        <!-- Date Range -->
+                        <div class="topbar-filter-group filter-group-multi filter-group-uniform">
+                            <span class="filter-label">
+                                <span class="material-icons-round"
+                                    style="font-size:11px;vertical-align:middle;margin-right:3px;">workspaces</span>Portfolio
+                            </span>
+                            <select id="portfolioSelect" name="portfolio" class="filter-select-top" multiple>
+                                {% for item in selected_filters.portfolios %}
+                                <option value="{{ item }}" selected>{{ item }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="topbar-filter-group filter-group-multi filter-group-uniform">
+                            <span class="filter-label">
+                                <span class="material-icons-round"
+                                    style="font-size:11px;vertical-align:middle;margin-right:3px;">manage_accounts</span>Category
+                                Manager
+                            </span>
+                            <select id="categoryManagerSelect" name="category_manager" class="filter-select-top"
+                                multiple>
+                                {% for item in selected_filters.category_managers %}
+                                <option value="{{ item }}" selected>{{ item }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="topbar-filter-group filter-group-multi filter-group-uniform">
+                            <span class="filter-label">
+                                <span class="material-icons-round"
+                                    style="font-size:11px;vertical-align:middle;margin-right:3px;">view_module</span>Series
+                            </span>
+                            <select id="seriesNameSelect" name="series_name" class="filter-select-top" multiple>
+                                {% for item in selected_filters.series_names %}
+                                <option value="{{ item }}" selected>{{ item }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="topbar-filter-group filter-group-multi filter-group-uniform">
+                            <span class="filter-label">
+                                <span class="material-icons-round"
+                                    style="font-size:11px;vertical-align:middle;margin-right:3px;">texture</span>Material
+                            </span>
+                            <select id="materialSelect" name="material" class="filter-select-top" multiple>
+                                {% for item in selected_filters.materials %}
+                                <option value="{{ item }}" selected>{{ item }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="topbar-filter-group filter-group-multi filter-group-uniform">
+                            <span class="filter-label">
+                                <span class="material-icons-round"
+                                    style="font-size:11px;vertical-align:middle;margin-right:3px;">straighten</span>Size
+                            </span>
+                            <select id="sizeSelect" name="size" class="filter-select-top" multiple>
+                                {% for item in selected_filters.sizes %}
+                                <option value="{{ item }}" selected>{{ item }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="topbar-filter-group filter-group-multi filter-group-uniform">
+                            <span class="filter-label">
+                                <span class="material-icons-round"
+                                    style="font-size:11px;vertical-align:middle;margin-right:3px;">sell</span>Brand
+                            </span>
+                            <select id="brandNameSelect" name="brand_name" class="filter-select-top" multiple>
+                                {% for item in selected_filters.brand_names %}
+                                <option value="{{ item }}" selected>{{ item }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="topbar-filter-group filter-group-multi filter-group-uniform">
+                            <span class="filter-label">
+                                <span class="material-icons-round"
+                                    style="font-size:11px;vertical-align:middle;margin-right:3px;">star</span>Ratings
+                            </span>
+                            <select id="ratingsSelect" name="ratings" class="filter-select-top" multiple>
+                                {% for item in selected_filters.ratings %}
+                                <option value="{{ item }}" selected>{{ item }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="topbar-filter-group filter-group-multi filter-group-uniform">
+                            <span class="filter-label">
+                                <span class="material-icons-round"
+                                    style="font-size:11px;vertical-align:middle;margin-right:3px;">account_tree</span>Parent
+                                ASIN
+                            </span>
+                            <select id="parentAsinSelect" name="parent_asin" class="filter-select-top" multiple>
+                                {% for item in selected_filters.parent_asins %}
+                                <option value="{{ item }}" selected>{{ item }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="topbar-filter-group filter-group-multi filter-group-uniform">
+                            <span class="filter-label">
+                                <span class="material-icons-round"
+                                    style="font-size:11px;vertical-align:middle;margin-right:3px;">palette</span>Finish
+                            </span>
+                            <select id="finishSelect" name="finish" class="filter-select-top" multiple>
+                                {% for item in selected_filters.finishes %}
+                                <option value="{{ item }}" selected>{{ item }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="topbar-filter-group filter-group-multi filter-group-uniform">
+                            <span class="filter-label">
+                                <span class="material-icons-round"
+                                    style="font-size:11px;vertical-align:middle;margin-right:3px;">health_and_safety</span>Inv
+                                Health
+                            </span>
+                            <select id="inventoryHealthSelect" name="inventory_health" class="filter-select-top"
+                                multiple>
+                                <option value="In Stock" {% if "In Stock" in selected_filters.inventory_health_filters %}selected{% endif %}>In Stock</option>
+                                <option value="Low Stock" {% if "Low Stock" in selected_filters.inventory_health_filters %}selected{% endif %}>Low Stock</option>
+                                <option value="OOS" {% if "OOS" in selected_filters.inventory_health_filters %}selected{% endif %}>OOS</option>
+                                <option value="Overstock" {% if "Overstock" in selected_filters.inventory_health_filters %}selected{% endif %}>Overstock</option>
+                            </select>
+                        </div>
+                        <div class="topbar-filter-group filter-group-uniform">
+                            <span class="filter-label">
+                                <span class="material-icons-round"
+                                    style="font-size:11px;vertical-align:middle;margin-right:3px;">event_available</span>Launch Date
+                            </span>
+                            <select id="launchDateRangeSelect" name="launch_date_range" class="filter-select-top"
+                                onchange="handleLaunchDateRangeChange(this)">
+                                <option value="" {% if not request.GET.launch_date_range %}selected{% endif %}>All Launch Dates</option>
+                                <option value="lt_1_month" {% if request.GET.launch_date_range == 'lt_1_month' %}selected{% endif %}>Less than 1 Month</option>
+                                <option value="lt_3_months" {% if request.GET.launch_date_range == 'lt_3_months' %}selected{% endif %}>Less than 3 Months</option>
+                                <option value="lt_6_months" {% if request.GET.launch_date_range == 'lt_6_months' %}selected{% endif %}>Less than 6 Months</option>
+                                <option value="custom" {% if request.GET.launch_date_range == 'custom' %}selected{% endif %}>Custom Date Range</option>
+                            </select>
+                        </div>
+                        <div class="topbar-filter-group filter-group-uniform" id="launchCustomDateGroup"
+                            style="display:{% if request.GET.launch_date_range == 'custom' %}flex{% else %}none{% endif %};">
+                            <span class="filter-label">Launch Range</span>
+                            <div style="display:flex;gap:6px;align-items:center;">
+                                <input type="date" class="filter-select-top" id="launchStartDate" name="launch_start_date"
+                                    value="{{ request.GET.launch_start_date }}" onchange="syncSingleLaunchDate(this, 'launchEndDate'); markFiltersDirty()" style="min-width:135px;">
+                                <input type="date" class="filter-select-top" id="launchEndDate" name="launch_end_date"
+                                    value="{{ request.GET.launch_end_date }}" onchange="syncSingleLaunchDate(this, 'launchStartDate'); markFiltersDirty()" style="min-width:135px;">
+                            </div>
+                        </div>
+                        <div class="topbar-filter-group filter-group-multi filter-group-uniform">
+                            <span class="filter-label">
+                                <span class="material-icons-round"
+                                    style="font-size:11px;vertical-align:middle;margin-right:3px;">qr_code_2</span>SKU
+                            </span>
+                            <select id="skuSelect" name="sku" class="filter-select-top" multiple>
+                                {% for item in selected_filters.skus %}
+                                <option value="{{ item }}" selected>{{ item }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="filter-drawer-footer">
+                        <button type="button" class="reset-filters-btn"
+                            onclick="window.location.href=window.location.pathname" title="Reset all filters">Reset
+                            Filters</button>
+                        <button type="button" id="applyFiltersBtn" class="apply-filters-btn"
+                            onclick="toggleFilterDrawer(); applyDashboardFilters();">Apply
+                            Filters</button>
+                    </div>
+                </div>
+
+            </form>
     {% endif %}
 </div>
 

@@ -418,6 +418,11 @@
         background: #dcfce7;
     }
 
+    .upload-log-badge.warning {
+        color: #9a3412;
+        background: #ffedd5;
+    }
+
     .upload-log-badge.error {
         color: #991b1b;
         background: #fee2e2;
@@ -723,7 +728,7 @@
                 Upload Log Notes
             </div>
             <div class="upload-log-subtitle">
-                System-generated upload history (read-only).
+                System-generated upload history (read-only). &nbsp;<span style="color:#f59e0b;font-weight:600;">&#9432;</span>&nbsp;<em>"Success" means the file's raw data was saved to the database — the dashboard updates separately after all required files are uploaded.</em>
             </div>
             <div class="upload-log-table-wrap">
                 <table class="upload-log-table">
@@ -733,7 +738,8 @@
                             <th>Upload Type</th>
                             <th>Upload Date & Time</th>
                             <th>Uploaded By</th>
-                            <th>Status</th>
+                            <th>File Status</th>
+                            <th>Notes</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -743,11 +749,32 @@
                             <td>{{ log.upload_type }}</td>
                             <td>{{ log.created_at|date:"d M Y, h:i A" }}</td>
                             <td>{{ log.uploaded_by.fname }} {{ log.uploaded_by.lname }}</td>
-                            <td><span class="upload-log-badge {{ log.status }}">{{ log.status }}</span></td>
+                            <td>
+                                <span class="upload-log-badge {{ log.status }}"
+                                    title="{% if log.status == 'success' %}Raw data saved to database. Dashboard updates separately once all required files are uploaded.{% elif log.status == 'error' %}File processing failed. See Notes for details.{% elif log.status == 'processing' %}File is currently being processed.{% else %}File is queued for processing.{% endif %}">
+                                    {% if log.status == 'success' %}
+                                        <span class="material-icons-round" style="font-size:11px;margin-right:2px;vertical-align:middle;">check_circle</span>
+                                    {% elif log.status == 'error' %}
+                                        <span class="material-icons-round" style="font-size:11px;margin-right:2px;vertical-align:middle;">error</span>
+                                    {% elif log.status == 'processing' %}
+                                        <span class="material-icons-round" style="font-size:11px;margin-right:2px;vertical-align:middle;">autorenew</span>
+                                    {% else %}
+                                        <span class="material-icons-round" style="font-size:11px;margin-right:2px;vertical-align:middle;">schedule</span>
+                                    {% endif %}
+                                    {{ log.get_status_display }}
+                                </span>
+                            </td>
+                            <td style="max-width:260px;white-space:normal;color:{% if log.status == 'error' %}#991b1b{% elif log.status == 'success' %}#374151{% else %}#64748b{% endif %};font-size:11px;line-height:1.4;">
+                                {% if log.message %}
+                                    {{ log.message }}
+                                {% else %}
+                                    <span style="color:#94a3b8;">—</span>
+                                {% endif %}
+                            </td>
                         </tr>
                         {% empty %}
                         <tr>
-                            <td colspan="5" style="text-align:center;color:var(--muted);padding:20px;">No upload logs yet.</td>
+                            <td colspan="6" style="text-align:center;color:var(--muted);padding:20px;">No upload logs yet.</td>
                         </tr>
                         {% endfor %}
                     </tbody>

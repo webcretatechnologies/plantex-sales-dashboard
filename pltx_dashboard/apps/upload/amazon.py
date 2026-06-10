@@ -17,6 +17,31 @@ from .service_common import DB_BATCH_SIZE, get_upsert_kwargs
 logger = logging.getLogger(__name__)
 
 
+def _clean_optional_parent_asin(value):
+    text = str(value or "").strip()
+    if not text or text.lower() == "nan" or text in {"0", "0.0"}:
+        return None
+    return text
+
+
+def _clean_optional_text(value):
+    text = str(value or "").strip()
+    if not text or text.lower() == "nan":
+        return None
+    return text
+
+
+def _clean_optional_date(value):
+    text = str(value or "").strip()
+    if not text or text.lower() == "nan" or text in {"0", "0.0"}:
+        return None
+    try:
+        return parse_report_date(value, prefer_dayfirst=True)
+    except Exception:
+        logger.warning("Ignoring invalid category Launch Date value: %r", value)
+        return None
+
+
 def process_category_file(file_obj, user):
     """
     Upsert category mappings scoped to the given user.
@@ -42,6 +67,18 @@ def process_category_file(file_obj, user):
                     portfolio=str(row.get("Portfolio", "")).strip(),
                     category=str(row.get("Category", "")).strip(),
                     subcategory=str(row.get("Subcategory", "")).strip(),
+                    msku=str(row.get("Skus", "") or "").strip() or None,
+                    parent_asin=_clean_optional_parent_asin(row.get("Parent ASIN")),
+                    launch_date=_clean_optional_date(
+                        row.get("Launch date", row.get("Launch Date"))
+                    ),
+                    category_manager=_clean_optional_text(row.get("RP")),
+                    series_name=_clean_optional_text(row.get("Series")),
+                    material=_clean_optional_text(row.get("Material")),
+                    size=_clean_optional_text(row.get("Size")),
+                    brand_name=_clean_optional_text(row.get("Brand name")),
+                    ratings=_clean_optional_text(row.get("Ratings")),
+                    finish=_clean_optional_text(row.get("Finish")),
                 )
             )
 
@@ -51,7 +88,21 @@ def process_category_file(file_obj, user):
                     new_mappings[i : i + DB_BATCH_SIZE],
                     **get_upsert_kwargs(
                         unique_fields=["user", "asin"],
-                        update_fields=["portfolio", "category", "subcategory"],
+                        update_fields=[
+                            "portfolio",
+                            "category",
+                            "subcategory",
+                            "msku",
+                            "parent_asin",
+                            "launch_date",
+                            "category_manager",
+                            "series_name",
+                            "material",
+                            "size",
+                            "brand_name",
+                            "ratings",
+                            "finish",
+                        ],
                     ),
                 )
 

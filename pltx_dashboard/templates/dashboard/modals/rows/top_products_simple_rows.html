@@ -1,18 +1,113 @@
 {% load dashboard_extras %}
 {% for prod in rows %}
 <tr>
+    {% if platform == "Amazon" %}
+    {# ── Amazon only: SKU (ASIN), Revenue, MoM Growth, Page Views ── #}
     <td>
         <div class="ceo-sku-cell">
-            <div class="ceo-sku-thumb">📦</div><span>{{ prod.sku }}</span>
+            <div class="ceo-sku-thumb">📦</div>
+            <div>
+                <div style="font-weight:700;font-size:13px;line-height:1.3;">{{ prod.msku|default:"-" }}</div>
+                <div style="font-size:10px;color:var(--muted);font-family:monospace;line-height:1.2;">{{ prod.az_sku|default:prod.sku }}</div>
+            </div>
         </div>
     </td>
-    <td class="num" data-order="{{ prod.revenue|default:0 }}">{{ prod.revenue|fmt_rupee }}</td>
-    <td class="num {% if prod.growth >= 0 %}growth-up{% else %}growth-down{% endif %}" data-order="{{ prod.growth|default:0 }}">
-        {% if prod.growth >= 0 %}▲{% else %}▼{% endif %} {{ prod.growth|abs_val }}%
+    <td class="num" data-order="{{ prod.az_revenue|default:0 }}">{{ prod.az_revenue|default:prod.revenue|fmt_rupee }}</td>
+    <td class="num {% if prod.az_mom_growth|default:prod.growth >= 0 %}growth-up{% else %}growth-down{% endif %}" data-order="{{ prod.az_mom_growth|default:prod.growth|default:0 }}">
+        {% with g=prod.az_mom_growth|default:prod.growth %}
+        <div style="color:{% if g >= 0 %}#10b981{% else %}#ef4444{% endif %};font-weight:700;">{% if g >= 0 %}▲{% else %}▼{% endif %} {{ g|abs_val }}%</div>
+        <div style="font-size:10px;color:#94a3b8;font-weight:500;margin-top:2px;">
+            {{ prod.az_revenue|default:prod.revenue|fmt_rupee }} vs {{ prod.az_prev_revenue|default:prod.prev_revenue|fmt_rupee }}
+        </div>
+        {% endwith %}
     </td>
+    <td class="num" data-order="{{ prod.az_pageviews|default:prod.pageviews|default:0 }}">{{ prod.az_pageviews|default:prod.pageviews|fmt_num }}</td>
+
+    {% elif platform == "Flipkart" %}
+    {# ── Flipkart only: SKU (FSN), Revenue, MoM Growth, Page Views ── #}
+    <td>
+        <div class="ceo-sku-cell">
+            <div class="ceo-sku-thumb">📦</div>
+            <div>
+                <div style="font-weight:700;font-size:13px;line-height:1.3;">{{ prod.msku|default:"-" }}</div>
+                <div style="font-size:10px;color:var(--muted);font-family:monospace;line-height:1.2;">{{ prod.fk_sku|default:prod.sku }}</div>
+            </div>
+        </div>
+    </td>
+    <td class="num" data-order="{{ prod.fk_revenue|default:0 }}">{{ prod.fk_revenue|default:prod.revenue|fmt_rupee }}</td>
+    <td class="num {% if prod.fk_mom_growth|default:prod.growth >= 0 %}growth-up{% else %}growth-down{% endif %}" data-order="{{ prod.fk_mom_growth|default:prod.growth|default:0 }}">
+        {% with g=prod.fk_mom_growth|default:prod.growth %}
+        <div style="color:{% if g >= 0 %}#10b981{% else %}#ef4444{% endif %};font-weight:700;">{% if g >= 0 %}▲{% else %}▼{% endif %} {{ g|abs_val }}%</div>
+        <div style="font-size:10px;color:#94a3b8;font-weight:500;margin-top:2px;">
+            {{ prod.fk_revenue|default:prod.revenue|fmt_rupee }} vs {{ prod.fk_prev_revenue|default:prod.prev_revenue|fmt_rupee }}
+        </div>
+        {% endwith %}
+    </td>
+    <td class="num" data-order="{{ prod.fk_pageviews|default:prod.pageviews|default:0 }}">{{ prod.fk_pageviews|default:prod.pageviews|fmt_num }}</td>
+
+    {% else %}
+    {# ── All platforms: Amazon SKU, Flipkart SKU (separate cols), Az Rev, FK Rev, Total Rev, Az MoM, FK MoM, Az Contribution, FK Contribution, Az PV, FK PV ── #}
+    <td data-order="{{ prod.az_sku|default:'' }}">
+        {% if prod.az_sku %}
+        <div class="ceo-sku-cell">
+            <div class="ceo-sku-thumb"><img src="/static/logo/amazon_logo.png" style="width:14px;height:14px;"></div>
+            <div>
+                <div style="font-weight:700;font-size:12px;line-height:1.3;">{{ prod.msku|default:"-" }}</div>
+                <div style="font-size:10px;color:#f59e0b;font-family:monospace;line-height:1.2;">{{ prod.az_sku }}</div>
+            </div>
+        </div>
+        {% else %}<span style="color:var(--muted)">-</span>{% endif %}
+    </td>
+    <td data-order="{{ prod.fk_sku|default:'' }}">
+        {% if prod.fk_sku %}
+        <div class="ceo-sku-cell">
+            <div class="ceo-sku-thumb"><img src="/static/logo/flipkart_logo.png" style="width:14px;height:14px;"></div>
+            <div>
+                <div style="font-weight:700;font-size:12px;line-height:1.3;">{{ prod.msku|default:"-" }}</div>
+                <div style="font-size:10px;color:#38bdf8;font-family:monospace;line-height:1.2;">{{ prod.fk_sku }}</div>
+            </div>
+        </div>
+        {% else %}<span style="color:var(--muted)">-</span>{% endif %}
+    </td>
+    <td class="num" data-order="{{ prod.az_revenue|default:0 }}">
+        {% if prod.az_sku %}{{ prod.az_revenue|fmt_rupee }}{% else %}<span style="color:var(--muted)">-</span>{% endif %}
+    </td>
+    <td class="num" data-order="{{ prod.fk_revenue|default:0 }}">
+        {% if prod.fk_sku %}{{ prod.fk_revenue|fmt_rupee }}{% else %}<span style="color:var(--muted)">-</span>{% endif %}
+    </td>
+    <td class="num" data-order="{{ prod.revenue|default:0 }}">{{ prod.revenue|fmt_rupee }}</td>
+    <td class="num {% if prod.az_mom_growth >= 0 %}growth-up{% else %}growth-down{% endif %}" data-order="{{ prod.az_mom_growth|default:0 }}">
+        {% if prod.az_sku %}
+        <div style="color:{% if prod.az_mom_growth >= 0 %}#10b981{% else %}#ef4444{% endif %};font-weight:700;">{% if prod.az_mom_growth >= 0 %}▲{% else %}▼{% endif %} {{ prod.az_mom_growth|abs_val }}%</div>
+        <div style="font-size:10px;color:#94a3b8;font-weight:500;margin-top:2px;">
+            {{ prod.az_revenue|fmt_rupee }} vs {{ prod.az_prev_revenue|fmt_rupee }}
+        </div>
+        {% else %}<span style="color:var(--muted)">-</span>{% endif %}
+    </td>
+    <td class="num {% if prod.fk_mom_growth >= 0 %}growth-up{% else %}growth-down{% endif %}" data-order="{{ prod.fk_mom_growth|default:0 }}">
+        {% if prod.fk_sku %}
+        <div style="color:{% if prod.fk_mom_growth >= 0 %}#10b981{% else %}#ef4444{% endif %};font-weight:700;">{% if prod.fk_mom_growth >= 0 %}▲{% else %}▼{% endif %} {{ prod.fk_mom_growth|abs_val }}%</div>
+        <div style="font-size:10px;color:#94a3b8;font-weight:500;margin-top:2px;">
+            {{ prod.fk_revenue|fmt_rupee }} vs {{ prod.fk_prev_revenue|fmt_rupee }}
+        </div>
+        {% else %}<span style="color:var(--muted)">-</span>{% endif %}
+    </td>
+    <td class="num" data-order="{{ prod.az_contribution|default:0 }}">
+        {% if prod.az_sku %}{{ prod.az_contribution }}%{% else %}-{% endif %}
+    </td>
+    <td class="num" data-order="{{ prod.fk_contribution|default:0 }}">
+        {% if prod.fk_sku %}{{ prod.fk_contribution }}%{% else %}-{% endif %}
+    </td>
+    <td class="num" data-order="{{ prod.az_pageviews|default:0 }}">
+        {% if prod.az_sku %}{{ prod.az_pageviews|fmt_num }}{% else %}-{% endif %}
+    </td>
+    <td class="num" data-order="{{ prod.fk_pageviews|default:0 }}">
+        {% if prod.fk_sku %}{{ prod.fk_pageviews|fmt_num }}{% else %}-{% endif %}
+    </td>
+    {% endif %}
 </tr>
 {% empty %}
 <tr>
-    <td colspan="3" class="empty">No data available</td>
+    <td colspan="11" class="empty">No data available</td>
 </tr>
 {% endfor %}
