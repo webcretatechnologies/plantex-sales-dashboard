@@ -17,7 +17,9 @@ def run():
         return
         
     print(f"Loading mapping for user {user.email}...")
-    wb = openpyxl.load_workbook('../FSN-ASIN_Mapping/Fk-Amz mapping data.xlsx', read_only=True)
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    file_path = os.path.join(base_dir, 'FSN-ASIN_Mapping', 'Fk-Amz mapping data.xlsx')
+    wb = openpyxl.load_workbook(file_path, read_only=True)
     ws = wb['Sheet1']
     
     rows = list(ws.iter_rows(values_only=True))
