@@ -22,6 +22,50 @@ from .service_common import DB_BATCH_SIZE, get_upsert_kwargs
 logger = logging.getLogger(__name__)
 
 
+def _clean_optional_text(value):
+    text = str(value or "").strip()
+    if not text or text.lower() == "nan":
+        return None
+    # Reject Excel formula strings (e.g. =IFERROR(VLOOKUP(...)))
+    if text.startswith("="):
+        return None
+    # Reject bare "0" which appears when a formula evaluates to 0 and is read as string
+    if text == "0":
+        return None
+    return text
+
+
+def _clean_optional_rating(value):
+    """Like _clean_optional_text but keeps numeric rating values (e.g. 4.3).
+    Returns None if value is 0, NaN, empty, or a formula string."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text or text.lower() == "nan" or text.startswith("="):
+        return None
+    try:
+        num = float(text)
+        if num == 0:
+            return None
+        return str(num)
+    except (ValueError, TypeError):
+        pass
+    if text == "0":
+        return None
+    return text
+
+
+def _clean_optional_date(value):
+    text = str(value or "").strip()
+    if not text or text.lower() == "nan" or text in {"0", "0.0"}:
+        return None
+    try:
+        return parse_report_date(value, prefer_dayfirst=True)
+    except Exception:
+        logger.warning("Ignoring invalid FK category Launch Date value: %r", value)
+        return None
+
+
 def process_fk_inventory_file(file_obj, user):
     """
     Parse FK Inventory file (FK.xlsx).
@@ -393,13 +437,21 @@ def process_fk_category(file_obj, user):
             return None
 
         fsn_col = resolve_col("FSN ID")
-        _asin_col = resolve_col("asin", "ASIN")
+        asin_col = resolve_col("asin", "ASIN")
         sku_col = resolve_col("SKU")
         portfolio_col = resolve_col("Portfolio")
         category_col = resolve_col("Category")
         subcategory_col = resolve_col("Sub Category", "Subcategory")
         _vertical_col = resolve_col("Vertical")
         product_status_col = resolve_col("Product Status")
+        material_col = resolve_col("Material")
+        finish_col = resolve_col("Finish")
+        category_manager_col = resolve_col("RP")
+        series_col = resolve_col("Series name", "Series")
+        ratings_col = resolve_col("Ratings")
+        brand_col = resolve_col("Brand name")
+        size_col = resolve_col("Size")
+        launch_date_col = resolve_col("Launch Date", "Launch date")
 
         missing = []
         if not fsn_col:
@@ -438,11 +490,20 @@ def process_fk_category(file_obj, user):
                 FlipkartCategoryMap(
                     user=user,
                     fsn=fsn,
+                    asin=_clean_optional_text(row.get(asin_col)) if asin_col else None,
                     sku=str(row.get(sku_col, "") or "").strip() if sku_col else "",
                     portfolio=str(row.get(portfolio_col, "") or "").strip(),
                     category=str(row.get(category_col, "") or "").strip(),
                     subcategory=str(row.get(subcategory_col, "") or "").strip(),
                     product_status=normalized_status,
+                    launch_date=_clean_optional_date(row.get(launch_date_col)) if launch_date_col else None,
+                    category_manager=_clean_optional_text(row.get(category_manager_col)) if category_manager_col else None,
+                    series_name=_clean_optional_text(row.get(series_col)) if series_col else None,
+                    material=_clean_optional_text(row.get(material_col)) if material_col else None,
+                    size=_clean_optional_text(row.get(size_col)) if size_col else None,
+                    brand_name=_clean_optional_text(row.get(brand_col)) if brand_col else None,
+                    ratings=_clean_optional_rating(row.get(ratings_col)) if ratings_col else None,
+                    finish=_clean_optional_text(row.get(finish_col)) if finish_col else None,
                 )
             )
 
@@ -459,6 +520,15 @@ def process_fk_category(file_obj, user):
                             "category",
                             "subcategory",
                             "product_status",
+                            "asin",
+                            "launch_date",
+                            "category_manager",
+                            "series_name",
+                            "material",
+                            "size",
+                            "brand_name",
+                            "ratings",
+                            "finish",
                         ],
                     ),
                 )

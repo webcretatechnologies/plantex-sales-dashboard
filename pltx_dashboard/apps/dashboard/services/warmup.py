@@ -110,13 +110,30 @@ def prime_dashboard_payloads_for_user(
         )
 
         scoped_qs, scoped_fk_qs = apply_dashboard_entity_filters(
-            base_qs, base_fk_qs, filters
+            base_qs, base_fk_qs, filters, user=user
         )
         if not scoped_qs.exists() and not scoped_fk_qs.exists():
             skipped_no_data += len(resolved_view_types)
             continue
 
         spend_qs = _apply_spend_filters(SpendData.objects.filter(user=user), filters)
+        if (
+            filters.get("category")
+            or filters.get("portfolio")
+            or filters.get("subcategory")
+            or filters.get("category_manager")
+            or filters.get("series_name")
+            or filters.get("material")
+            or filters.get("size")
+            or filters.get("brand_name")
+            or filters.get("ratings")
+            or filters.get("parent_asin")
+            or filters.get("finish")
+            or filters.get("launch_date_range")
+            or filters.get("launch_start_date")
+            or filters.get("launch_end_date")
+        ):
+            spend_qs = spend_qs.filter(asin__in=scoped_qs.values("asin").distinct())
 
         # Check which view_types still need computation for this filter set.
         # The ORM computation result is identical for all view_types (only cache

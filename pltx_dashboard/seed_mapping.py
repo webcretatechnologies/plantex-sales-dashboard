@@ -6,9 +6,9 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'pltx_dashboard.settings')
 django.setup()
 
-from apps.dashboard.models import AsinFsnMapping
-from apps.accounts.models import Users
-import openpyxl
+from apps.dashboard.models import AsinFsnMapping  # noqa: E402
+from apps.accounts.models import Users  # noqa: E402
+import openpyxl  # noqa: E402
 
 def run():
     user = Users.objects.first()
@@ -21,7 +21,6 @@ def run():
     ws = wb['Sheet1']
     
     rows = list(ws.iter_rows(values_only=True))
-    headers = rows[0]
     data = rows[1:]
     
     inserts = []

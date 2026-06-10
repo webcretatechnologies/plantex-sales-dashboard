@@ -1,0 +1,16 @@
+{% load dashboard_extras %}
+{% for row in rows %}
+<tr>
+    <td style="font-weight:600;">{{ row.product_id|default:"-" }}</td>
+    <td>{{ row.sku|default:"-" }}</td>
+    <td>{{ row.platform|default:"-" }}</td>
+    <td class="num" data-order="{{ row.pageviews|default:0 }}">{{ row.pageviews|fmt_num }}</td>
+    <td class="num" data-order="{{ row.units|default:0 }}">{{ row.units|fmt_num }}</td>
+    <td class="num" data-order="{{ row.revenue|default:0 }}">{{ row.revenue|fmt_rupee }}</td>
+    <td class="num" data-order="{{ row.ad_spend|default:0 }}">{{ row.ad_spend|fmt_rupee }}</td>
+</tr>
+{% empty %}
+<tr>
+    <td colspan="7" class="empty" style="text-align:center;padding:20px;color:var(--muted);">No data available</td>
+</tr>
+{% endfor %}

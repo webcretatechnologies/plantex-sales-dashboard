@@ -633,7 +633,7 @@ def _mysql_insert_fk_processed_rows(user_id, target_dates):
     date_filter = f" AND date IN ({date_ph})" if target_dates else ""
 
     insert_traffic_sql = f"""
-        INSERT INTO {processed_table} (
+        INSERT IGNORE INTO {processed_table} (
             user_id, date, fsn, platform, portfolio, category, subcategory, price,
             pageviews, units, orders, revenue, total_spend, spend_sp, spend_sb, spend_sd
         )
@@ -674,7 +674,7 @@ def _mysql_insert_fk_processed_rows(user_id, target_dates):
     """
 
     insert_spend_only_sql = f"""
-        INSERT INTO {processed_table} (
+        INSERT IGNORE INTO {processed_table} (
             user_id, date, fsn, platform, portfolio, category, subcategory, price,
             pageviews, units, orders, revenue, total_spend, spend_sp, spend_sb, spend_sd
         )

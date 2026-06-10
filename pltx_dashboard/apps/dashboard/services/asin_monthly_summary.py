@@ -28,6 +28,19 @@ from apps.dashboard.models import (
 )
 
 
+def _to_float(value, default=0.0):
+    if value is None:
+        return default
+    if isinstance(value, str):
+        value = value.strip().replace(",", "").replace("₹", "")
+        if not value:
+            return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 # ---------------------------------------------------------------------------
 # Build / Rebuild
 # ---------------------------------------------------------------------------
@@ -216,10 +229,12 @@ def _ym_range_from_filters(filters):
             end_d = datetime.datetime.strptime(str(end_str), "%Y-%m-%d").date()
             if end_d < start_d:
                 start_d, end_d = end_d, start_d
-            if (end_d - start_d).days >= 45:
-                return _ym(start_d), _ym(end_d)
+            return _ym(start_d), _ym(end_d)
         except Exception:
             pass
+
+    if not date_range and not start_str and not end_str:
+        return "all", "all"
 
     return None  # too short or unknown → caller falls back to ProcessedDashboardData
 
@@ -269,18 +284,24 @@ def get_ams_qs(user, filters):
     Return a filtered DashboardAsinMonthlySummary queryset or None.
     Returns None when:
       - date range is too short (< 45 days)
+      - mapping filters (like category_manager) are applied, since they require JOINs
       - monthly summary has no data for this user
     """
+    from apps.dashboard.services.filters import _has_mapping_filters, has_launch_date_filter
+    if _has_mapping_filters(filters) or has_launch_date_filter(filters):
+        return None
+
     ym_range = _ym_range_from_filters(filters)
     if ym_range is None:
         return None
 
     ym_start, ym_end = ym_range
-    qs = DashboardAsinMonthlySummary.objects.filter(
-        user=user,
-        year_month__gte=ym_start,
-        year_month__lte=ym_end,
-    )
+    qs = DashboardAsinMonthlySummary.objects.filter(user=user)
+    if ym_start != "all" and ym_end != "all":
+        qs = qs.filter(
+            year_month__gte=ym_start,
+            year_month__lte=ym_end,
+        )
 
     platform = (filters.get("platform") or "").strip()
     if platform == "Amazon":
@@ -296,129 +317,6 @@ def get_ams_qs(user, filters):
 # Activity metrics (replaces _compute_activity_metrics for long date ranges)
 # ---------------------------------------------------------------------------
 
-def compute_activity_metrics_from_monthly(user, filters, fsn_meta=None):
-    """
-    Fast alternative to _compute_activity_metrics / _compute_sku_activity_combined.
-    Uses DashboardAsinMonthlySummary — 30× fewer rows for multi-month ranges.
-
-    Returns the same dict as _compute_activity_metrics, or None if the monthly
-    summary is not applicable (date range too short / no data yet).
-    """
-    ams_qs = get_ams_qs(user, filters)
-    if ams_qs is None:
-        return None
-
-    platform_filter = (filters.get("platform") or "").strip()
-
-    az_active = az_selling = az_zero_count = az_zero_pv = 0
-    fk_active = fk_selling = fk_zero_count = fk_zero_pv = 0
-
-    # GROUP BY asin on the small monthly summary instead of the daily table
-    for row in (
-        ams_qs.values("platform", "asin")
-        .annotate(
-            total_units=Sum("units"),
-            total_pv=Sum("pageviews"),
-            total_rev=Sum("revenue"),
-            total_orders=Sum("orders"),
-        )
-        .iterator(chunk_size=5000)
-    ):
-        plat = row.get("platform") or ""
-        has_units = (row.get("total_units") or 0) > 0
-        has_activity = (
-            (row.get("total_pv") or 0) > 0
-            or (row.get("total_rev") or 0) > 0
-            or (row.get("total_orders") or 0) > 0
-        )
-
-        if plat == "Amazon":
-            az_active += 1
-            if has_units:
-                az_selling += 1
-            elif has_activity:
-                az_zero_count += 1
-                az_zero_pv += int(row.get("total_pv") or 0)
-        else:
-            fk_active += 1
-            if has_units:
-                fk_selling += 1
-            elif has_activity:
-                fk_zero_count += 1
-                fk_zero_pv += int(row.get("total_pv") or 0)
-
-    if az_active + fk_active == 0:
-        return None  # monthly summary has no rows for this filter — fall back to raw table
-
-    # Flipkart continue / discontinue revenue (uses pre-cached fsn_meta — no extra DB hit)
-    status_counts = {"Continued": 0, "Discontinued": 0}
-    status_revenue = {"Continued": 0.0, "Discontinued": 0.0}
-
-    if fsn_meta and platform_filter != "Amazon":
-        cat_f = filters.get("category")
-        port_f = filters.get("portfolio")
-        sub_f = filters.get("subcategory")
-        fsn_f = filters.get("fsn")
-
-        def _matches(val, sel):
-            if not sel:
-                return True
-            return val in sel if isinstance(sel, (list, tuple, set)) else val == sel
-
-        fsn_to_status: dict = {}
-        for fsn, meta in fsn_meta.items():
-            if not _matches(meta.get("category", ""), cat_f):
-                continue
-            if not _matches(meta.get("portfolio", ""), port_f):
-                continue
-            if not _matches(meta.get("subcategory", ""), sub_f):
-                continue
-            if fsn_f and not _matches(fsn, fsn_f):
-                continue
-            raw = str(meta.get("product_status") or "").strip().lower()
-            if raw in ("continued", "continue", "continued/pack of not sales"):
-                fsn_to_status[fsn] = "Continued"
-            elif raw in ("discontinued", "discontinue"):
-                fsn_to_status[fsn] = "Discontinued"
-
-        for status in fsn_to_status.values():
-            if status in status_counts:
-                status_counts[status] += 1
-
-        fk_ams_qs = ams_qs.filter(platform="Flipkart")
-        for row in (
-            fk_ams_qs.values("asin")
-            .annotate(revenue=Sum("revenue"))
-            .iterator(chunk_size=5000)
-        ):
-            fsn = row.get("asin")
-            if not fsn:
-                continue
-            status = fsn_to_status.get(str(fsn).strip())
-            if status in status_revenue:
-                status_revenue[status] += float(row.get("revenue") or 0.0)
-
-    return {
-        "active_asins": az_active + fk_active,
-        "selling_sku_count": az_selling + fk_selling,
-        "zero_selling_sku_count": az_zero_count + fk_zero_count,
-        "zero_sales_pageviews": az_zero_pv + fk_zero_pv,
-        "az_selling_sku_count": az_selling,
-        "fk_selling_sku_count": fk_selling,
-        "az_zero_selling_sku_count": az_zero_count,
-        "fk_zero_selling_sku_count": fk_zero_count,
-        "az_zero_sales_pageviews": az_zero_pv,
-        "fk_zero_sales_pageviews": fk_zero_pv,
-        "continue_sales_revenue": round(status_revenue["Continued"], 2),
-        "discontinue_sales_revenue": round(status_revenue["Discontinued"], 2),
-        "continue_sku_count": int(status_counts["Continued"]),
-        "discontinued_sku_count": int(status_counts["Discontinued"]),
-    }
-
-
-# ---------------------------------------------------------------------------
-# Top products (replaces _build_top_product_rows for long date ranges)
-# ---------------------------------------------------------------------------
 
 def build_top_products_from_monthly(
     user,
@@ -440,16 +338,12 @@ def build_top_products_from_monthly(
     if ams_qs is None:
         return None
 
-    effective_limit = None if include_full_payload else limit
-
     # Current-period per-ASIN totals
     current_agg = (
         ams_qs.values("asin", "platform")
-        .annotate(revenue=Sum("revenue"), units=Sum("units"))
+        .annotate(revenue=Sum("revenue"), units=Sum("units"), pageviews=Sum("pageviews"))
         .order_by("-revenue")
     )
-    if effective_limit:
-        current_agg = current_agg[:effective_limit]
 
     current_rows = list(current_agg)
     if not current_rows:
@@ -457,8 +351,9 @@ def build_top_products_from_monthly(
 
     # Previous-period revenue — same year_month range shifted back one month
     ym_range = _ym_range_from_filters(filters)
+    platform_filter = (filters.get("platform") or "").strip()
     prev_revenue_by_asin: dict = {}
-    if ym_range:
+    if ym_range and ym_range[0] != "all":
         ym_start, ym_end = ym_range
         span_days = (ym_end - ym_start).days + 31  # approx span in days
         prev_ym_end = _ym(ym_start - datetime.timedelta(days=1))
@@ -471,37 +366,119 @@ def build_top_products_from_monthly(
             year_month__gte=prev_ym_start,
             year_month__lte=prev_ym_end,
         )
-        platform = (filters.get("platform") or "").strip()
-        if platform == "Amazon":
+        if platform_filter == "Amazon":
             prev_qs = prev_qs.filter(platform="Amazon")
-        elif platform == "Flipkart":
+        elif platform_filter == "Flipkart":
             prev_qs = prev_qs.filter(platform="Flipkart")
 
         for row in prev_qs.values("asin").annotate(revenue=Sum("revenue")):
             asin = str(row.get("asin") or "")
             if asin:
-                prev_revenue_by_asin[asin] = float(row.get("revenue") or 0.0)
+                prev_revenue_by_asin[asin] = _to_float(row.get("revenue"))
 
     from apps.dashboard.services.metrics import safe_growth as _safe_growth
 
-    results = []
-    for row in current_rows:
+    # \u2500\u2500 group by platform \u2500\u2500
+    az_rows = [r for r in current_rows if (r.get("platform") or "") == "Amazon"]
+    fk_rows = [r for r in current_rows if (r.get("platform") or "") == "Flipkart"]
+
+    az_total_rev = sum(_to_float(r.get("revenue")) for r in az_rows)
+    fk_total_rev = sum(_to_float(r.get("revenue")) for r in fk_rows)
+
+    merged = {}
+
+    for row in az_rows:
         asin = str(row.get("asin") or "").strip()
         if not asin:
             continue
-        plat = row.get("platform") or ""
-        meta = (asin_meta or {}).get(asin, {}) if plat == "Amazon" else (fsn_meta or {}).get(asin, {})
-        curr_rev = float(row.get("revenue") or 0.0)
-        results.append({
+        meta = (asin_meta or {}).get(asin, {})
+        curr_rev = _to_float(row.get("revenue"))
+        msku = meta.get("msku") or meta.get("sku") or ""
+        key = msku if msku else f"az_{asin}"
+        az_prev = prev_revenue_by_asin.get(asin, 0.0)
+        az_growth = _safe_growth(curr_rev, az_prev)
+        az_contrib = round(curr_rev / az_total_rev * 100, 1) if az_total_rev > 0 else 0.0
+        merged[key] = {
             "sku": asin,
+            "msku": msku or asin,
             "cluster": meta.get("portfolio") or "Standard",
-            "revenue": curr_rev,
-            "growth": _safe_growth(curr_rev, prev_revenue_by_asin.get(asin, 0.0)),
+            "az_sku": asin,
+            "fk_sku": None,
+            "az_revenue": round(curr_rev, 2),
+            "fk_revenue": 0.0,
+            "az_prev_revenue": round(az_prev, 2),
+            "fk_prev_revenue": 0.0,
+            "az_mom_growth": az_growth,
+            "fk_mom_growth": 0.0,
+            "az_contribution": az_contrib,
+            "fk_contribution": 0.0,
+            "az_pageviews": int(row.get("pageviews") or 0),
+            "fk_pageviews": 0,
+            "revenue": round(curr_rev, 2),
             "units_sold": int(row.get("units") or 0),
-        })
+            "pageviews": int(row.get("pageviews") or 0),
+            "growth": az_growth,
+            "prev_revenue": round(az_prev, 2),
+        }
 
+    for row in fk_rows:
+        fsn = str(row.get("asin") or "").strip()  # monthly summary uses 'asin' field for both
+        if not fsn:
+            continue
+        meta = (fsn_meta or {}).get(fsn, {})
+        curr_rev = _to_float(row.get("revenue"))
+        msku = meta.get("sku") or ""
+        key = msku if msku else f"fk_{fsn}"
+        fk_prev = prev_revenue_by_asin.get(fsn, 0.0)
+        fk_growth = _safe_growth(curr_rev, fk_prev)
+        fk_contrib = round(curr_rev / fk_total_rev * 100, 1) if fk_total_rev > 0 else 0.0
+        if key in merged:
+            r = merged[key]
+            r["fk_sku"] = fsn
+            r["fk_revenue"] = round(curr_rev, 2)
+            r["fk_prev_revenue"] = round(fk_prev, 2)
+            r["fk_mom_growth"] = fk_growth
+            r["fk_contribution"] = fk_contrib
+            r["fk_pageviews"] = int(row.get("pageviews") or 0)
+            r["revenue"] = round(_to_float(r.get("revenue")) + curr_rev, 2)
+            r["units_sold"] += int(row.get("units") or 0)
+            r["pageviews"] += int(row.get("pageviews") or 0)
+            r["prev_revenue"] = round(_to_float(r.get("prev_revenue")) + fk_prev, 2)
+            r["growth"] = _safe_growth(r["revenue"], r["prev_revenue"])
+        else:
+            merged[key] = {
+                "sku": fsn,
+                "msku": msku or fsn,
+                "cluster": meta.get("portfolio") or "Standard",
+                "az_sku": None,
+                "fk_sku": fsn,
+                "az_revenue": 0.0,
+                "fk_revenue": round(curr_rev, 2),
+                "az_prev_revenue": 0.0,
+                "fk_prev_revenue": round(fk_prev, 2),
+                "az_mom_growth": 0.0,
+                "fk_mom_growth": fk_growth,
+                "az_contribution": 0.0,
+                "fk_contribution": fk_contrib,
+                "az_pageviews": 0,
+                "fk_pageviews": int(row.get("pageviews") or 0),
+                "revenue": round(curr_rev, 2),
+                "units_sold": int(row.get("units") or 0),
+                "pageviews": int(row.get("pageviews") or 0),
+                "growth": fk_growth,
+                "prev_revenue": round(fk_prev, 2),
+            }
+
+    results = list(merged.values())
+    for row in results:
+        row["az_revenue"] = _to_float(row.get("az_revenue"))
+        row["fk_revenue"] = _to_float(row.get("fk_revenue"))
+        row["revenue"] = _to_float(row.get("revenue"))
+        row["az_prev_revenue"] = _to_float(row.get("az_prev_revenue"))
+        row["fk_prev_revenue"] = _to_float(row.get("fk_prev_revenue"))
+        row["prev_revenue"] = _to_float(row.get("prev_revenue"))
     results.sort(key=lambda r: r["revenue"], reverse=True)
-    return results
+    return results if include_full_payload else results[:limit]
 
 
 # ---------------------------------------------------------------------------
@@ -516,23 +493,17 @@ def build_declining_products_from_monthly(
     pm_start,
     pm_end,
     include_full_payload=False,
+    asin_meta=None,
+    fsn_meta=None,
 ):
-    """
-    Fast declining-product list using DashboardAsinMonthlySummary.
-    Compares current-month-period revenue vs. previous-month-period revenue.
-    Returns None if monthly summary is not applicable.
-    """
     ams_qs = get_ams_qs(user, filters)
     if ams_qs is None:
         return None
 
-    # Expand the date range to cover both periods
     period_min_ym = _ym(min(cm_start, pm_start))
     period_max_ym = _ym(max(cm_end, pm_end))
-    cm_ym_start = _ym(cm_start)
-    cm_ym_end = _ym(cm_end)
-    pm_ym_start = _ym(pm_start)
-    pm_ym_end = _ym(pm_end)
+    cm_ym_start, cm_ym_end = _ym(cm_start), _ym(cm_end)
+    pm_ym_start, pm_ym_end = _ym(pm_start), _ym(pm_end)
 
     base_qs = DashboardAsinMonthlySummary.objects.filter(
         user=user,
@@ -548,54 +519,107 @@ def build_declining_products_from_monthly(
 
     from django.db.models import Case, F, Value, When, FloatField
 
-    cm_sku_rev: dict = {}
-    pm_sku_rev: dict = {}
+    # We will fetch az and fk separately to merge by MSKU
+    cm_az_rev, pm_az_rev, pv_az = {}, {}, {}
+    cm_fk_rev, pm_fk_rev, pv_fk = {}, {}, {}
 
     for row in (
-        base_qs.values("asin")
+        base_qs.values("asin", "platform")
         .annotate(
-            cm_r=Sum(
-                Case(
-                    When(year_month__gte=cm_ym_start, year_month__lte=cm_ym_end, then=F("revenue")),
-                    default=Value(0.0),
-                    output_field=FloatField(),
-                )
-            ),
-            pm_r=Sum(
-                Case(
-                    When(year_month__gte=pm_ym_start, year_month__lte=pm_ym_end, then=F("revenue")),
-                    default=Value(0.0),
-                    output_field=FloatField(),
-                )
-            ),
+            cm_r=Sum(Case(When(year_month__gte=cm_ym_start, year_month__lte=cm_ym_end, then=F("revenue")), default=Value(0.0), output_field=FloatField())),
+            pm_r=Sum(Case(When(year_month__gte=pm_ym_start, year_month__lte=pm_ym_end, then=F("revenue")), default=Value(0.0), output_field=FloatField())),
+            pv=Sum(Case(When(year_month__gte=cm_ym_start, year_month__lte=cm_ym_end, then=F("pageviews")), default=Value(0.0), output_field=FloatField())),
         )
         .iterator(chunk_size=5000)
     ):
-        asin = str(row.get("asin") or "").strip()
-        if not asin:
+        sku = str(row.get("asin") or "").strip()
+        pf = str(row.get("platform") or "")
+        if not sku:
             continue
-        if row.get("cm_r"):
-            cm_sku_rev[asin] = float(row.get("cm_r") or 0.0)
-        if row.get("pm_r"):
-            pm_sku_rev[asin] = float(row.get("pm_r") or 0.0)
+            
+        cm_r = _to_float(row.get("cm_r"))
+        pm_r = _to_float(row.get("pm_r"))
+        pv = int(row.get("pv") or 0)
+        
+        if pf == "Amazon":
+            cm_az_rev[sku] = cm_az_rev.get(sku, 0.0) + cm_r
+            pm_az_rev[sku] = pm_az_rev.get(sku, 0.0) + pm_r
+            pv_az[sku] = pv_az.get(sku, 0) + pv
+        elif pf == "Flipkart":
+            cm_fk_rev[sku] = cm_fk_rev.get(sku, 0.0) + cm_r
+            pm_fk_rev[sku] = pm_fk_rev.get(sku, 0.0) + pm_r
+            pv_fk[sku] = pv_fk.get(sku, 0) + pv
 
-    if not cm_sku_rev and not pm_sku_rev:
-        return None  # monthly summary empty for this period — fall back to ProcessedDashboardData
+    if not cm_az_rev and not pm_az_rev and not cm_fk_rev and not pm_fk_rev:
+        return None
 
     from apps.dashboard.services.metrics import safe_growth as _safe_growth
 
-    declining = []
-    for asin in set(cm_sku_rev) | set(pm_sku_rev):
-        curr = cm_sku_rev.get(asin, 0.0)
-        prev = pm_sku_rev.get(asin, 0.0)
-        drop_pct = _safe_growth(curr, prev)
-        if drop_pct < 0:
-            declining.append({
-                "sku": asin,
-                "revenue": curr,
-                "drop_pct": drop_pct,
-                "impact": max(prev - curr, 0.0),
-            })
+    merged = {}
+    _asin_meta = asin_meta or {}
+    _fsn_meta = fsn_meta or {}
 
-    declining.sort(key=lambda r: (r["revenue"], r["drop_pct"]))
+    for asin in set(cm_az_rev) | set(pm_az_rev):
+        curr = cm_az_rev.get(asin, 0.0)
+        prev = pm_az_rev.get(asin, 0.0)
+        msku = _asin_meta.get(asin, {}).get("msku") or _asin_meta.get(asin, {}).get("sku") or ""
+        key = msku if msku else f"az_{asin}"
+        
+        merged[key] = {
+            "sku": asin, "msku": msku or asin,
+            "az_sku": asin, "fk_sku": None,
+            "az_revenue": round(curr, 2), "fk_revenue": 0.0,
+            "az_prev_revenue": round(prev, 2), "fk_prev_revenue": 0.0,
+            "az_drop_pct": _safe_growth(curr, prev), "fk_drop_pct": 0.0,
+            "az_impact": max(prev - curr, 0.0), "fk_impact": 0.0,
+            "az_pageviews": pv_az.get(asin, 0), "fk_pageviews": 0,
+            "revenue": round(curr, 2), "prev_revenue": round(prev, 2),
+            "pageviews": pv_az.get(asin, 0),
+        }
+
+    for fsn in set(cm_fk_rev) | set(pm_fk_rev):
+        curr = cm_fk_rev.get(fsn, 0.0)
+        prev = pm_fk_rev.get(fsn, 0.0)
+        msku = _fsn_meta.get(fsn, {}).get("sku") or ""
+        key = msku if msku else f"fk_{fsn}"
+        
+        if key in merged:
+            r = merged[key]
+            r["fk_sku"] = fsn
+            r["fk_revenue"] = round(curr, 2)
+            r["fk_prev_revenue"] = round(prev, 2)
+            r["fk_drop_pct"] = _safe_growth(curr, prev)
+            r["fk_impact"] = max(prev - curr, 0.0)
+            r["fk_pageviews"] = pv_fk.get(fsn, 0)
+            r["revenue"] = round(_to_float(r.get("revenue")) + curr, 2)
+            r["prev_revenue"] = round(_to_float(r.get("prev_revenue")) + prev, 2)
+            r["pageviews"] += pv_fk.get(fsn, 0)
+        else:
+            merged[key] = {
+                "sku": fsn, "msku": msku or fsn,
+                "az_sku": None, "fk_sku": fsn,
+                "az_revenue": 0.0, "fk_revenue": round(curr, 2),
+                "az_prev_revenue": 0.0, "fk_prev_revenue": round(prev, 2),
+                "az_drop_pct": 0.0, "fk_drop_pct": _safe_growth(curr, prev),
+                "az_impact": 0.0, "fk_impact": max(prev - curr, 0.0),
+                "az_pageviews": 0, "fk_pageviews": pv_fk.get(fsn, 0),
+                "revenue": round(curr, 2), "prev_revenue": round(prev, 2),
+                "pageviews": pv_fk.get(fsn, 0),
+            }
+
+    declining = []
+    for r in merged.values():
+        r["az_revenue"] = _to_float(r.get("az_revenue"))
+        r["fk_revenue"] = _to_float(r.get("fk_revenue"))
+        r["revenue"] = _to_float(r.get("revenue"))
+        r["az_prev_revenue"] = _to_float(r.get("az_prev_revenue"))
+        r["fk_prev_revenue"] = _to_float(r.get("fk_prev_revenue"))
+        r["prev_revenue"] = _to_float(r.get("prev_revenue"))
+        drop_pct = _safe_growth(r["revenue"], r["prev_revenue"])
+        if drop_pct < 0:
+            r["drop_pct"] = drop_pct
+            r["impact"] = round(max(r["prev_revenue"] - r["revenue"], 0.0), 2)
+            declining.append(r)
+
+    declining.sort(key=lambda r: _to_float(r.get("drop_pct")))
     return declining if include_full_payload else declining[:5]

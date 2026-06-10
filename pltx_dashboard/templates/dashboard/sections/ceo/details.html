@@ -1,6 +1,8 @@
 {% load dashboard_extras %}
+{% include "dashboard/partials/npd_performance_modal.html" with npd_modal_id="npdPerformanceModal" npd_chart_id="npdPerformanceChart" npd_table_id="npdPerformanceTable" npd_header_id="npdPerformanceHeader" npd_view_name="ceo" %}
 <!-- Inventory Health Calculation Modal -->
-<div class="tbl-overlay inventory-health-modal" id="inventoryHealthModal" data-lazy-url="{% url 'dashboard-modal-rows' 'ceo' 'inventory-health' %}">
+<div class="tbl-overlay inventory-health-modal" id="inventoryHealthModal"
+    data-lazy-url="{% url 'dashboard-modal-rows' 'ceo' 'inventory-health' %}">
     <div class="tbl-overlay-inner" style="max-width: 1000px;">
         <div class="tbl-overlay-header">
             <div>
@@ -15,8 +17,10 @@
                 </div>
                 {% endif %}
                 <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px;">
-                    <button type="button" class="ceo-view-all-btn inv-health-download" data-format="csv">Download CSV</button>
-                    <button type="button" class="ceo-view-all-btn inv-health-download" data-format="excel">Download Excel</button>
+                    <button type="button" class="ceo-view-all-btn inv-health-download" data-format="csv">Download
+                        CSV</button>
+                    <button type="button" class="ceo-view-all-btn inv-health-download" data-format="excel">Download
+                        Excel</button>
                 </div>
             </div>
             <button class="tbl-overlay-close" onclick="closeModal('inventoryHealthModal')">✕ Close</button>
@@ -26,8 +30,7 @@
                 <thead id="invHealthHeaderCeo">
                     <tr>
                         <th>Date</th>
-                        <th>ASIN</th>
-                        <th>FSN</th>
+                        <th>Amazon SKU / Flipkart SKU</th>
                         <th>Category</th>
                         <th class="num">Amz Stock</th>
                         <th class="num">Amz Sales</th>
@@ -48,37 +51,37 @@
                     </tr>
                 </tbody>
             </table>
-<script>
-(function(){
-    var HEADERS = {
-        'All': '<tr><th>Date</th><th>ASIN</th><th>FSN</th><th>Category</th><th class="num">Amz Stock</th><th class="num">Amz Sales</th><th class="num">Amz DOC</th><th class="num">Amz Revenue</th><th>Amz Status</th><th class="num">FK Stock</th><th class="num">FK Sales</th><th class="num">FK DOC</th><th class="num">FK Revenue</th><th>FK Status</th><th>Calculation</th></tr>',
-        'Amazon': '<tr><th>Date</th><th>ASIN</th><th>Category</th><th class="num">Stock</th><th class="num">Sales</th><th class="num">DOC</th><th class="num">Revenue</th><th>Status</th><th>Calculation</th></tr>',
-        'Flipkart': '<tr><th>Date</th><th>FSN</th><th>Category</th><th class="num">Stock</th><th class="num">DOC</th><th class="num">Revenue</th><th>Status</th><th>Calculation</th></tr>',
-    };
-    function updateInvHealthHeader(platform) {
-        var hdr = document.getElementById('invHealthHeaderCeo');
-        if (hdr) hdr.innerHTML = HEADERS[platform] || HEADERS['All'];
-    }
-    function readCurrentPlatform() {
-        var sel = document.getElementById('platformSelect');
-        return sel ? (sel.value || 'All') : 'All';
-    }
-    // Update on Apply Filters click
-    document.addEventListener('DOMContentLoaded', function() {
-        updateInvHealthHeader(readCurrentPlatform());
-        var applyBtn = document.getElementById('applyFiltersBtn');
-        if (applyBtn) applyBtn.addEventListener('click', function() {
-            setTimeout(function(){ updateInvHealthHeader(readCurrentPlatform()); }, 200);
-        });
-    });
-    // Also update immediately when modal opens
-    document.addEventListener('click', function(e) {
-        if (e.target && e.target.getAttribute && e.target.getAttribute('onclick') && e.target.getAttribute('onclick').indexOf('inventoryHealthModal') > -1) {
-            setTimeout(function(){ updateInvHealthHeader(readCurrentPlatform()); }, 50);
-        }
-    });
-})();
-</script>
+            <script>
+                (function () {
+                    var HEADERS = {
+                        'All': '<tr><th data-field="date">Date</th><th data-field="sku">Amazon SKU / Flipkart SKU</th><th data-field="category">Category</th><th class="num" data-field="amz_stock">Amz Stock</th><th class="num" data-field="amz_sales">Amz Sales</th><th class="num" data-field="amz_doc">Amz DOC</th><th class="num" data-field="amz_revenue">Amz Revenue</th><th data-field="amz_status">Amz Status</th><th class="num" data-field="fk_stock">FK Stock</th><th class="num" data-field="fk_sales">FK Sales</th><th class="num" data-field="fk_doc">FK DOC</th><th class="num" data-field="fk_revenue">FK Revenue</th><th data-field="fk_status">FK Status</th><th data-field="reason">Calculation</th></tr>',
+                        'Amazon': '<tr><th data-field="date">Date</th><th data-field="asin">SKU</th><th data-field="category">Category</th><th class="num" data-field="amz_stock">Stock</th><th class="num" data-field="amz_sales">Sales</th><th class="num" data-field="amz_doc">DOC</th><th class="num" data-field="amz_revenue">Revenue</th><th data-field="amz_status">Status</th><th data-field="reason">Calculation</th></tr>',
+                        'Flipkart': '<tr><th data-field="date">Date</th><th data-field="fsn">SKU</th><th data-field="category">Category</th><th class="num" data-field="fk_stock">Stock</th><th class="num" data-field="fk_sales">Sales</th><th class="num" data-field="fk_doc">DOC</th><th class="num" data-field="fk_revenue">Revenue</th><th data-field="fk_status">Status</th><th data-field="fk_reason">Calculation</th></tr>',
+                    };
+                    function updateInvHealthHeader(platform) {
+                        var hdr = document.getElementById('invHealthHeaderCeo');
+                        if (hdr) hdr.innerHTML = HEADERS[platform] || HEADERS['All'];
+                    }
+                    function readCurrentPlatform() {
+                        var sel = document.getElementById('platformSelect');
+                        return sel ? (sel.value || 'All') : 'All';
+                    }
+                    // Update on Apply Filters click
+                    document.addEventListener('DOMContentLoaded', function () {
+                        updateInvHealthHeader(readCurrentPlatform());
+                        var applyBtn = document.getElementById('applyFiltersBtn');
+                        if (applyBtn) applyBtn.addEventListener('click', function () {
+                            setTimeout(function () { updateInvHealthHeader(readCurrentPlatform()); }, 200);
+                        });
+                    });
+                    // Also update immediately when modal opens
+                    document.addEventListener('click', function (e) {
+                        if (e.target && e.target.getAttribute && e.target.getAttribute('onclick') && e.target.getAttribute('onclick').indexOf('inventoryHealthModal') > -1) {
+                            setTimeout(function () { updateInvHealthHeader(readCurrentPlatform()); }, 50);
+                        }
+                    });
+                })();
+            </script>
         </div>
     </div>
 </div>
@@ -156,7 +159,8 @@
                             <div style="font-size: 11px; color: var(--muted);">{{ task.subtitle }}</div>
                         </td>
                         <td>
-                            <span class="ceo-priority-badge {% if task.priority == 'High' %}high{% elif task.priority == 'Medium' %}medium{% else %}low{% endif %}">{{ task.priority }}</span>
+                            <span
+                                class="ceo-priority-badge {% if task.priority == 'High' %}high{% elif task.priority == 'Medium' %}medium{% else %}low{% endif %}">{{ task.priority }}</span>
                         </td>
                         <td style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--accent);">
                             {{ task.calculation }}
@@ -203,7 +207,8 @@
             </thead>
             <tbody>
                 <tr>
-                    <td colspan="6" class="empty" style="text-align:center;padding:20px;color:var(--muted);">Loading data...</td>
+                    <td colspan="6" class="empty" style="text-align:center;padding:20px;color:var(--muted);">Loading
+                        data...</td>
                 </tr>
             </tbody>
         </table>
@@ -284,7 +289,7 @@
             currentPage = page;
             tbody.innerHTML = '<tr><td colspan="6" class="empty" style="text-align:center;padding:20px;color:var(--muted);">Loading data...</td></tr>';
             if (inFlightController) {
-                try { inFlightController.abort(); } catch (e) {}
+                try { inFlightController.abort(); } catch (e) { }
             }
             inFlightController = new AbortController();
             fetch(buildUrl(page), {
@@ -322,52 +327,109 @@
 <!-- ════════════ View All Modals ════════════ -->
 <!-- Top Revenue Contributors Modal -->
 <div class="tbl-overlay" id="winningModal" data-lazy-url="{% url 'dashboard-modal-rows' 'ceo' 'top-products' %}">
-    <div class="tbl-overlay-inner">
+    <div class="tbl-overlay-inner" style="max-width:1200px;">
         <div class="tbl-overlay-header">
             <span class="tbl-overlay-title">Top Revenue Contributors — Full View</span>
             <button class="tbl-overlay-close" onclick="closeModal('winningModal')">✕ Close</button>
         </div>
         <div class="tbl-overlay-scroll">
-            <table class="ceo-table" style="min-width:600px;">
-                <thead>
+            <table class="ceo-table" style="min-width:600px;" id="winningModalTable">
+                <thead id="winningModalHeader">
                     <tr>
-                        <th>SKU</th>
-                        <th class="num">Revenue</th>
-                        <th class="num">Growth</th>
+                        <th>Amazon SKU</th>
+                        <th>Flipkart SKU</th>
+                        <th class="num">Amazon Revenue</th>
+                        <th class="num">Flipkart Revenue</th>
+                        <th class="num">Total Revenue</th>
+                        <th class="num">Amazon MOM Growth</th>
+                        <th class="num">Flipkart MOM Growth</th>
+                        <th class="num">Amazon Contribution</th>
+                        <th class="num">Flipkart Contribution</th>
+                        <th class="num">Amazon Page Views</th>
+                        <th class="num">Flipkart Page Views</th>
                     </tr>
                 </thead>
                 <tbody data-modal-lazy="1">
                     <tr>
-                        <td colspan="3" class="empty">Loading data...</td>
+                        <td colspan="11" class="empty">Loading data...</td>
                     </tr>
                 </tbody>
             </table>
         </div>
     </div>
 </div>
+<script>
+    (function () {
+        var WIN_HEADERS = {
+            'All': '<tr><th data-field="asin">Amazon SKU</th><th data-field="fsn">Flipkart SKU</th><th class="num" data-field="az_revenue">Amazon Revenue</th><th class="num" data-field="fk_revenue">Flipkart Revenue</th><th class="num" data-field="total_revenue">Total Revenue</th><th class="num" data-field="az_growth">Amazon MOM Growth</th><th class="num" data-field="fk_growth">Flipkart MOM Growth</th><th class="num" data-field="az_contribution">Amazon Contribution</th><th class="num" data-field="fk_contribution">Flipkart Contribution</th><th class="num" data-field="az_pageviews">Amazon Page Views</th><th class="num" data-field="fk_pageviews">Flipkart Page Views</th></tr>',
+            'Amazon': '<tr><th data-field="asin">SKU</th><th class="num" data-field="az_revenue">Revenue</th><th class="num" data-field="az_growth">MoM Growth</th><th class="num" data-field="az_pageviews">Page Views</th></tr>',
+            'Flipkart': '<tr><th data-field="fsn">SKU</th><th class="num" data-field="fk_revenue">Revenue</th><th class="num" data-field="fk_growth">MoM Growth</th><th class="num" data-field="fk_pageviews">Page Views</th></tr>',
+        };
+        function updateWinHeader(p) {
+            var h = document.getElementById('winningModalHeader');
+            if (h) h.innerHTML = WIN_HEADERS[p] || WIN_HEADERS['All'];
+        }
+        // Expose on window so charts.js can call synchronously before DataTables init
+        window._updateWinHeader = updateWinHeader;
+        function readPlatform() { var s = document.getElementById('platformSelect'); return s ? (s.value || 'All') : 'All'; }
+        document.addEventListener('DOMContentLoaded', function () { updateWinHeader(readPlatform()); });
+        document.addEventListener('dashboardContentLoaded', function () { updateWinHeader(readPlatform()); });
+        var applyBtn = document.getElementById('applyFiltersBtn');
+        if (applyBtn) applyBtn.addEventListener('click', function () { setTimeout(function () { updateWinHeader(readPlatform()); }, 200); });
+    })();
+</script>
 
 <!-- Declining Products Modal -->
-<div class="tbl-overlay" id="decliningModal" data-lazy-url="{% url 'dashboard-modal-rows' 'ceo' 'declining-products' %}">
-    <div class="tbl-overlay-inner">
+<div class="tbl-overlay" id="decliningModal"
+    data-lazy-url="{% url 'dashboard-modal-rows' 'ceo' 'declining-products' %}">
+    <div class="tbl-overlay-inner" style="max-width:1100px;">
         <div class="tbl-overlay-header">
             <span class="tbl-overlay-title">Declining Products — Full View</span>
             <button class="tbl-overlay-close" onclick="closeModal('decliningModal')">✕ Close</button>
         </div>
         <div class="tbl-overlay-scroll">
-            <table class="ceo-table" style="min-width:600px;">
-                <thead>
+            <table class="ceo-table" style="min-width:600px;" id="decliningModalTable">
+                <thead id="decliningModalHeader">
                     <tr>
-                        <th>SKU</th>
-                        <th class="num">Drop %</th>
-                        <th class="num">Impact (₹)</th>
+                        <th>Amazon SKU</th>
+                        <th>Flipkart SKU</th>
+                        <th class="num">Amazon MOM Drop %</th>
+                        <th class="num">Flipkart MOM Drop %</th>
+                        <th class="num">Total MOM Drop %</th>
+                        <th class="num">Amazon Impact (₹)</th>
+                        <th class="num">Flipkart Impact (₹)</th>
+                        <th class="num">Total Impact (₹)</th>
+                        <th class="num">Amazon Page Views</th>
+                        <th class="num">Flipkart Page Views</th>
+                        <th class="num">Total Page Views</th>
                     </tr>
                 </thead>
                 <tbody data-modal-lazy="1">
                     <tr>
-                        <td colspan="3" class="empty">Loading data...</td>
+                        <td colspan="11" class="empty">Loading data...</td>
                     </tr>
                 </tbody>
             </table>
         </div>
     </div>
 </div>
+<script>
+    (function () {
+        var DEC_HEADERS = {
+            'All': '<tr><th data-field="asin">Amazon SKU</th><th data-field="fsn">Flipkart SKU</th><th class="num" data-field="az_drop">Amazon MOM Drop %</th><th class="num" data-field="fk_drop">Flipkart MOM Drop %</th><th class="num" data-field="total_drop">Total MOM Drop %</th><th class="num" data-field="az_impact">Amazon Impact (₹)</th><th class="num" data-field="fk_impact">Flipkart Impact (₹)</th><th class="num" data-field="total_impact">Total Impact (₹)</th><th class="num" data-field="az_pageviews">Amazon Page Views</th><th class="num" data-field="fk_pageviews">Flipkart Page Views</th><th class="num" data-field="total_pageviews">Total Page Views</th></tr>',
+            'Amazon': '<tr><th data-field="asin">SKU</th><th class="num" data-field="az_drop">Drop %</th><th class="num" data-field="az_impact">Impact (₹)</th><th class="num" data-field="az_pageviews">Page Views</th></tr>',
+            'Flipkart': '<tr><th data-field="fsn">SKU</th><th class="num" data-field="fk_drop">Drop %</th><th class="num" data-field="fk_impact">Impact (₹)</th><th class="num" data-field="fk_pageviews">Page Views</th></tr>',
+        };
+        function updateDecHeader(p) {
+            var h = document.getElementById('decliningModalHeader');
+            if (h) h.innerHTML = DEC_HEADERS[p] || DEC_HEADERS['All'];
+        }
+        // Expose on window so charts.js can call synchronously before DataTables init
+        window._updateDecHeader = updateDecHeader;
+        function readPlatform() { var s = document.getElementById('platformSelect'); return s ? (s.value || 'All') : 'All'; }
+        document.addEventListener('DOMContentLoaded', function () { updateDecHeader(readPlatform()); });
+        document.addEventListener('dashboardContentLoaded', function () { updateDecHeader(readPlatform()); });
+        var applyBtn = document.getElementById('applyFiltersBtn');
+        if (applyBtn) applyBtn.addEventListener('click', function () { setTimeout(function () { updateDecHeader(readPlatform()); }, 200); });
+    })();
+</script>

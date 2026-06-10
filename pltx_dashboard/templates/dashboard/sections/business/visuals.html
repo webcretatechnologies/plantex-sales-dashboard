@@ -125,17 +125,34 @@
             <button class="ceo-view-all-btn" onclick="openModal('winningModal')" id="biz-btn-winning-viewall">View
                 All</button>
         </div>
-        <div class="ceo-card-body no-pad">
-            <table class="ceo-table">
+        <div class="ceo-card-body no-pad" style="overflow-x:auto;">
+            <table class="ceo-table" style="min-width:980px;">
                 <thead>
+                    {% if request.GET.platform == 'Amazon' or request.GET.platform == 'Flipkart' %}
                     <tr>
                         <th>SKU</th>
                         <th class="num">Revenue</th>
-                        <th class="num">Growth</th>
+                        <th class="num">MoM Growth</th>
+                        <th class="num">Page Views</th>
                     </tr>
+                    {% else %}
+                    <tr>
+                        <th>Amazon SKU</th>
+                        <th>Flipkart SKU</th>
+                        <th class="num">Amazon Revenue</th>
+                        <th class="num">Flipkart Revenue</th>
+                        <th class="num">Total Revenue</th>
+                        <th class="num">Amazon MOM Growth</th>
+                        <th class="num">Flipkart MOM Growth</th>
+                        <th class="num">Amazon Contribution</th>
+                        <th class="num">Flipkart Contribution</th>
+                        <th class="num">Amazon Page Views</th>
+                        <th class="num">Flipkart Page Views</th>
+                    </tr>
+                    {% endif %}
                 </thead>
                 <tbody>
-                    {% include "dashboard/partials/product_cards/top_products_business_rows.html" with rows=payload.cat_top_products|slice:":8" %}
+                    {% include "dashboard/modals/rows/top_products_simple_rows.html" with rows=payload.cat_top_products|slice:":8" platform=filters.platform|default:'All' %}
                 </tbody>
             </table>
         </div>
@@ -148,17 +165,34 @@
             <button class="ceo-view-all-btn" onclick="openModal('bizDecliningModal')"
                 id="biz-btn-declining-viewall">View All</button>
         </div>
-        <div class="ceo-card-body no-pad">
-            <table class="ceo-table">
+        <div class="ceo-card-body no-pad" style="overflow-x:auto;">
+            <table class="ceo-table" style="min-width:980px;">
                 <thead>
+                    {% if request.GET.platform == 'Amazon' or request.GET.platform == 'Flipkart' %}
                     <tr>
                         <th>SKU</th>
                         <th class="num">MOM Drop %</th>
                         <th class="num">Impact (₹)</th>
+                        <th class="num">Page Views</th>
                     </tr>
+                    {% else %}
+                    <tr>
+                        <th>Amazon SKU</th>
+                        <th>Flipkart SKU</th>
+                        <th class="num">Amazon MOM Drop %</th>
+                        <th class="num">Flipkart MOM Drop %</th>
+                        <th class="num">Total MOM Drop %</th>
+                        <th class="num">Amazon Impact (₹)</th>
+                        <th class="num">Flipkart Impact (₹)</th>
+                        <th class="num">Total Impact (₹)</th>
+                        <th class="num">Amazon Page Views</th>
+                        <th class="num">Flipkart Page Views</th>
+                        <th class="num">Total Page Views</th>
+                    </tr>
+                    {% endif %}
                 </thead>
                 <tbody>
-                    {% include "dashboard/partials/product_cards/declining_products_rows.html" with rows=payload.cat_under_products|slice:":8" %}
+                    {% include "dashboard/modals/rows/declining_products_rows.html" with rows=payload.cat_under_products|slice:":8" platform=filters.platform|default:'All' %}
                 </tbody>
             </table>
         </div>
@@ -233,11 +267,23 @@
                     <div class="biz-metric-label">Lost Sales</div>
                     <div class="biz-metric-value danger">{{ payload.oos_impact.lost_sales|fmt_rupee }}</div>
                     <div class="biz-metric-sub">MTD</div>
+                    {% if not request.GET.platform or request.GET.platform == 'All' %}
+                    <div style="font-size: 10px; color: var(--muted); margin-top: 6px; display: flex; justify-content: space-between; padding: 0 4px;">
+                        <span style="display:inline-flex;align-items:center;"><img src="{% static 'logo/amazon_logo.png' %}" alt="Amz" style="width:14px;height:14px;margin-right:4px;"> <strong style="color:var(--text-color);">{{ payload.oos_impact.az_lost_sales|fmt_rupee }}</strong></span>
+                        <span style="display:inline-flex;align-items:center;"><img src="{% static 'logo/flipkart_logo.png' %}" alt="FK" style="width:14px;height:14px;margin-right:4px;"> <strong style="color:var(--text-color);">{{ payload.oos_impact.fk_lost_sales|fmt_rupee }}</strong></span>
+                    </div>
+                    {% endif %}
                 </div>
                 <div class="biz-metric-item">
                     <div class="biz-metric-label">SKUs Affected</div>
                     <div class="biz-metric-value">{{ payload.oos_impact.skus_affected }}</div>
                     <div class="biz-metric-sub">MTD</div>
+                    {% if not request.GET.platform or request.GET.platform == 'All' %}
+                    <div style="font-size: 10px; color: var(--muted); margin-top: 6px; display: flex; justify-content: space-between; padding: 0 4px;">
+                        <span style="display:inline-flex;align-items:center;"><img src="{% static 'logo/amazon_logo.png' %}" alt="Amz" style="width:14px;height:14px;margin-right:4px;"> <strong style="color:var(--text-color);">{{ payload.oos_impact.az_skus_affected }}</strong></span>
+                        <span style="display:inline-flex;align-items:center;"><img src="{% static 'logo/flipkart_logo.png' %}" alt="FK" style="width:14px;height:14px;margin-right:4px;"> <strong style="color:var(--text-color);">{{ payload.oos_impact.fk_skus_affected }}</strong></span>
+                    </div>
+                    {% endif %}
                 </div>
                 <div class="biz-metric-item">
                     <div class="biz-metric-label">Orders Lost</div>
@@ -271,7 +317,7 @@
                         <div class="biz-mkt-kicker">Campaign Health</div>
                         <div class="biz-mkt-copy">Track spend efficiency first, then review SKU coverage to spot waste and missed opportunity.</div>
                     </div>
-                    <div class="biz-mkt-chip">{{ payload.marketing.ad_spend_sku_count|fmt_num }} paid SKUs</div>
+                    <div class="biz-mkt-chip">{{ payload.marketing.advertised_asin_count_with_variants|fmt_num }} advertised ASINs</div>
                 </div>
 
                 <div class="biz-mkt-section">
@@ -369,18 +415,14 @@
                 </div>
 
                 <div class="biz-mkt-section">
-                    <div class="biz-mkt-section-title">SKU Coverage</div>
+                    <div class="biz-mkt-section-title">ASIN Coverage</div>
                     <div class="biz-mkt-support-grid">
                         <div class="biz-mkt-support-card">
-                            <span class="biz-mkt-label">Ad Spend SKUs</span>
-                            <strong class="biz-mkt-support-value">{{ payload.marketing.ad_spend_sku_count|fmt_num }}</strong>
+                            <span class="biz-mkt-label">Advertised ASINs</span>
+                            <strong class="biz-mkt-support-value">{{ payload.marketing.advertised_asin_count_with_variants|fmt_num }}</strong>
                             <div class="biz-mkt-support-split">
-                                {% if payload.marketing.az_ad_spend_sku_count or request.GET.platform != 'Flipkart' %}
-                                <span>Amazon {{ payload.marketing.az_ad_spend_sku_count|fmt_num }}</span>
-                                {% endif %}
-                                {% if payload.marketing.fk_ad_spend_sku_count or request.GET.platform != 'Amazon' %}
-                                <span>Flipkart {{ payload.marketing.fk_ad_spend_sku_count|fmt_num }}</span>
-                                {% endif %}
+                                <span>Direct {{ payload.marketing.advertised_asin_count|fmt_num }}</span>
+                                <span>Variants {{ payload.marketing.advertised_variant_count|fmt_num }}</span>
                             </div>
                         </div>
                         <div class="biz-mkt-support-card">
@@ -435,3 +477,5 @@
                     </div>
                 </div>
             </div>
+
+{% include "dashboard/partials/npd_performance_card.html" with npd_card_id="biz-card-npd-performance" npd_modal_id="bizNpdPerformanceModal" %}

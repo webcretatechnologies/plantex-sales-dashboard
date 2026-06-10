@@ -26,9 +26,60 @@ function fmtDateLabel(d) {
 }
 
 /* ── Chart Defaults ── */
-Chart.defaults.font.family = "'Inter', -apple-system, sans-serif";
-Chart.defaults.font.size = 11;
-Chart.defaults.color = '#94a3b8';
+function isChartJsReady() {
+    return typeof window.Chart !== 'undefined' && window.Chart && window.Chart.defaults;
+}
+
+function applyChartDefaults() {
+    if (!isChartJsReady()) return false;
+    Chart.defaults.font.family = "'Inter', -apple-system, sans-serif";
+    Chart.defaults.font.size = 11;
+    Chart.defaults.color = '#94a3b8';
+    return true;
+}
+
+function showChartLoadMessage(message) {
+    ['salesTrendChart', 'platformSplitChart', 'forecastChart'].forEach(function (id) {
+        var canvas = document.getElementById(id);
+        if (!canvas || !canvas.parentNode || canvas.parentNode.querySelector('.chart-load-message')) return;
+        var msg = document.createElement('div');
+        msg.className = 'chart-load-message';
+        msg.textContent = message || 'Chart library is still loading...';
+        canvas.classList.add('chart-canvas-hidden');
+        canvas.parentNode.appendChild(msg);
+    });
+}
+
+function clearChartLoadMessages() {
+    document.querySelectorAll('.chart-load-message').forEach(function (msg) {
+        msg.remove();
+    });
+    ['salesTrendChart', 'platformSplitChart', 'forecastChart'].forEach(function (id) {
+        var canvas = document.getElementById(id);
+        if (canvas) canvas.classList.remove('chart-canvas-hidden');
+    });
+}
+
+function runWhenChartReady(callback, attempts) {
+    attempts = typeof attempts === 'number' ? attempts : 30;
+    if (applyChartDefaults()) {
+        clearChartLoadMessages();
+        callback();
+        return;
+    }
+    if (typeof window.__loadChartJsFallback === 'function') {
+        window.__loadChartJsFallback();
+    }
+    if (attempts <= 0) {
+        clearChartLoadMessages();
+        renderChartsWithoutChartJs();
+        return;
+    }
+    showChartLoadMessage('Loading charts...');
+    setTimeout(function () {
+        runWhenChartReady(callback, attempts - 1);
+    }, 200);
+}
 
 function cOpts(extra) {
     var base = {
@@ -54,6 +105,8 @@ function cOpts(extra) {
                 border: { display: false }
             },
             y: {
+                beginAtZero: true,
+                grace: '8%',
                 grid: { color: 'rgba(148,163,184,0.08)', drawBorder: false },
                 ticks: {
                     font: { size: 10 },
@@ -77,7 +130,197 @@ function cOpts(extra) {
     return base;
 }
 
-function destroyChart(id) { if (charts[id]) { charts[id].destroy(); delete charts[id]; } }
+function destroyChart(id) {
+    var canvas = document.getElementById(id);
+    if (isChartJsReady() && canvas && typeof Chart.getChart === 'function') {
+        var attached = Chart.getChart(canvas);
+        if (attached && attached !== charts[id] && typeof attached.destroy === 'function') attached.destroy();
+    }
+    if (charts[id]) {
+        charts[id].destroy();
+        delete charts[id];
+    }
+}
+
+function chartNumber(value) {
+    if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+    if (value === null || typeof value === 'undefined') return 0;
+    var text = String(value).trim();
+    if (!text) return 0;
+    var negative = /^\(.*\)$/.test(text) || text.charAt(0) === '-';
+    text = text.replace(/[₹,\s()]/g, '').replace(/^-/, '');
+    var multiplier = 1;
+    if (/cr(?:ore)?$/i.test(text)) {
+        multiplier = 10000000;
+        text = text.replace(/cr(?:ore)?$/i, '');
+    } else if (/l(?:ac|akh)?$/i.test(text)) {
+        multiplier = 100000;
+        text = text.replace(/l(?:ac|akh)?$/i, '');
+    } else if (/k$/i.test(text)) {
+        multiplier = 1000;
+        text = text.replace(/k$/i, '');
+    }
+    var parsed = Number(text);
+    if (!Number.isFinite(parsed)) return 0;
+    return (negative ? -parsed : parsed) * multiplier;
+}
+
+function chartNumberArray(values) {
+    return Array.isArray(values) ? values.map(chartNumber) : [];
+}
+
+function chartHasDrawableValue(values) {
+    return chartNumberArray(values).some(function (value) { return value !== 0; });
+}
+
+function chartPointRadius(values, labelCount) {
+    var nonZeroCount = chartNumberArray(values).filter(function (value) { return value !== 0; }).length;
+    return labelCount <= 1 || nonZeroCount === 1 ? 4 : 0;
+}
+
+function resizeChartSoon(chart) {
+    if (!chart || typeof chart.resize !== 'function') return;
+    requestAnimationFrame(function () {
+        chart.resize();
+        setTimeout(function () { chart.resize(); }, 80);
+    });
+}
+
+function prepareFallbackCanvas(canvas) {
+    if (!canvas) return null;
+    canvas.classList.remove('chart-canvas-hidden');
+    var rect = canvas.getBoundingClientRect();
+    var parentRect = canvas.parentNode ? canvas.parentNode.getBoundingClientRect() : null;
+    var cssWidth = Math.max(1, Math.round(rect.width || (parentRect && parentRect.width) || 320));
+    var cssHeight = Math.max(1, Math.round(rect.height || (parentRect && parentRect.height) || 180));
+    var ratio = window.devicePixelRatio || 1;
+    canvas.width = Math.round(cssWidth * ratio);
+    canvas.height = Math.round(cssHeight * ratio);
+    var ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    ctx.clearRect(0, 0, cssWidth, cssHeight);
+    return { ctx: ctx, width: cssWidth, height: cssHeight };
+}
+
+function drawFallbackEmpty(canvas, message) {
+    var prepared = prepareFallbackCanvas(canvas);
+    if (!prepared) return;
+    var ctx = prepared.ctx;
+    ctx.fillStyle = '#64748b';
+    ctx.font = '600 12px Inter, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(message || 'No chart data available', prepared.width / 2, prepared.height / 2);
+}
+
+function drawFallbackLineChart(canvas, labels, datasets) {
+    var prepared = prepareFallbackCanvas(canvas);
+    if (!prepared) return;
+    var ctx = prepared.ctx;
+    var width = prepared.width;
+    var height = prepared.height;
+    var plot = { left: 52, right: 16, top: 16, bottom: 34 };
+    var plotW = Math.max(1, width - plot.left - plot.right);
+    var plotH = Math.max(1, height - plot.top - plot.bottom);
+    var allValues = [];
+    datasets.forEach(function (set) {
+        chartNumberArray(set.data).forEach(function (value) { allValues.push(value); });
+    });
+    var maxValue = Math.max.apply(null, allValues.concat([0]));
+    if (!Number.isFinite(maxValue) || maxValue <= 0) {
+        drawFallbackEmpty(canvas, 'No chart data available');
+        return;
+    }
+    var yMax = maxValue * 1.08;
+
+    ctx.strokeStyle = 'rgba(148,163,184,0.16)';
+    ctx.lineWidth = 1;
+    ctx.fillStyle = '#64748b';
+    ctx.font = '10px Inter, sans-serif';
+    ctx.textAlign = 'right';
+    for (var g = 0; g <= 4; g++) {
+        var y = plot.top + (plotH * g / 4);
+        var value = yMax * (1 - g / 4);
+        ctx.beginPath();
+        ctx.moveTo(plot.left, y);
+        ctx.lineTo(width - plot.right, y);
+        ctx.stroke();
+        ctx.fillText(fmtShort(value), plot.left - 8, y + 3);
+    }
+
+    datasets.forEach(function (set) {
+        var values = chartNumberArray(set.data);
+        if (!values.length) return;
+        ctx.beginPath();
+        ctx.strokeStyle = set.borderColor || '#0891b2';
+        ctx.lineWidth = set.borderWidth || 2;
+        if (set.borderDash && set.borderDash.length) ctx.setLineDash(set.borderDash);
+        else ctx.setLineDash([]);
+        values.forEach(function (value, i) {
+            var x = plot.left + (values.length === 1 ? plotW / 2 : plotW * i / (values.length - 1));
+            var y = plot.top + plotH - (Math.max(0, value) / yMax * plotH);
+            if (i === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+        ctx.setLineDash([]);
+    });
+
+    ctx.fillStyle = '#64748b';
+    ctx.textAlign = 'center';
+    var labelCount = labels.length;
+    if (labelCount) {
+        var step = Math.max(1, Math.ceil(labelCount / 5));
+        for (var i = 0; i < labelCount; i += step) {
+            var x = plot.left + (labelCount === 1 ? plotW / 2 : plotW * i / (labelCount - 1));
+            ctx.fillText(labels[i], x, height - 10);
+        }
+    }
+}
+
+function drawFallbackDonutChart(canvas, labels, values, colors) {
+    var prepared = prepareFallbackCanvas(canvas);
+    if (!prepared) return;
+    var ctx = prepared.ctx;
+    var total = values.reduce(function (sum, value) { return sum + chartNumber(value); }, 0);
+    if (total <= 0) {
+        drawFallbackEmpty(canvas, 'No chart data available');
+        return;
+    }
+    var cx = prepared.width / 2;
+    var cy = prepared.height / 2;
+    var radius = Math.min(prepared.width, prepared.height) / 2 - 8;
+    var innerRadius = radius * 0.72;
+    var start = -Math.PI / 2;
+    labels.forEach(function (label, i) {
+        var value = chartNumber(values[i]);
+        if (value <= 0) return;
+        var end = start + (Math.PI * 2 * value / total);
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.arc(cx, cy, radius, start, end);
+        ctx.closePath();
+        ctx.fillStyle = colors[i] || '#10b981';
+        ctx.fill();
+        start = end;
+    });
+    ctx.beginPath();
+    ctx.arc(cx, cy, innerRadius, 0, Math.PI * 2);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+}
+
+function renderChartsWithoutChartJs() {
+    var data = window.DASHBOARD_PAYLOAD;
+    if (!data) return;
+    if (data.charts && data.charts.trend && document.getElementById('salesTrendChart')) {
+        renderSalesTrendFallback(data, _currentTrendPeriod || 'daily');
+    }
+    if (data.platforms && document.getElementById('platformSplitChart')) {
+        renderPlatformDonutFallback(data);
+    }
+    initTrendTabs(data);
+}
 
 function _buildModalDataUrl(modalEl, extraParams) {
     var lazyUrl = modalEl ? modalEl.getAttribute('data-lazy-url') : '';
@@ -232,40 +475,59 @@ function _initializeDataTable(modalEl) {
     var table = modalEl.querySelector('table');
     if (!table) return;
 
-    // Don't initialize on empty/loading state — a colspan placeholder row causes
-    // DataTables tn/18 "Incorrect column count" because it sees 1 column vs N in thead.
-    var bodyRows = table.querySelectorAll('tbody tr');
-    if (!bodyRows.length || (bodyRows.length === 1 && bodyRows[0].querySelector('td[colspan]'))) return;
+    // For serverSide mode we skip the "no body rows" guard — DataTables will
+    // populate the tbody itself via ajax on first draw.
+    var modalId = modalEl.id || '';
+    var isServerSide = ['npdPerformanceModal', 'catNpdPerformanceModal', 'bizNpdPerformanceModal',
+        'winningModal', 'bizWinningModal', 'topProductsModal',
+        'decliningModal', 'bizDecliningModal',
+        'inventoryHealthModal', 'bizInventoryHealthModal', 'catInventoryHealthModal'].indexOf(modalId) !== -1;
 
-    // Destroy existing DataTable instance if any
+    if (!isServerSide) {
+        // Don't init on empty/loading state for client-side mode
+        var bodyRows = table.querySelectorAll('tbody tr');
+        if (!bodyRows.length || (bodyRows.length === 1 && bodyRows[0].querySelector('td[colspan]'))) return;
+    }
+
     if ($.fn.DataTable.isDataTable(table)) {
         $(table).DataTable().destroy();
     }
 
-    // Hide the inv-health-search since DataTables has its own search
     var invSearch = modalEl.querySelector('.inv-health-search');
     if (invSearch) invSearch.style.display = 'none';
 
-    // Hide custom pagination controls since DataTables handles it
     var paginationBox = modalEl.querySelector('.modal-pagination-controls');
     if (paginationBox) paginationBox.style.display = 'none';
 
-    var modalId = modalEl.id || '';
-    var headerCount = table.querySelectorAll('thead th').length;
+    var lazyUrl = modalEl.getAttribute('data-lazy-url');
+
+    // Build column definitions from thead th[data-field]
+    var thEls = Array.from(table.querySelectorAll('thead th'));
+    var cols = thEls.map(function(th, i) {
+        var fieldName = th.getAttribute('data-field') || null;
+        return {
+            className: th.className,
+            name: fieldName,
+            data: i,
+            orderable: !!fieldName,
+            render: function(data) { return data || ''; }
+        };
+    });
+
     var defaultOrder = [];
     if (modalId === 'catGrowthModal') {
         defaultOrder = [[2, 'desc'], [1, 'desc']];
-    } else if (modalId === 'winningModal') {
-        defaultOrder = [[1, 'desc']];
-    } else if (modalId === 'topProductsModal') {
-        defaultOrder = [[2, 'desc']];
-    } else if (modalId === 'bizDecliningModal' || modalId === 'decliningModal') {
-        defaultOrder = [[headerCount - 1, 'asc']];
+    } else if (['winningModal', 'bizWinningModal', 'topProductsModal'].indexOf(modalId) !== -1) {
+        var idx = cols.findIndex(function(c) { return c.name === 'total_revenue' || c.name === 'az_revenue' || c.name === 'fk_revenue'; });
+        if (idx >= 0) defaultOrder = [[idx, 'desc']];
+    } else if (['bizDecliningModal', 'decliningModal'].indexOf(modalId) !== -1) {
+        var idx = cols.findIndex(function(c) { return c.name === 'total_drop' || c.name === 'az_drop' || c.name === 'fk_drop'; });
+        if (idx >= 0) defaultOrder = [[idx, 'asc']];
     } else if (modalId === 'clusterModal') {
         defaultOrder = [[1, 'desc']];
     }
 
-    $(table).DataTable({
+    var dtOptions = {
         pageLength: 25,
         lengthChange: true,
         lengthMenu: [10, 25, 50, 100],
@@ -281,13 +543,59 @@ function _initializeDataTable(modalEl) {
             searchPlaceholder: "Search records...",
             lengthMenu: "Show _MENU_ entries",
             info: "Showing _START_ to _END_ of _TOTAL_ entries",
-            paginate: {
-                previous: "Prev",
-                next: "Next"
-            }
+            paginate: { previous: "Prev", next: "Next" }
         }
-    });
+    };
+
+    if (isServerSide && lazyUrl) {
+        dtOptions.serverSide = true;
+        dtOptions.columns = cols;
+        dtOptions.searching = true; // DT sends search[value] to backend which handles it
+        dtOptions.processing = true;
+        dtOptions.ajax = {
+            url: lazyUrl,
+            type: 'GET',
+            data: function(d) {
+                // Map column index → field name for backend sort
+                var orderedCol = d.order && d.order[0];
+                if (orderedCol !== undefined) {
+                    var colIdx = orderedCol.column;
+                    var th = thEls[colIdx];
+                    if (th) {
+                        d.order_field = th.getAttribute('data-field') || '';
+                        d.order_dir = orderedCol.dir || 'desc';
+                    }
+                }
+
+                // Forward current dashboard filter params
+                var params = new URLSearchParams(window.location.search || '');
+                params.forEach(function(val, key) {
+                    if (key !== 'page' && key !== 'page_size' && key !== 'q' && key !== 'export') {
+                        d[key] = val;
+                    }
+                });
+
+                // Add current platform
+                var platformSel = document.getElementById('platformSelect');
+                if (platformSel && platformSel.value) d.platform = platformSel.value;
+            }
+        };
+        // DataTables injects the pre-rendered <td>…</td> HTML directly via render()
+        // so we must tell it this is HTML data
+        dtOptions.columns = cols.map(function(c) {
+            return Object.assign({}, c, {
+                render: function(data, type) {
+                    if (type === 'display') return data || '';
+                    // Strip tags for sorting/search type — extract text content
+                    return (data || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+                }
+            });
+        });
+    }
+
+    $(table).DataTable(dtOptions);
 }
+
 
 function _loadModalRowsOnDemand(modalEl, opts) {
     if (!modalEl) return;
@@ -301,6 +609,34 @@ function _loadModalRowsOnDemand(modalEl, opts) {
     if (!tbody) return;
     
     if (!force && modalEl.dataset.lazyLoaded === '1') return;
+
+    var modalId = modalEl.id || '';
+    var isServerSide = ['npdPerformanceModal', 'catNpdPerformanceModal', 'bizNpdPerformanceModal', 'winningModal', 'bizWinningModal', 'topProductsModal', 'decliningModal', 'bizDecliningModal', 'inventoryHealthModal', 'bizInventoryHealthModal', 'catInventoryHealthModal'].indexOf(modalId) !== -1;
+
+    // ── Synchronously update the thead BEFORE DataTables initialises ──
+    var platformSel = document.getElementById('platformSelect');
+    var currentPlatform = platformSel ? (platformSel.value || 'All') : 'All';
+    var headerUpdaters = {
+        'winningModal':    window._updateWinHeader,
+        'bizWinningModal': window._updateBizWinHeader,
+        'topProductsModal': window._updateCatTopHeader,
+        'decliningModal':  window._updateDecHeader || window._updateCatDecHeader,
+        'bizDecliningModal': window._updateBizDecHeader,
+    };
+    var updater = headerUpdaters[modalId];
+    if (typeof updater === 'function') { updater(currentPlatform); }
+
+    if (isServerSide) {
+        if (!window.jQuery || !$.fn.DataTable) return;
+        var t = modalEl.querySelector('table');
+        if (!$.fn.DataTable.isDataTable(t)) {
+            _initializeDataTable(modalEl);
+        } else if (force) {
+            $(t).DataTable().ajax.reload(null, false);
+        }
+        modalEl.dataset.lazyLoaded = '1';
+        return;
+    }
 
     var thCount = 3;
     var ths = modalEl.querySelectorAll('thead th');
@@ -318,19 +654,11 @@ function _loadModalRowsOnDemand(modalEl, opts) {
 
     tbody.innerHTML = '<tr><td colspan="' + thCount + '" class="empty">Loading data...</td></tr>';
 
-    // Modals use DataTables (client-side) — request all rows at once.
-    var useDataTable = window.jQuery && $.fn.DataTable;
-
     var extraParams;
-    if (useDataTable && !opts.page) {
-        // DataTables mode: load all rows in one shot; DataTables handles pagination/search.
-        extraParams = { all: '1' };
-    } else {
-        var page = Number(opts.page || modalEl.dataset.currentPage || 1) || 1;
-        var pageSize = Number(opts.pageSize || modalEl.dataset.pageSize || 50) || 50;
-        modalEl.dataset.pageSize = String(pageSize);
-        extraParams = { page: page, page_size: pageSize };
-    }
+    var page = Number(opts.page || modalEl.dataset.currentPage || 1) || 1;
+    var pageSize = Number(opts.pageSize || modalEl.dataset.pageSize || 50) || 50;
+    modalEl.dataset.pageSize = String(pageSize);
+    extraParams = { page: page, page_size: pageSize };
     var searchInput = modalEl.querySelector('.inv-health-search');
     var searchTerm = searchInput ? String(searchInput.value || '').trim() : '';
     if (searchTerm) extraParams.q = searchTerm;
@@ -346,6 +674,7 @@ function _loadModalRowsOnDemand(modalEl, opts) {
         if (pagination && pagination.page) {
             modalEl.dataset.currentPage = String(pagination.page);
         }
+
         if (useDatatable) {
             _initializeDataTable(modalEl);
         } else {
@@ -470,6 +799,13 @@ function initInventoryHealthModals() {
    INIT CHARTS
    ══════════════════════════════════════════════════════════════ */
 function initCharts() {
+    if (!isChartJsReady()) {
+        runWhenChartReady(initCharts);
+        return;
+    }
+    applyChartDefaults();
+    clearChartLoadMessages();
+
     var data = window.DASHBOARD_PAYLOAD;
     if (!data) return;
 
@@ -517,7 +853,7 @@ function aggregateData(labels, current, prev, chunkSize) {
         var end = Math.min(i + chunkSize, labels.length);
         newLabels.push(labels[i] + ' - ' + labels[end - 1]);
         var sumC = 0, sumP = 0;
-        for (var j = i; j < end; j++) { sumC += (current[j] || 0); sumP += (prev[j] || 0); }
+        for (var j = i; j < end; j++) { sumC += chartNumber(current[j]); sumP += chartNumber(prev[j]); }
         newCurrent.push(sumC); newPrev.push(sumP);
     }
     return { labels: newLabels, current: newCurrent, prev: newPrev };
@@ -533,7 +869,7 @@ function aggregateMultiData(labels, rawSets, chunkSize) {
         newLabels.push(labels[i] + ' - ' + labels[end - 1]);
         keys.forEach(function (k) {
             var sum = 0;
-            for (var j = i; j < end; j++) { sum += (rawSets[k][j] || 0); }
+            for (var j = i; j < end; j++) { sum += chartNumber(rawSets[k][j]); }
             newSets[k].push(sum);
         });
     }
@@ -552,7 +888,8 @@ function _getChartYearFilter() {
 function onChartYearChange(selectEl) {
     var data = window.DASHBOARD_PAYLOAD;
     if (!data) return;
-    renderSalesTrend(data, _currentTrendPeriod);
+    if (isChartJsReady()) renderSalesTrend(data, _currentTrendPeriod);
+    else renderSalesTrendFallback(data, _currentTrendPeriod);
 }
 
 function _filterTrendByYear(trend, year) {
@@ -577,12 +914,12 @@ function _filterTrendByYear(trend, year) {
     });
 }
 
-function renderSalesTrend(data, period) {
-    destroyChart('salesTrendChart');
-    _currentTrendPeriod = period;
+function buildSalesTrendSeries(data, period) {
     var yearFilter = _getChartYearFilter();
     var trend = _filterTrendByYear(data.charts.trend, yearFilter);
-    var labels = trend.labels.map(fmtDateLabel);
+    var rawTrendLabels = Array.isArray(trend.labels) ? trend.labels : [];
+    if (!rawTrendLabels.length) return null;
+    var labels = rawTrendLabels.map(fmtDateLabel);
 
     var platformEl = document.getElementById('platformSelect');
     var platform   = platformEl ? platformEl.value : '';  // '' = All
@@ -591,8 +928,8 @@ function renderSalesTrend(data, period) {
     var prevLabel  = isFiltered ? 'Selected Date Range' : 'Last Period';
 
     // Check if per-platform data is meaningful (all-zeros means only one platform active)
-    var hasAmazon   = trend.amazon_revenue   && trend.amazon_revenue.some(function(v)   { return v > 0; });
-    var hasFlipkart = trend.flipkart_revenue && trend.flipkart_revenue.some(function(v) { return v > 0; });
+    var hasAmazon   = chartHasDrawableValue(trend.amazon_revenue);
+    var hasFlipkart = chartHasDrawableValue(trend.flipkart_revenue);
     var showDualLines = (!platform || platform === '') && hasAmazon && hasFlipkart;
 
     var rawSets = { 'current': trend.revenue };
@@ -608,16 +945,44 @@ function renderSalesTrend(data, period) {
     if (period === 'weekly')       processed = aggregateMultiData(labels, rawSets, 7);
     else if (period === 'monthly') processed = aggregateMultiData(labels, rawSets, 30);
 
+    ['current', 'amazon', 'flipkart', 'prev'].forEach(function (key) {
+        if (processed[key]) processed[key] = chartNumberArray(processed[key]);
+    });
+
+    function trendDataset(opts) {
+        var values = chartNumberArray(opts.data);
+        var color = opts.borderColor;
+        var radius = chartPointRadius(values, processed.labels.length);
+        return {
+            label: opts.label,
+            data: values,
+            borderColor: color,
+            backgroundColor: opts.backgroundColor,
+            borderDash: opts.borderDash || [],
+            fill: opts.fill,
+            tension: opts.tension,
+            borderWidth: opts.borderWidth,
+            pointRadius: radius,
+            pointHoverRadius: 5,
+            pointHitRadius: 10,
+            pointBackgroundColor: color,
+            pointBorderColor: '#ffffff',
+            pointBorderWidth: radius ? 2 : 0,
+            showLine: processed.labels.length > 1,
+            spanGaps: true
+        };
+    }
+
     var datasets = [];
 
     if (platform === 'Amazon') {
-        datasets.push({ label: 'Amazon Revenue', data: processed.current, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.08)', fill: true, tension: 0.4, borderWidth: 2.5, pointRadius: 0 });
+        datasets.push(trendDataset({ label: 'Amazon Revenue', data: processed.current, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.08)', fill: true, tension: 0.4, borderWidth: 2.5 }));
     } else if (platform === 'Flipkart') {
-        datasets.push({ label: 'Flipkart Revenue', data: processed.current, borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,0.08)', fill: true, tension: 0.4, borderWidth: 2.5, pointRadius: 0 });
+        datasets.push(trendDataset({ label: 'Flipkart Revenue', data: processed.current, borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,0.08)', fill: true, tension: 0.4, borderWidth: 2.5 }));
     } else if (showDualLines) {
         // "All" with both platforms — show two separate lines
-        datasets.push({ label: 'Amazon',   data: processed.amazon,   borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.05)', fill: true, tension: 0.4, borderWidth: 2, pointRadius: 0 });
-        datasets.push({ label: 'Flipkart', data: processed.flipkart, borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,0.05)', fill: true, tension: 0.4, borderWidth: 2, pointRadius: 0 });
+        datasets.push(trendDataset({ label: 'Amazon', data: processed.amazon, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.05)', fill: true, tension: 0.4, borderWidth: 2 }));
+        datasets.push(trendDataset({ label: 'Flipkart', data: processed.flipkart, borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,0.05)', fill: true, tension: 0.4, borderWidth: 2 }));
     } else {
         // "All" but only one platform has data — single combined line
         var cBorder = '#0891b2';
@@ -634,27 +999,55 @@ function renderSalesTrend(data, period) {
             cLabel  = 'Amazon Revenue';
         }
 
-        datasets.push({ label: cLabel, data: processed.current, borderColor: cBorder, backgroundColor: cBg, fill: true, tension: 0.4, borderWidth: 2.5, pointRadius: 0 });
+        datasets.push(trendDataset({ label: cLabel, data: processed.current, borderColor: cBorder, backgroundColor: cBg, fill: true, tension: 0.4, borderWidth: 2.5 }));
     }
 
     if (processed.prev && processed.prev.length > 0) {
-        datasets.push({ label: prevLabel, data: processed.prev, borderColor: '#94a3b8', borderDash: [5, 5], fill: false, tension: 0.4, borderWidth: 1.5, pointRadius: 0 });
+        datasets.push(trendDataset({ label: prevLabel, data: processed.prev, borderColor: '#94a3b8', backgroundColor: 'rgba(148,163,184,0.04)', borderDash: [5, 5], fill: false, tension: 0.4, borderWidth: 1.5 }));
     }
 
-    // Show legend when multiple datasets are displayed
-    var showLegend = datasets.length > 1;
+    return { labels: processed.labels, datasets: datasets };
+}
 
-    charts.salesTrendChart = new Chart(document.getElementById('salesTrendChart'), {
-        type: 'line',
-        data: { labels: processed.labels, datasets: datasets },
-        options: cOpts({
-            plugins: {
-                legend: { display: showLegend, position: 'top', labels: { boxWidth: 12, font: { size: 11 } } },
-                tooltip: { mode: 'index', intersect: false }
-            },
-            interaction: { mode: 'index', intersect: false }
-        })
-    });
+function renderSalesTrendFallback(data, period) {
+    destroyChart('salesTrendChart');
+    _currentTrendPeriod = period;
+    var canvas = document.getElementById('salesTrendChart');
+    var series = buildSalesTrendSeries(data, period);
+    if (!canvas || !series) return;
+    drawFallbackLineChart(canvas, series.labels, series.datasets);
+}
+
+function renderSalesTrend(data, period) {
+    if (!isChartJsReady()) {
+        renderSalesTrendFallback(data, period);
+        return;
+    }
+    destroyChart('salesTrendChart');
+    _currentTrendPeriod = period;
+    var series = buildSalesTrendSeries(data, period);
+    if (!series) return;
+
+    // Show legend when multiple datasets are displayed
+    var showLegend = series.datasets.length > 1;
+
+    try {
+        charts.salesTrendChart = new Chart(document.getElementById('salesTrendChart'), {
+            type: 'line',
+            data: { labels: series.labels, datasets: series.datasets },
+            options: cOpts({
+                plugins: {
+                    legend: { display: showLegend, position: 'top', labels: { boxWidth: 12, font: { size: 11 } } },
+                    tooltip: { mode: 'index', intersect: false }
+                },
+                interaction: { mode: 'index', intersect: false }
+            })
+        });
+        resizeChartSoon(charts.salesTrendChart);
+    } catch (err) {
+        console.warn('Sales trend Chart.js render failed; using canvas fallback.', err);
+        drawFallbackLineChart(document.getElementById('salesTrendChart'), series.labels, series.datasets);
+    }
 }
 
 function initTrendTabs(data) {
@@ -664,33 +1057,60 @@ function initTrendTabs(data) {
             tabs.forEach(function (t) { t.classList.remove('active'); });
             tab.classList.add('active');
             _currentTrendPeriod = tab.getAttribute('data-period');
-            renderSalesTrend(data, _currentTrendPeriod);
+            if (isChartJsReady()) renderSalesTrend(data, _currentTrendPeriod);
+            else renderSalesTrendFallback(data, _currentTrendPeriod);
         });
     });
 }
 
 /* ── Platform Split Donut ── */
+function buildPlatformDonutSeries(data) {
+    var pLabels = Object.keys(data.platforms || {});
+    if (!pLabels.length) return null;
+    var pVals = pLabels.map(function (k) { return chartNumber(data.platforms[k].revenue); });
+    var total = pVals.reduce(function (sum, value) { return sum + value; }, 0);
+    if (total <= 0) return null;
+    var colors = pLabels.map(function (name) {
+        return name === 'Amazon' ? '#3b82f6' : (name === 'Flipkart' ? '#f59e0b' : '#10b981');
+    });
+    return { labels: pLabels, values: pVals, colors: colors };
+}
+
+function renderPlatformDonutFallback(data) {
+    var el = document.getElementById('platformSplitChart');
+    if (!el) return;
+    destroyChart('platformSplitChart');
+    var series = buildPlatformDonutSeries(data);
+    if (!series) return;
+    drawFallbackDonutChart(el, series.labels, series.values, series.colors);
+}
+
 function renderPlatformDonut(data) {
     var el = document.getElementById('platformSplitChart');
     if (!el) return;
     destroyChart('platformSplitChart');
-    var pLabels = Object.keys(data.platforms);
-    if (!pLabels.length) return;
-    var pVals   = pLabels.map(function (k) { return data.platforms[k].revenue; });
-    var colors  = pLabels.map(function (name) {
-        return name === 'Amazon' ? '#3b82f6' : (name === 'Flipkart' ? '#f59e0b' : '#10b981');
-    });
-    charts.platformSplitChart = new Chart(el, {
-        type: 'doughnut',
-        data: { labels: pLabels, datasets: [{ data: pVals, backgroundColor: colors, borderWidth: 0 }] },
-        options: {
-            responsive: true, maintainAspectRatio: false, cutout: '72%',
-            plugins: {
-                legend: { display: false },
-                tooltip: { callbacks: { label: function (ctx) { return ctx.label + ': ' + fmtShort(ctx.raw) + ' (' + data.platforms[ctx.label].pct + '%)'; } } }
+    var series = buildPlatformDonutSeries(data);
+    if (!series) return;
+    el.style.display = 'block';
+    el.style.width = '180px';
+    el.style.height = '180px';
+    try {
+        charts.platformSplitChart = new Chart(el, {
+            type: 'doughnut',
+            data: { labels: series.labels, datasets: [{ data: series.values, backgroundColor: series.colors, borderColor: '#ffffff', borderWidth: 2, hoverOffset: 3 }] },
+            options: {
+                responsive: true, maintainAspectRatio: false, cutout: '72%',
+                plugins: {
+                    legend: { display: false },
+                    tooltip: { callbacks: { label: function (ctx) { return ctx.label + ': ' + fmtShort(ctx.raw) + ' (' + data.platforms[ctx.label].pct + '%)'; } } }
+                }
             }
-        }
-    });
+        });
+        resizeChartSoon(charts.platformSplitChart);
+    } catch (err) {
+        console.warn('Platform split Chart.js render failed; using canvas fallback.', err);
+        drawFallbackDonutChart(el, series.labels, series.values, series.colors);
+    }
 }
 
 /* ── Revenue Forecast Chart ── */

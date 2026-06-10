@@ -13,6 +13,7 @@ from .models import (
     FlipkartPrice,
     FlipkartPLA,
     FlipkartProcessedDashboardData,
+    DashboardProductDailySummary,
 )
 
 
@@ -31,8 +32,9 @@ class SpendDataAdmin(admin.ModelAdmin):
 
 @admin.register(CategoryMapping)
 class CategoryMappingAdmin(admin.ModelAdmin):
-    list_display = ("user", "asin", "portfolio", "category")
-    list_filter = ("portfolio", "category")
+    list_display = ("user", "asin", "parent_asin", "portfolio", "category", "category_manager")
+    list_filter = ("portfolio", "category", "category_manager", "brand_name", "finish")
+    search_fields = ("asin", "parent_asin", "msku", "brand_name", "series_name")
 
 
 @admin.register(PriceData)
@@ -75,13 +77,15 @@ class FlipkartCategoryMapAdmin(admin.ModelAdmin):
     list_display = (
         "user",
         "fsn",
+        "asin",
         "portfolio",
         "category",
         "subcategory",
         "product_status",
+        "category_manager",
     )
-    list_filter = ("portfolio", "category", "product_status")
-    search_fields = ("fsn", "sku")
+    list_filter = ("portfolio", "category", "product_status", "category_manager", "brand_name", "finish")
+    search_fields = ("fsn", "asin", "sku", "brand_name", "series_name")
 
 
 @admin.register(FlipkartPrice)
@@ -116,3 +120,10 @@ class FlipkartProcessedDashboardDataAdmin(admin.ModelAdmin):
     )
     list_filter = ("date", "user")
     search_fields = ("fsn", "category")
+
+
+@admin.register(DashboardProductDailySummary)
+class DashboardProductDailySummaryAdmin(admin.ModelAdmin):
+    list_display = ("user", "date", "platform", "sku", "revenue", "ad_spend")
+    list_filter = ("date", "platform", "user")
+    search_fields = ("sku", "asin", "fsn", "category")

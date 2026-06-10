@@ -1,0 +1,107 @@
+<div class="tbl-overlay" id="{{ npd_modal_id }}" data-lazy-url="{% url 'dashboard-modal-rows' npd_view_name 'npd-performance' %}">
+    <div class="tbl-overlay-inner" style="max-width:1280px;">
+        <div class="tbl-overlay-header">
+            <div>
+                <span class="tbl-overlay-title">NPD Performance</span>
+                <div style="font-size:11px;color:var(--muted);margin-top:4px;">New product performance by launch date and current filters</div>
+            </div>
+            <button class="tbl-overlay-close" onclick="closeModal('{{ npd_modal_id }}')">&#10005; Close</button>
+        </div>
+        <div style="padding:14px 18px;border-bottom:1px solid var(--border-light);">
+            <canvas id="{{ npd_chart_id }}" style="width:100%;height:260px;max-height:260px;"></canvas>
+        </div>
+        <div class="tbl-overlay-scroll">
+            <table class="ceo-table" style="min-width:1800px;" id="{{ npd_table_id }}">
+                <thead id="{{ npd_header_id }}">
+                    <tr>
+                        <th>Amazon SKU</th>
+                        <th>Flipkart SKU</th>
+                        <th class="num">Amazon Page Views</th>
+                        <th class="num">Flipkart Page Views</th>
+                        <th>Amazon Launch Date</th>
+                        <th>Flipkart Launch Date</th>
+                        <th class="num">Amazon Ad Spend</th>
+                        <th class="num">Flipkart Ad Spend</th>
+                        <th class="num">Amazon FC Stock</th>
+                        <th class="num">Flipkart FC Stock</th>
+                        <th class="num">Amazon Flex Stock</th>
+                        <th class="num">Flipkart Flex Stock</th>
+                        <th class="num">Amazon FCs &gt; 0</th>
+                        <th class="num">Flipkart FCs &gt; 0</th>
+                        <th class="num">Amazon Revenue</th>
+                        <th class="num">Flipkart Revenue</th>
+                        <th class="num">Amazon Units</th>
+                        <th class="num">Flipkart Units</th>
+                        <th>Category</th>
+                        <th>Portfolio</th>
+                        <th>CM Name</th>
+                        <th class="num">Amazon DOC</th>
+                        <th class="num">Flipkart DOC</th>
+                        <th class="num">Amazon Conversion</th>
+                        <th class="num">Flipkart Conversion</th>
+                    </tr>
+                </thead>
+                <tbody data-modal-lazy="1">
+                    <tr><td colspan="25" class="empty">Loading data...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+<script>
+(function(){
+    var modalId = "{{ npd_modal_id }}";
+    var chartId = "{{ npd_chart_id }}";
+    var headerId = "{{ npd_header_id }}";
+    var chartInstance = null;
+    var HEADERS = {
+        "All": '<tr><th data-field="asin">Amazon SKU</th><th data-field="fsn">Flipkart SKU</th><th class="num" data-field="az_pageviews">Amazon Page Views</th><th class="num" data-field="fk_pageviews">Flipkart Page Views</th><th data-field="az_launch_date">Amazon Launch Date</th><th data-field="fk_launch_date">Flipkart Launch Date</th><th class="num" data-field="az_ad_spend">Amazon Ad Spend</th><th class="num" data-field="fk_ad_spend">Flipkart Ad Spend</th><th class="num" data-field="az_fc_stock">Amazon FC Stock</th><th class="num" data-field="fk_fc_stock">Flipkart FC Stock</th><th class="num" data-field="az_flex_stock">Amazon Flex Stock</th><th class="num" data-field="fk_flex_stock">Flipkart Flex Stock</th><th class="num" data-field="az_fc_stock_count">Amazon FCs &gt; 0</th><th class="num" data-field="fk_fc_stock_count">Flipkart FCs &gt; 0</th><th class="num" data-field="az_revenue">Amazon Revenue</th><th class="num" data-field="fk_revenue">Flipkart Revenue</th><th class="num" data-field="az_units">Amazon Units</th><th class="num" data-field="fk_units">Flipkart Units</th><th data-field="category">Category</th><th data-field="portfolio">Portfolio</th><th data-field="category_manager">CM Name</th><th class="num" data-field="az_doc">Amazon DOC</th><th class="num" data-field="fk_doc">Flipkart DOC</th><th class="num" data-field="az_conversion">Amazon Conversion</th><th class="num" data-field="fk_conversion">Flipkart Conversion</th></tr>',
+        "Amazon": '<tr><th data-field="asin">Amazon SKU</th><th class="num" data-field="az_pageviews">Page Views</th><th data-field="az_launch_date">Launch Date</th><th class="num" data-field="az_ad_spend">Ad Spend</th><th class="num" data-field="az_fc_stock">FC Stock</th><th class="num" data-field="az_flex_stock">Flex Stock</th><th class="num" data-field="az_fc_stock_count">FCs &gt; 0</th><th class="num" data-field="az_revenue">Revenue</th><th class="num" data-field="az_units">Units</th><th data-field="category">Category</th><th data-field="portfolio">Portfolio</th><th data-field="category_manager">CM Name</th><th class="num" data-field="az_doc">DOC</th><th class="num" data-field="az_conversion">Conversion</th></tr>',
+        "Flipkart": '<tr><th data-field="fsn">Flipkart SKU</th><th class="num" data-field="fk_pageviews">Page Views</th><th data-field="fk_launch_date">Launch Date</th><th class="num" data-field="fk_ad_spend">Ad Spend</th><th class="num" data-field="fk_fc_stock">FC Stock</th><th class="num" data-field="fk_flex_stock">Flex Stock</th><th class="num" data-field="fk_fc_stock_count">FCs &gt; 0</th><th class="num" data-field="fk_revenue">Revenue</th><th class="num" data-field="fk_units">Units</th><th data-field="category">Category</th><th data-field="portfolio">Portfolio</th><th data-field="category_manager">CM Name</th><th class="num" data-field="fk_doc">DOC</th><th class="num" data-field="fk_conversion">Conversion</th></tr>'
+    };
+    function currentPlatform() {
+        var sel = document.getElementById("platformSelect");
+        return sel ? (sel.value || "All") : "All";
+    }
+    function updateHeader() {
+        var header = document.getElementById(headerId);
+        if (header) header.innerHTML = HEADERS[currentPlatform()] || HEADERS.All;
+    }
+    function renderChart() {
+        if (!window.Chart) return;
+        var canvas = document.getElementById(chartId);
+        if (!canvas) return;
+        var payload = (window.DASHBOARD_PAYLOAD || {});
+        var trend = payload.npd_trend || {};
+        var labels = trend.labels || [];
+        if (!labels.length) return;
+        if (chartInstance) chartInstance.destroy();
+        chartInstance = new Chart(canvas, {
+            type: "line",
+            data: {
+                labels: labels,
+                datasets: [
+                    { label: "Page Views", data: trend.pageviews || [], borderColor: "#2563eb", backgroundColor: "rgba(37,99,235,0.14)", fill: true, tension: 0.35, yAxisID: "y" },
+                    { label: "Units Sold", data: trend.units || [], borderColor: "#16a34a", backgroundColor: "rgba(22,163,74,0.14)", fill: true, tension: 0.35, yAxisID: "y" },
+                    { label: "Conversion Rate", data: trend.conversion || [], borderColor: "#dc2626", backgroundColor: "rgba(220,38,38,0.12)", fill: true, tension: 0.35, yAxisID: "y1" }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: "index", intersect: false },
+                plugins: { legend: { position: "bottom" } },
+                scales: {
+                    y: { beginAtZero: true, grid: { color: "rgba(148,163,184,0.18)" } },
+                    y1: { beginAtZero: true, position: "right", grid: { drawOnChartArea: false }, ticks: { callback: function(v){ return v + "%"; } } }
+                }
+            }
+        });
+    }
+    document.addEventListener("DOMContentLoaded", updateHeader);
+    document.addEventListener("click", function(e) {
+        var opener = e.target && e.target.closest ? e.target.closest("[onclick*='" + modalId + "']") : null;
+        if (opener) setTimeout(function(){ updateHeader(); renderChart(); }, 80);
+    });
+})();
+</script>

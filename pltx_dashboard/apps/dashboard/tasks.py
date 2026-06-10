@@ -10,6 +10,9 @@ from apps.dashboard.services.warmup import prime_dashboard_payloads_for_user
 from apps.dashboard.services.daily_summary import rebuild_daily_summary_for_user
 from apps.dashboard.services.inventory_summary import rebuild_inventory_summary_for_user
 from apps.dashboard.services.asin_monthly_summary import rebuild_asin_monthly_summary_for_user
+from apps.dashboard.services.product_daily_summary import (
+    rebuild_product_daily_summary_for_user,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +71,21 @@ def refresh_dashboard_daily_summary_task(data_owner_id, only_dates=None):
 
     stats = rebuild_daily_summary_for_user(user, only_dates=only_dates or [])
     logger.info("[DashboardDailySummary] user=%s stats=%s", data_owner_id, stats)
+    return stats
+
+
+@shared_task
+def refresh_dashboard_product_daily_summary_task(data_owner_id, only_dates=None):
+    try:
+        user = Users.objects.get(pk=data_owner_id)
+    except Users.DoesNotExist:
+        logger.warning(
+            "[DashboardProductDailySummary] Skipping; user %s not found.", data_owner_id
+        )
+        return {"rows_written": 0, "error": "user-not-found"}
+
+    stats = rebuild_product_daily_summary_for_user(user, only_dates=only_dates or [])
+    logger.info("[DashboardProductDailySummary] user=%s stats=%s", data_owner_id, stats)
     return stats
 
 
@@ -142,6 +160,19 @@ def refresh_all_dashboard_daily_summaries_task():
         total_rows += int(stats.get("rows_written") or 0)
     result = {"users_processed": total_users, "rows_written": total_rows}
     logger.info("[DashboardDailySummaryAll] %s", result)
+    return result
+
+
+@shared_task
+def refresh_all_dashboard_product_daily_summaries_task():
+    total_users = 0
+    total_rows = 0
+    for user in Users.objects.all().only("id").iterator(chunk_size=200):
+        total_users += 1
+        stats = rebuild_product_daily_summary_for_user(user, only_dates=[])
+        total_rows += int(stats.get("rows_written") or 0)
+    result = {"users_processed": total_users, "rows_written": total_rows}
+    logger.info("[DashboardProductDailySummaryAll] %s", result)
     return result
 
 

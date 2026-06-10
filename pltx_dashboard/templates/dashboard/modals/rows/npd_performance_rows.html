@@ -1,0 +1,104 @@
+{% load dashboard_extras %}
+{% for row in rows %}
+<tr>
+    {% if platform == "Amazon" %}
+    <td>
+        <div class="ceo-sku-cell">
+            <div class="ceo-sku-thumb"><img src="/static/logo/amazon_logo.png" style="width:14px;height:14px;"></div>
+            <div>
+                <div style="font-weight:700;font-size:12px;line-height:1.3;">{{ row.amazon_sku|default:"-" }}</div>
+                <div style="font-size:10px;color:#f59e0b;font-family:monospace;line-height:1.2;">{{ row.asin|default:"-" }}</div>
+            </div>
+        </div>
+    </td>
+    <td class="num">{{ row.az_pageviews|fmt_num }}</td>
+    <td>{{ row.az_launch_date_display|default:"-" }}</td>
+    <td class="num">{{ row.az_ad_spend|fmt_rupee }}</td>
+    <td class="num">{{ row.az_fc_stock|fmt_num }}</td>
+    <td class="num">{{ row.az_flex_stock|fmt_num }}</td>
+    <td class="num">{{ row.az_fc_stock_count|fmt_num }}</td>
+    <td class="num">{{ row.az_revenue|fmt_rupee }}</td>
+    <td class="num">{{ row.az_units|fmt_num }}</td>
+    <td>{{ row.category|default:"-" }}</td>
+    <td>{{ row.portfolio|default:"-" }}</td>
+    <td>{{ row.category_manager|default:"-" }}</td>
+    <td class="num">{{ row.az_doc|floatformat:1 }}</td>
+    <td class="num">{{ row.az_conversion|floatformat:2 }}%</td>
+
+    {% elif platform == "Flipkart" %}
+    <td>
+        <div class="ceo-sku-cell">
+            <div class="ceo-sku-thumb"><img src="/static/logo/flipkart_logo.png" style="width:14px;height:14px;"></div>
+            <div>
+                <div style="font-weight:700;font-size:12px;line-height:1.3;">{{ row.flipkart_sku|default:"-" }}</div>
+                <div style="font-size:10px;color:#38bdf8;font-family:monospace;line-height:1.2;">{{ row.fsn|default:"-" }}</div>
+            </div>
+        </div>
+    </td>
+    <td class="num">{{ row.fk_pageviews|fmt_num }}</td>
+    <td>{{ row.fk_launch_date_display|default:"-" }}</td>
+    <td class="num">{{ row.fk_ad_spend|fmt_rupee }}</td>
+    <td class="num">{{ row.fk_fc_stock|fmt_num }}</td>
+    <td class="num">{{ row.fk_flex_stock|fmt_num }}</td>
+    <td class="num">{{ row.fk_fc_stock_count|fmt_num }}</td>
+    <td class="num">{{ row.fk_revenue|fmt_rupee }}</td>
+    <td class="num">{{ row.fk_units|fmt_num }}</td>
+    <td>{{ row.category|default:"-" }}</td>
+    <td>{{ row.portfolio|default:"-" }}</td>
+    <td>{{ row.category_manager|default:"-" }}</td>
+    <td class="num">{{ row.fk_doc|floatformat:1 }}</td>
+    <td class="num">{{ row.fk_conversion|floatformat:2 }}%</td>
+
+    {% else %}
+    <td>
+        {% if row.asin %}
+        <div class="ceo-sku-cell">
+            <div class="ceo-sku-thumb"><img src="/static/logo/amazon_logo.png" style="width:14px;height:14px;"></div>
+            <div>
+                <div style="font-weight:700;font-size:12px;line-height:1.3;">{{ row.amazon_sku|default:"-" }}</div>
+                <div style="font-size:10px;color:#f59e0b;font-family:monospace;line-height:1.2;">{{ row.asin }}</div>
+            </div>
+        </div>
+        {% else %}<span style="color:var(--muted)">-</span>{% endif %}
+    </td>
+    <td>
+        {% if row.fsn %}
+        <div class="ceo-sku-cell">
+            <div class="ceo-sku-thumb"><img src="/static/logo/flipkart_logo.png" style="width:14px;height:14px;"></div>
+            <div>
+                <div style="font-weight:700;font-size:12px;line-height:1.3;">{{ row.flipkart_sku|default:"-" }}</div>
+                <div style="font-size:10px;color:#38bdf8;font-family:monospace;line-height:1.2;">{{ row.fsn }}</div>
+            </div>
+        </div>
+        {% else %}<span style="color:var(--muted)">-</span>{% endif %}
+    </td>
+    <td class="num">{{ row.az_pageviews|fmt_num }}</td>
+    <td class="num">{{ row.fk_pageviews|fmt_num }}</td>
+    <td>{{ row.az_launch_date_display|default:"-" }}</td>
+    <td>{{ row.fk_launch_date_display|default:"-" }}</td>
+    <td class="num">{{ row.az_ad_spend|fmt_rupee }}</td>
+    <td class="num">{{ row.fk_ad_spend|fmt_rupee }}</td>
+    <td class="num">{{ row.az_fc_stock|fmt_num }}</td>
+    <td class="num">{{ row.fk_fc_stock|fmt_num }}</td>
+    <td class="num">{{ row.az_flex_stock|fmt_num }}</td>
+    <td class="num">{{ row.fk_flex_stock|fmt_num }}</td>
+    <td class="num">{{ row.az_fc_stock_count|fmt_num }}</td>
+    <td class="num">{{ row.fk_fc_stock_count|fmt_num }}</td>
+    <td class="num">{{ row.az_revenue|fmt_rupee }}</td>
+    <td class="num">{{ row.fk_revenue|fmt_rupee }}</td>
+    <td class="num">{{ row.az_units|fmt_num }}</td>
+    <td class="num">{{ row.fk_units|fmt_num }}</td>
+    <td>{{ row.category|default:"-" }}</td>
+    <td>{{ row.portfolio|default:"-" }}</td>
+    <td>{{ row.category_manager|default:"-" }}</td>
+    <td class="num">{{ row.az_doc|floatformat:1 }}</td>
+    <td class="num">{{ row.fk_doc|floatformat:1 }}</td>
+    <td class="num">{{ row.az_conversion|floatformat:2 }}%</td>
+    <td class="num">{{ row.fk_conversion|floatformat:2 }}%</td>
+    {% endif %}
+</tr>
+{% empty %}
+<tr>
+    <td colspan="25" class="empty">No NPD data available</td>
+</tr>
+{% endfor %}
