@@ -124,6 +124,7 @@ def _asin_fsn_report_export_filename(ext):
 
 def _asin_fsn_report_export_table(rows):
     headers = [
+        "Date",
         "ASIN / FSN",
         "SKU",
         "Platform Name",
@@ -134,6 +135,7 @@ def _asin_fsn_report_export_table(rows):
     ]
     table_rows = [
         [
+            _clean_export_value(row.get("date", "")),
             row.get("product_id", ""),
             row.get("sku", ""),
             row.get("platform", ""),

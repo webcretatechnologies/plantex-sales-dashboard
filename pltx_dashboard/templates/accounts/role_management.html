@@ -3,7 +3,7 @@
 {% block dashboard_title %}Role Management{% endblock %}
 {% block view_type %}role_management{% endblock %}
 
-{% block extra_head_css %}
+{% block extra_head_inline_css %}
     /* Hide sidebar status & refresh on management pages only */
     .sidebar-status, .sidebar-refresh-btn { 
         display: none !important; 
@@ -247,7 +247,7 @@
         background: var(--surface2);
         color: var(--text2);
     }
-{% endblock extra_head_css %}
+{% endblock extra_head_inline_css %}
 {% block extra_head_scripts %}{% endblock %}
 
 {% block topbar_filters %}{% endblock %}

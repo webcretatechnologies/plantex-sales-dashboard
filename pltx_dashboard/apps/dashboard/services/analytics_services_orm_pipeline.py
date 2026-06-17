@@ -537,7 +537,6 @@ def _compute_sku_activity_combined_from_summary(qs, sku_field):
             total_orders=Sum("orders"),
             total_ad_spend=Sum("ad_spend"),
         )
-        .iterator(chunk_size=2000)
     ):
         active += 1
         sku = str(row.get(sku_field) or "").strip()
@@ -1060,45 +1059,60 @@ def _build_declining_product_rows(
     period_min = min(cm_start, pm_start)
     period_max = max(cm_end, pm_end)
 
-    if summary_qs is not None:
-        for row in (
+    from concurrent.futures import ThreadPoolExecutor
+
+    def fetch_az_declining():
+        if summary_qs is None:
+            return []
+        return list(
             summary_qs.filter(date__gte=period_min, date__lte=period_max)
             .values("asin")
             .annotate(
                 cm_r=Sum(Case(When(date__gte=cm_start, date__lte=cm_end, then=F("revenue")), default=Value(0.0))),
                 pm_r=Sum(Case(When(date__gte=pm_start, date__lte=pm_end, then=F("revenue")), default=Value(0.0))),
                 cm_pv=Sum(Case(When(date__gte=cm_start, date__lte=cm_end, then=F("page_views")), default=Value(0))),
+                pm_pv=Sum(Case(When(date__gte=pm_start, date__lte=pm_end, then=F("page_views")), default=Value(0))),
             )
-            .iterator(chunk_size=5000)
-        ):
-            sku = str(row.get("asin") or "").strip()
-            if not sku:
-                continue
-            if row.get("cm_r"):
-                cm_az_rev[sku] = _to_float(row.get("cm_r"))
-            if row.get("pm_r"):
-                pm_az_rev[sku] = _to_float(row.get("pm_r"))
-            cm_az_pageviews[sku] = int(row.get("cm_pv") or 0)
+        )
 
-    if fk_summary_qs is not None:
-        for row in (
+    def fetch_fk_declining():
+        if fk_summary_qs is None:
+            return []
+        return list(
             fk_summary_qs.filter(date__gte=period_min, date__lte=period_max)
             .values("fsn")
             .annotate(
                 cm_r=Sum(Case(When(date__gte=cm_start, date__lte=cm_end, then=F("revenue")), default=Value(0.0))),
                 pm_r=Sum(Case(When(date__gte=pm_start, date__lte=pm_end, then=F("revenue")), default=Value(0.0))),
                 cm_pv=Sum(Case(When(date__gte=cm_start, date__lte=cm_end, then=F("page_views")), default=Value(0))),
+                pm_pv=Sum(Case(When(date__gte=pm_start, date__lte=pm_end, then=F("page_views")), default=Value(0))),
             )
-            .iterator(chunk_size=5000)
-        ):
-            sku = str(row.get("fsn") or "").strip()
-            if not sku:
-                continue
-            if row.get("cm_r"):
-                cm_fk_rev[sku] = cm_fk_rev.get(sku, 0.0) + _to_float(row.get("cm_r"))
-            if row.get("pm_r"):
-                pm_fk_rev[sku] = pm_fk_rev.get(sku, 0.0) + _to_float(row.get("pm_r"))
-            cm_fk_pageviews[sku] = cm_fk_pageviews.get(sku, 0) + int(row.get("cm_pv") or 0)
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        future_az = executor.submit(fetch_az_declining)
+        future_fk = executor.submit(fetch_fk_declining)
+        az_list = future_az.result()
+        fk_list = future_fk.result()
+
+    for row in az_list:
+        sku = str(row.get("asin") or "").strip()
+        if not sku:
+            continue
+        cm_az_rev[sku] = _to_float(row.get("cm_r") or 0.0)
+        pm_az_rev[sku] = _to_float(row.get("pm_r") or 0.0)
+        cm_az_pageviews[sku] = int(row.get("cm_pv") or 0)
+        pm_az_pageviews[sku] = int(row.get("pm_pv") or 0)
+
+    for row in fk_list:
+        sku = str(row.get("fsn") or "").strip()
+        if not sku:
+            continue
+        cm_fk_rev[sku] = cm_fk_rev.get(sku, 0.0) + _to_float(row.get("cm_r") or 0.0)
+        pm_fk_rev[sku] = pm_fk_rev.get(sku, 0.0) + _to_float(row.get("pm_r") or 0.0)
+        cm_fk_pageviews[sku] = cm_fk_pageviews.get(sku, 0) + int(row.get("cm_pv") or 0)
+        pm_fk_pageviews[sku] = pm_fk_pageviews.get(sku, 0) + int(row.get("pm_pv") or 0)
+
 
     from apps.dashboard.services.metrics import safe_growth as _safe_growth
 
@@ -1110,6 +1124,7 @@ def _build_declining_product_rows(
         curr = cm_az_rev.get(asin, 0.0)
         prev = pm_az_rev.get(asin, 0.0)
         az_pageviews = cm_az_pageviews.get(asin, 0)
+        az_prev_pageviews = pm_az_pageviews.get(asin, 0)
         msku = _asin_meta.get(asin, {}).get("msku") or _asin_meta.get(asin, {}).get("sku") or ""
         key = msku if msku else f"az_{asin}"
         
@@ -1122,12 +1137,16 @@ def _build_declining_product_rows(
             "az_impact": max(prev - curr, 0.0), "fk_impact": 0.0,
             "revenue": curr, "prev_revenue": prev,
             "pageviews": az_pageviews, "az_pageviews": az_pageviews, "fk_pageviews": 0,
+            "prev_pageviews": az_prev_pageviews, "az_prev_pageviews": az_prev_pageviews, "fk_prev_pageviews": 0,
+            "az_pv_drop_pct": _safe_growth(az_pageviews, az_prev_pageviews), "fk_pv_drop_pct": 0.0,
+            "az_pv_impact": max(az_prev_pageviews - az_pageviews, 0), "fk_pv_impact": 0,
         }
 
     for fsn in set(cm_fk_rev) | set(pm_fk_rev):
         curr = cm_fk_rev.get(fsn, 0.0)
         prev = pm_fk_rev.get(fsn, 0.0)
         fk_pageviews = cm_fk_pageviews.get(fsn, 0)
+        fk_prev_pageviews = pm_fk_pageviews.get(fsn, 0)
         msku = _fsn_meta.get(fsn, {}).get("sku") or ""
         key = msku if msku else f"fk_{fsn}"
         
@@ -1139,9 +1158,13 @@ def _build_declining_product_rows(
             r["fk_drop_pct"] = _safe_growth(curr, prev)
             r["fk_impact"] = max(prev - curr, 0.0)
             r["fk_pageviews"] = fk_pageviews
+            r["fk_prev_pageviews"] = fk_prev_pageviews
+            r["fk_pv_drop_pct"] = _safe_growth(fk_pageviews, fk_prev_pageviews)
+            r["fk_pv_impact"] = max(fk_prev_pageviews - fk_pageviews, 0)
             r["revenue"] += curr
             r["prev_revenue"] += prev
             r["pageviews"] = int(r.get("az_pageviews") or 0) + fk_pageviews
+            r["prev_pageviews"] = int(r.get("az_prev_pageviews") or 0) + fk_prev_pageviews
         else:
             merged[key] = {
                 "sku": fsn, "msku": msku or fsn,
@@ -1152,6 +1175,9 @@ def _build_declining_product_rows(
                 "az_impact": 0.0, "fk_impact": max(prev - curr, 0.0),
                 "revenue": curr, "prev_revenue": prev,
                 "pageviews": fk_pageviews, "az_pageviews": 0, "fk_pageviews": fk_pageviews,
+                "prev_pageviews": fk_prev_pageviews, "az_prev_pageviews": 0, "fk_prev_pageviews": fk_prev_pageviews,
+                "az_pv_drop_pct": 0.0, "fk_pv_drop_pct": _safe_growth(fk_pageviews, fk_prev_pageviews),
+                "az_pv_impact": 0, "fk_pv_impact": max(fk_prev_pageviews - fk_pageviews, 0),
             }
 
     rows = []
@@ -1166,10 +1192,13 @@ def _build_declining_product_rows(
         r["az_pageviews"] = int(r.get("az_pageviews") or 0)
         r["fk_pageviews"] = int(r.get("fk_pageviews") or 0)
         r["pageviews"] = r["az_pageviews"] + r["fk_pageviews"]
+        r["prev_pageviews"] = int(r.get("az_prev_pageviews") or 0) + int(r.get("fk_prev_pageviews") or 0)
         drop_pct = _safe_growth(r["revenue"], r["prev_revenue"])
         if drop_pct < 0:
             r["drop_pct"] = drop_pct
             r["impact"] = round(max(r["prev_revenue"] - r["revenue"], 0.0), 2)
+            r["pv_drop_pct"] = _safe_growth(r["pageviews"], r.get("prev_pageviews", 0))
+            r["pv_impact"] = round(max(r.get("prev_pageviews", 0) - r["pageviews"], 0), 2)
             rows.append(r)
 
     # Sort by MoM Revenue Drop % ascending (most negative = largest decline first)
@@ -1201,9 +1230,9 @@ def run_kpi_only_computation(
         if cached_payload:
             return cached_payload
 
-        have_lock = cache.add(lock_key, "1", timeout=120)
+        have_lock = cache.add(lock_key, "1", timeout=300)
         if not have_lock:
-            for _ in range(80):
+            for _ in range(800):
                 time.sleep(0.15)
                 cached_payload = cache.get(cache_key)
                 if cached_payload:
@@ -1245,13 +1274,28 @@ def run_kpi_only_computation(
         az_qs_prod = DashboardProductDailySummary.objects.none()
     if fk_qs_prod is None:
         fk_qs_prod = DashboardProductDailySummary.objects.none()
-        
-    az_active, az_selling, az_zero, az_zero_pv, _, az_asins = (
-        _compute_sku_activity_combined_from_summary(az_qs_prod, "asin")
-    )
-    fk_active, fk_selling, fk_zero, fk_zero_pv, _, fk_fsns = (
-        _compute_sku_activity_combined_from_summary(fk_qs_prod, "fsn")
-    )
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    def fetch_az_activity():
+        return _compute_sku_activity_combined_from_summary(az_qs_prod, "asin")
+
+    def fetch_fk_activity():
+        return _compute_sku_activity_combined_from_summary(fk_qs_prod, "fsn")
+
+    def fetch_fk_revenue():
+        if not include_activity_metrics or not fsn_meta:
+            return []
+        return list(fk_qs_prod.values("fsn").annotate(revenue=Sum("revenue")))
+
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        future_az_act = executor.submit(fetch_az_activity)
+        future_fk_act = executor.submit(fetch_fk_activity)
+        future_fk_rev = executor.submit(fetch_fk_revenue)
+
+        az_active, az_selling, az_zero, az_zero_pv, _, az_asins = future_az_act.result()
+        fk_active, fk_selling, fk_zero, fk_zero_pv, _, fk_fsns = future_fk_act.result()
+        fk_rev_list = future_fk_rev.result()
 
     unique_counts = _compute_unique_ad_spend_sku_counts(
         qs_f, fk_qs_f, user, asin_meta=asin_meta, filters=filters,
@@ -1272,13 +1316,14 @@ def run_kpi_only_computation(
         for _status in _fsn_to_status.values():
             if _status in _status_counts:
                 _status_counts[_status] += 1
-        for _row in fk_qs_prod.values("fsn").annotate(revenue=Sum("revenue")).iterator(chunk_size=5000):
+        for _row in fk_rev_list:
             _fsn = _row.get("fsn")
             if not _fsn:
                 continue
             _status = _fsn_to_status.get(str(_fsn).strip())
             if _status in _status_revenue:
                 _status_revenue[_status] += float(_row.get("revenue") or 0.0)
+
 
     activity_metrics_extracted = _normalize_activity_metrics({
         "active_asins": az_active + fk_active,
@@ -1412,16 +1457,19 @@ def run_kpi_only_computation(
         "yoy_cm": (yoy_cm_start, yoy_cm_end),
         "yoy_pm": (yoy_pm_start, yoy_pm_end),
     }
+    from concurrent.futures import ThreadPoolExecutor
     if summary_base_qs is not None:
-        az_periods = _batch_period_aggregates(
-            summary_base_qs.filter(platform="Amazon"), growth_periods
-        )
-        fk_periods = _batch_period_aggregates(
-            summary_base_qs.filter(platform="Flipkart"), growth_periods
-        )
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            f_az = executor.submit(_batch_period_aggregates, summary_base_qs.filter(platform="Amazon"), growth_periods)
+            f_fk = executor.submit(_batch_period_aggregates, summary_base_qs.filter(platform="Flipkart"), growth_periods)
+            az_periods = f_az.result()
+            fk_periods = f_fk.result()
     else:
-        az_periods = _batch_period_aggregates(qs, growth_periods)
-        fk_periods = _batch_period_aggregates(fk_qs, growth_periods)
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            f_az = executor.submit(_batch_period_aggregates, qs, growth_periods)
+            f_fk = executor.submit(_batch_period_aggregates, fk_qs, growth_periods)
+            az_periods = f_az.result()
+            fk_periods = f_fk.result()
 
     cm_rev = az_periods["cm_rev"] + fk_periods["cm_rev"]
     pm_rev = az_periods["pm_rev"] + fk_periods["pm_rev"]
@@ -1882,8 +1930,12 @@ def run_orm_computation(
     # ── Pre-fetch category/portfolio metadata ONCE for both current + prev periods ──
     # Uses Redis-cached helpers (300 s TTL) so repeated filter changes within the
     # same session never re-hit the DB for the same static mapping tables.
-    _asin_meta = _get_asin_meta_cached(user) if qs is not None else {}
-    _fsn_meta = _get_fsn_meta_cached(user) if fk_qs is not None else {}
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        f_asin_meta = executor.submit(_get_asin_meta_cached, user) if qs is not None else None
+        f_fsn_meta = executor.submit(_get_fsn_meta_cached, user) if fk_qs is not None else None
+        _asin_meta = f_asin_meta.result() if f_asin_meta else {}
+        _fsn_meta = f_fsn_meta.result() if f_fsn_meta else {}
 
     # ── Master table data (used to eliminate duplicate DB hits) ──
     if use_summary_rollups:
@@ -1898,6 +1950,8 @@ def run_orm_computation(
             include_activity_metrics=include_activity_metrics,
         )
         table_data = []
+    elif normalized_section_scope == "visuals":
+        table_data = None
     else:
         table_data = generate_bi_data_orm(
             product_summary_az_f, product_summary_fk_f, user=user, asin_meta=_asin_meta, fsn_meta=_fsn_meta
@@ -2157,8 +2211,12 @@ def run_orm_computation(
             "yoy_cm": (yoy_cm_start, yoy_cm_end),
             "yoy_pm": (yoy_pm_start, yoy_pm_end),
         }
-        az_periods = _batch_period_aggregates(qs, _growth_periods)
-        fk_periods = _batch_period_aggregates(fk_qs, _growth_periods)
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            f_az = executor.submit(_batch_period_aggregates, qs, _growth_periods)
+            f_fk = executor.submit(_batch_period_aggregates, fk_qs, _growth_periods)
+            az_periods = f_az.result()
+            fk_periods = f_fk.result()
 
         cm_rev = az_periods["cm_rev"] + fk_periods["cm_rev"]
         pm_rev = az_periods["pm_rev"] + fk_periods["pm_rev"]
@@ -2313,7 +2371,9 @@ def run_orm_computation(
         }
 
     # 5. Charts
-    if use_summary_rollups:
+    if normalized_section_scope == "details":
+        charts = {}
+    elif use_summary_rollups:
         charts = _summary_charts_data(summary_qs_f)
     else:
         preaggregated_trend = None
@@ -2365,6 +2425,22 @@ def run_orm_computation(
             elif platform == "Flipkart":
                 item["flipkart_revenue"] += revenue
             item["revenue"] += revenue
+    elif table_data is None:
+        cat_perf_dict = {}
+        if qs_f is not None:
+            for _row in qs_f.values("category").annotate(rev=Sum("revenue")):
+                cat = str(_row.get("category") or "Unknown")
+                revenue = float(_row.get("rev") or 0.0)
+                item = cat_perf_dict.setdefault(cat, {"name": cat, "amazon_revenue": 0.0, "flipkart_revenue": 0.0, "revenue": 0.0})
+                item["amazon_revenue"] += revenue
+                item["revenue"] += revenue
+        if fk_qs_f is not None:
+            for _row in fk_qs_f.values("category").annotate(rev=Sum("revenue")):
+                cat = str(_row.get("category") or "Unknown")
+                revenue = float(_row.get("rev") or 0.0)
+                item = cat_perf_dict.setdefault(cat, {"name": cat, "amazon_revenue": 0.0, "flipkart_revenue": 0.0, "revenue": 0.0})
+                item["flipkart_revenue"] += revenue
+                item["revenue"] += revenue
     else:
         cat_perf_dict = {}
         for r in table_data:
@@ -2713,71 +2789,74 @@ def run_orm_computation(
     # Falls back to ProcessedDashboardData when monthly summary is not applicable.
     top_prods = None
     under_prods = None
-    try:
-        from apps.dashboard.services.asin_monthly_summary import (
-            build_top_products_from_monthly,
-            build_declining_products_from_monthly,
-        )
-        top_prods = build_top_products_from_monthly(
-            user,
-            filters,
-            asin_meta=_asin_meta,
-            fsn_meta=_fsn_meta,
-            limit=10,
-            include_full_payload=include_full_payload,
-        )
-        under_prods = build_declining_products_from_monthly(
-            user,
-            filters,
-            cm_start,
-            cm_end,
-            pm_start,
-            pm_end,
-            include_full_payload=include_full_payload,
-        )
-    except Exception:
-        top_prods = None
-        under_prods = None
+    npd_all = []
+    npd_trend = {"labels": [], "pageviews": [], "units": [], "conversion": []}
 
-    if top_prods is None:
-        top_prods = _build_top_product_rows(
-            qs_f,
-            fk_qs_f,
-            qs_prev_f,
-            fk_prev_f,
-            asin_meta=_asin_meta,
-            fsn_meta=_fsn_meta,
-            include_full_payload=include_full_payload,
-            summary_qs_f=product_summary_az_f,
-            fk_summary_qs_f=product_summary_fk_f,
-            summary_prev_f=get_prev_period_qs(product_summary_az_base, filters),
-            fk_summary_prev_f=get_prev_period_qs(product_summary_fk_base, filters),
-        )
-    if under_prods is None:
-        under_prods = _build_declining_product_rows(
-            qs, fk_qs, cm_start, cm_end, pm_start, pm_end,
-            include_full_payload=include_full_payload,
-            asin_meta=_asin_meta, fsn_meta=_fsn_meta,
-            summary_qs=product_summary_az_base,
-            fk_summary_qs=product_summary_fk_base,
-        )
+    if include_activity_metrics:
+        try:
+            from apps.dashboard.services.asin_monthly_summary import (
+                build_top_products_from_monthly,
+                build_declining_products_from_monthly,
+            )
+            top_prods = build_top_products_from_monthly(
+                user,
+                filters,
+                asin_meta=_asin_meta,
+                fsn_meta=_fsn_meta,
+                limit=10,
+                include_full_payload=include_full_payload,
+            )
+            under_prods = build_declining_products_from_monthly(
+                user,
+                filters,
+                cm_start,
+                cm_end,
+                pm_start,
+                pm_end,
+                include_full_payload=include_full_payload,
+            )
+        except Exception:
+            top_prods = None
+            under_prods = None
 
-    try:
-        from apps.dashboard.services.npd import build_npd_performance
+        if top_prods is None:
+            top_prods = _build_top_product_rows(
+                qs_f,
+                fk_qs_f,
+                qs_prev_f,
+                fk_prev_f,
+                asin_meta=_asin_meta,
+                fsn_meta=_fsn_meta,
+                include_full_payload=include_full_payload,
+                summary_qs_f=product_summary_az_f,
+                fk_summary_qs_f=product_summary_fk_f,
+                summary_prev_f=get_prev_period_qs(product_summary_az_base, filters),
+                fk_summary_prev_f=get_prev_period_qs(product_summary_fk_base, filters),
+            )
+        if under_prods is None:
+            under_prods = _build_declining_product_rows(
+                qs, fk_qs, cm_start, cm_end, pm_start, pm_end,
+                include_full_payload=include_full_payload,
+                asin_meta=_asin_meta, fsn_meta=_fsn_meta,
+                summary_qs=product_summary_az_base,
+                fk_summary_qs=product_summary_fk_base,
+            )
 
-        npd_payload = build_npd_performance(user, filters, qs_f, fk_qs_f)
-    except Exception:
-        npd_payload = {
-            "rows": [],
-            "trend": {"labels": [], "pageviews": [], "units": [], "conversion": []},
+        try:
+            from apps.dashboard.services.npd import build_npd_performance
+            npd_payload = build_npd_performance(user, filters, qs_f, fk_qs_f)
+        except Exception:
+            npd_payload = {
+                "rows": [],
+                "trend": {"labels": [], "pageviews": [], "units": [], "conversion": []},
+            }
+        npd_all = npd_payload.get("rows") or []
+        npd_trend = npd_payload.get("trend") or {
+            "labels": [],
+            "pageviews": [],
+            "units": [],
+            "conversion": [],
         }
-    npd_all = npd_payload.get("rows") or []
-    npd_trend = npd_payload.get("trend") or {
-        "labels": [],
-        "pageviews": [],
-        "units": [],
-        "conversion": [],
-    }
 
     if use_summary_rollups:
         port_perf_dict = {

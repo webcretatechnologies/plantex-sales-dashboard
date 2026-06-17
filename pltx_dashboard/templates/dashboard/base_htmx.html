@@ -83,7 +83,7 @@
                                 <div style="position: relative; width: 100%; overflow: visible;">
                                     <input type="text" id="flatpickrRange" placeholder="Select Dates..."
                                         style="width: 100%; background: #ffffff; border: 1px solid #cbd5e1; border-radius: 6px; padding: 7px 12px; padding-right: 36px; font-size: 13px; font-family: 'Inter', sans-serif; color: #0f172a; outline: none; cursor: pointer; transition: border-color 0.2s; position: relative; z-index: 1;"
-                                        onfocus="this.style.borderColor='#3b82f6'">
+                                        onfocus="this.style.borderColor='#0fafbf'">
                                     <span class="material-icons-round"
                                         onclick="document.getElementById('flatpickrRange').click()"
                                         style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); cursor: pointer; font-size: 18px; color: #64748b; transition: color 0.2s; z-index: 2; pointer-events: auto;"
@@ -95,9 +95,9 @@
                                 <input type="hidden" id="customEndDate" name="end_date"
                                     value="{{ request.GET.end_date }}">
                                 <button type="button"
-                                    style="padding: 7px 16px; background: #2563eb; color: #ffffff; border: none; border-radius: 6px; font-family: 'Inter', sans-serif; font-weight: 600; font-size: 12px; cursor: pointer; transition: all 0.2s; box-shadow: 0 2px 4px rgba(37,99,235,0.2);"
-                                    onmouseover="this.style.background='#1d4ed8'; this.style.transform='translateY(-1px)';"
-                                    onmouseout="this.style.background='#2563eb'; this.style.transform='translateY(0)';"
+                                    style="padding: 7px 16px; background: #0fafbf; color: #ffffff; border: none; border-radius: 6px; font-family: 'Inter', sans-serif; font-weight: 600; font-size: 12px; cursor: pointer; transition: all 0.2s; box-shadow: 0 2px 4px rgba(15,175,191,0.2);"
+                                    onmouseover="this.style.background='#098284'; this.style.transform='translateY(-1px)';"
+                                    onmouseout="this.style.background='#0fafbf'; this.style.transform='translateY(0)';"
                                     onclick="submitCustomDate()">Apply</button>
                             </div>
                         </div>
@@ -156,13 +156,22 @@
 
 
                     </div>
-                    <!-- Actions (Reset) -->
-
+                    <!-- Actions (Reset/Apply/More Filters) -->
                     <div style="flex:1"></div>
-                    <button type="button" class="btn-open-drawer" data-dashboard-action="open-filters" onclick="toggleFilterDrawer()">
-                        <span class="material-icons-round" style="font-size:18px;">filter_list</span>
-                        More Filters
-                    </button>
+                    <div class="top-nav-actions" style="margin-left:auto; display:flex; gap:12px; align-items:center;">
+                        <button type="button" class="btn btn-secondary" style="height: 40px; padding: 0 16px; border-radius: 6px; font-weight: 500; cursor: pointer; border: 1px solid #cbd5e1; background: #ffffff;"
+                                onclick="window.location.href=window.location.pathname" title="Reset all filters">
+                            Reset
+                        </button>
+                        <button type="button" id="topbarApplyFiltersBtn" class="btn btn-primary" style="height: 40px; padding: 0 16px; border-radius: 6px; font-weight: 500; display:flex; align-items:center; gap:8px; cursor: pointer; border: none; background: #0fafbf; color: #ffffff;"
+                                onclick="applyDashboardFilters();">
+                            <span>Apply</span>
+                        </button>
+                        <button type="button" class="btn-open-drawer" data-dashboard-action="open-filters" onclick="toggleFilterDrawer()" style="height: 40px; border-radius: 6px; cursor: pointer;">
+                            <span class="material-icons-round" style="font-size:18px;">filter_list</span>
+                            More Filters
+                        </button>
+                    </div>
                 </div>
 
 

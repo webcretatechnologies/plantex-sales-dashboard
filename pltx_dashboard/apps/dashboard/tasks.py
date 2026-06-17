@@ -16,9 +16,17 @@ from apps.dashboard.services.product_daily_summary import (
 
 logger = logging.getLogger(__name__)
 
+def _daily_summary_lock_key(data_owner_id):
+    return f"dashboard_daily_summary_task_lock_{data_owner_id}"
+
+def _product_daily_summary_lock_key(data_owner_id):
+    return f"dashboard_product_daily_summary_task_lock_{data_owner_id}"
 
 def _inventory_summary_lock_key(data_owner_id):
     return f"dashboard_inventory_summary_task_lock_{data_owner_id}"
+
+def _asin_monthly_summary_lock_key(data_owner_id):
+    return f"dashboard_asin_monthly_summary_task_lock_{data_owner_id}"
 
 
 @shared_task
@@ -59,38 +67,62 @@ def warmup_dashboard_payloads_task(data_owner_id, filter_sets=None, view_types=N
     return stats
 
 
-@shared_task
-def refresh_dashboard_daily_summary_task(data_owner_id, only_dates=None):
+@shared_task(bind=True, max_retries=5)
+def refresh_dashboard_daily_summary_task(self, data_owner_id, only_dates=None):
+    lock_key = _daily_summary_lock_key(data_owner_id)
+    if not cache.add(lock_key, "1", timeout=1800):
+        logger.info("[DashboardDailySummary] Lock held, retrying user=%s", data_owner_id)
+        raise self.retry(countdown=5 + self.request.retries * 10)
+
     try:
-        user = Users.objects.get(pk=data_owner_id)
-    except Users.DoesNotExist:
-        logger.warning(
-            "[DashboardDailySummary] Skipping; user %s not found.", data_owner_id
-        )
-        return {"rows_written": 0, "error": "user-not-found"}
+        try:
+            user = Users.objects.get(pk=data_owner_id)
+        except Users.DoesNotExist:
+            logger.warning(
+                "[DashboardDailySummary] Skipping; user %s not found.", data_owner_id
+            )
+            return {"rows_written": 0, "error": "user-not-found"}
 
-    stats = rebuild_daily_summary_for_user(user, only_dates=only_dates or [])
-    logger.info("[DashboardDailySummary] user=%s stats=%s", data_owner_id, stats)
-    return stats
+        stats = rebuild_daily_summary_for_user(user, only_dates=only_dates or [])
+        
+        from apps.dashboard.services.invalidation import invalidate_dashboard_cache_for_user
+        invalidate_dashboard_cache_for_user(data_owner_id, clear_materialized=True)
+        
+        logger.info("[DashboardDailySummary] user=%s stats=%s", data_owner_id, stats)
+        return stats
+    finally:
+        cache.delete(lock_key)
 
 
-@shared_task
-def refresh_dashboard_product_daily_summary_task(data_owner_id, only_dates=None):
+@shared_task(bind=True, max_retries=5)
+def refresh_dashboard_product_daily_summary_task(self, data_owner_id, only_dates=None):
+    lock_key = _product_daily_summary_lock_key(data_owner_id)
+    if not cache.add(lock_key, "1", timeout=1800):
+        logger.info("[DashboardProductDailySummary] Lock held, retrying user=%s", data_owner_id)
+        raise self.retry(countdown=5 + self.request.retries * 10)
+
     try:
-        user = Users.objects.get(pk=data_owner_id)
-    except Users.DoesNotExist:
-        logger.warning(
-            "[DashboardProductDailySummary] Skipping; user %s not found.", data_owner_id
-        )
-        return {"rows_written": 0, "error": "user-not-found"}
+        try:
+            user = Users.objects.get(pk=data_owner_id)
+        except Users.DoesNotExist:
+            logger.warning(
+                "[DashboardProductDailySummary] Skipping; user %s not found.", data_owner_id
+            )
+            return {"rows_written": 0, "error": "user-not-found"}
 
-    stats = rebuild_product_daily_summary_for_user(user, only_dates=only_dates or [])
-    logger.info("[DashboardProductDailySummary] user=%s stats=%s", data_owner_id, stats)
-    return stats
+        stats = rebuild_product_daily_summary_for_user(user, only_dates=only_dates or [])
+        
+        from apps.dashboard.services.invalidation import invalidate_dashboard_cache_for_user
+        invalidate_dashboard_cache_for_user(data_owner_id, clear_materialized=True)
+        
+        logger.info("[DashboardProductDailySummary] user=%s stats=%s", data_owner_id, stats)
+        return stats
+    finally:
+        cache.delete(lock_key)
 
 
-@shared_task
-def refresh_dashboard_inventory_summary_task(data_owner_id, only_dates=None):
+@shared_task(bind=True, max_retries=5)
+def refresh_dashboard_inventory_summary_task(self, data_owner_id, only_dates=None):
     lock_key = _inventory_summary_lock_key(data_owner_id)
     lock_timeout = max(
         int(getattr(settings, "DASHBOARD_INVENTORY_SUMMARY_LOCK_TIMEOUT_SECONDS", 1800)),
@@ -98,56 +130,71 @@ def refresh_dashboard_inventory_summary_task(data_owner_id, only_dates=None):
     )
     if not cache.add(lock_key, "1", timeout=lock_timeout):
         logger.info(
-            "[DashboardInventorySummary] Skipping duplicate run for user=%s",
+            "[DashboardInventorySummary] Lock held, retrying user=%s",
             data_owner_id,
         )
-        return {"rows_written": 0, "skipped": "duplicate-run"}
+        raise self.retry(countdown=5 + self.request.retries * 10)
 
     try:
-        user = Users.objects.get(pk=data_owner_id)
-    except Users.DoesNotExist:
-        cache.delete(lock_key)
-        logger.warning(
-            "[DashboardInventorySummary] Skipping; user %s not found.", data_owner_id
-        )
-        return {"rows_written": 0, "error": "user-not-found"}
+        try:
+            user = Users.objects.get(pk=data_owner_id)
+        except Users.DoesNotExist:
+            logger.warning(
+                "[DashboardInventorySummary] Skipping; user %s not found.", data_owner_id
+            )
+            return {"rows_written": 0, "error": "user-not-found"}
 
-    try:
         stats = rebuild_inventory_summary_for_user(user, only_dates=only_dates or [])
+        
+        from apps.dashboard.services.invalidation import invalidate_dashboard_cache_for_user
+        invalidate_dashboard_cache_for_user(data_owner_id, clear_materialized=True)
+        
         logger.info("[DashboardInventorySummary] user=%s stats=%s", data_owner_id, stats)
         return stats
     finally:
         cache.delete(lock_key)
 
 
-@shared_task
-def refresh_dashboard_asin_monthly_summary_task(data_owner_id, only_months=None):
+@shared_task(bind=True, max_retries=5)
+def refresh_dashboard_asin_monthly_summary_task(self, data_owner_id, only_months=None):
     """
     Rebuild DashboardAsinMonthlySummary for *data_owner_id*.
     only_months: optional list of "YYYY-MM-DD" strings (first day of month)
     to limit the rebuild; omit for a full rebuild.
     """
+    lock_key = _asin_monthly_summary_lock_key(data_owner_id)
+    if not cache.add(lock_key, "1", timeout=1800):
+        logger.info("[DashboardAsinMonthlySummary] Lock held, retrying user=%s", data_owner_id)
+        raise self.retry(countdown=5 + self.request.retries * 10)
+
     try:
-        user = Users.objects.get(pk=data_owner_id)
-    except Users.DoesNotExist:
-        logger.warning(
-            "[DashboardAsinMonthlySummary] Skipping; user %s not found.", data_owner_id
-        )
-        return {"rows_written": 0, "error": "user-not-found"}
-
-    import datetime
-    parsed_months = []
-    for m in (only_months or []):
         try:
-            parsed_months.append(datetime.datetime.strptime(str(m)[:10], "%Y-%m-%d").date())
-        except Exception:
-            pass
+            user = Users.objects.get(pk=data_owner_id)
+        except Users.DoesNotExist:
+            logger.warning(
+                "[DashboardAsinMonthlySummary] Skipping; user %s not found.", data_owner_id
+            )
+            return {"rows_written": 0, "error": "user-not-found"}
 
-    stats = rebuild_asin_monthly_summary_for_user(
-        user, only_months=parsed_months if parsed_months else None
-    )
-    logger.info("[DashboardAsinMonthlySummary] user=%s stats=%s", data_owner_id, stats)
-    return stats
+        import datetime
+        parsed_months = []
+        for m in (only_months or []):
+            try:
+                parsed_months.append(datetime.datetime.strptime(str(m)[:10], "%Y-%m-%d").date())
+            except Exception:
+                pass
+
+        stats = rebuild_asin_monthly_summary_for_user(
+            user, only_months=parsed_months if parsed_months else None
+        )
+
+        from apps.dashboard.services.invalidation import invalidate_dashboard_cache_for_user
+        invalidate_dashboard_cache_for_user(data_owner_id, clear_materialized=True)
+        
+        logger.info("[DashboardAsinMonthlySummary] user=%s stats=%s", data_owner_id, stats)
+        return stats
+    finally:
+        cache.delete(lock_key)
 
 
 @shared_task

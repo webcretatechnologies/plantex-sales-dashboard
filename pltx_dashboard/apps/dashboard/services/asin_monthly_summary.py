@@ -263,18 +263,22 @@ def _apply_dimension_filters(qs, filters):
             qs = qs.filter(subcategory=str(subcategory))
 
     asin_filter = filters.get("asin")
-    if asin_filter:
-        if isinstance(asin_filter, (list, tuple)):
-            qs = qs.filter(asin__in=[str(a) for a in asin_filter])
-        else:
-            qs = qs.filter(asin=str(asin_filter))
-
     fsn_filter = filters.get("fsn")
-    if fsn_filter:
-        if isinstance(fsn_filter, (list, tuple)):
-            qs = qs.filter(asin__in=[str(f) for f in fsn_filter])
-        else:
-            qs = qs.filter(asin=str(fsn_filter))
+    
+    if asin_filter or fsn_filter:
+        from django.db.models import Q
+        q_obj = Q()
+        if asin_filter:
+            if isinstance(asin_filter, (list, tuple)):
+                q_obj |= Q(platform="Amazon", asin__in=[str(a) for a in asin_filter])
+            else:
+                q_obj |= Q(platform="Amazon", asin=str(asin_filter))
+        if fsn_filter:
+            if isinstance(fsn_filter, (list, tuple)):
+                q_obj |= Q(platform="Flipkart", asin__in=[str(f) for f in fsn_filter])
+            else:
+                q_obj |= Q(platform="Flipkart", asin=str(fsn_filter))
+        qs = qs.filter(q_obj)
 
     return qs
 
@@ -621,5 +625,6 @@ def build_declining_products_from_monthly(
             r["impact"] = round(max(r["prev_revenue"] - r["revenue"], 0.0), 2)
             declining.append(r)
 
-    declining.sort(key=lambda r: _to_float(r.get("drop_pct")))
+    # Sort by MoM Revenue Impact descending (largest absolute drop in revenue first)
+    declining.sort(key=lambda r: _to_float(r.get("impact")), reverse=True)
     return declining if include_full_payload else declining[:5]

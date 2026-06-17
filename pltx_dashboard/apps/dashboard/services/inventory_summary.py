@@ -33,30 +33,21 @@ def _build_combined_inventory_rows(user, only_dates=None):
     meta_by_asin = {m["asin"]: (m["category"], m["portfolio"], m["subcategory"]) for m in mappings if m["asin"]}
     meta_by_fsn = {m["fsn"]: (m["category"], m["portfolio"], m["subcategory"]) for m in mappings if m["fsn"]}
 
-    # 2. Amazon data
+    # 2. Amazon data (Stock & Meta first)
     amz_fba_qs = FBAStockData.objects.filter(user=user, **date_kw).values("asin", "date").annotate(qty=Sum("ending_warehouse_balance"))
     amz_fba = {(r["asin"], r["date"]): int(r["qty"] or 0) for r in amz_fba_qs.iterator(chunk_size=5000)}
 
     amz_flex_qs = FlexStockData.objects.filter(user=user, **date_kw).values("asin", "date").annotate(qty=Sum("qty"))
     amz_flex = {(r["asin"], r["date"]): int(r["qty"] or 0) for r in amz_flex_qs.iterator(chunk_size=5000)}
 
-    amz_sales_qs = ProcessedDashboardData.objects.filter(user=user, **date_kw).values("asin", "date").annotate(units=Sum("units"), revenue=Sum("revenue"))
-    amz_sales = {(r["asin"], r["date"]): {"units": int(r["units"] or 0), "revenue": float(r["revenue"] or 0)} for r in amz_sales_qs.iterator(chunk_size=5000)}
-
     amz_cm = {r["asin"]: (r["category"], r["portfolio"], r["subcategory"]) for r in CategoryMapping.objects.filter(user=user).values("asin", "category", "portfolio", "subcategory")}
 
-    # 3. Flipkart data
+    # 3. Flipkart data (Stock & Meta first)
     fk_fba_qs = Flipkartfba.objects.filter(user=user, **date_kw).values("fsn", "date").annotate(qty=Sum("live_on_website"))
     fk_fba = {(r["fsn"], r["date"]): int(r["qty"] or 0) for r in fk_fba_qs.iterator(chunk_size=5000)}
 
     fk_inv_qs = FlipkartInventoryStock.objects.filter(user=user, **date_kw).values("fsn", "date").annotate(qty=Sum("qty"))
     fk_inv = {(r["fsn"], r["date"]): int(r["qty"] or 0) for r in fk_inv_qs.iterator(chunk_size=5000)}
-
-    fk_sales_qs = FlipkartSearchTraffic.objects.filter(user=user, **date_kw).values("fsn", "date").annotate(s=Sum("sales"))
-    fk_sales = {(r["fsn"], r["date"]): int(r["s"] or 0) for r in fk_sales_qs.iterator(chunk_size=5000)}
-
-    fk_rev_qs = FlipkartProcessedDashboardData.objects.filter(user=user, **date_kw).values("fsn", "date").annotate(r=Sum("revenue"))
-    fk_rev = {(r["fsn"], r["date"]): float(r["r"] or 0) for r in fk_rev_qs.iterator(chunk_size=5000)}
 
     fk_cm = {r["fsn"]: (r["category"], r["portfolio"], r["subcategory"]) for r in FlipkartCategoryMap.objects.filter(user=user).values("fsn", "category", "portfolio", "subcategory")}
 
@@ -65,6 +56,22 @@ def _build_combined_inventory_rows(user, only_dates=None):
     amz_stock_dates = {d for (_, d) in amz_fba.keys()} | {d for (_, d) in amz_flex.keys()}
     # Flipkart: only dates present in FK FBA or FK Inventory stock uploads
     fk_stock_dates = {d for (_, d) in fk_fba.keys()} | {d for (_, d) in fk_inv.keys()}
+
+    # 4. Amazon Sales data (ONLY for dates where stock was found)
+    amz_sales = {}
+    if amz_stock_dates:
+        amz_sales_qs = ProcessedDashboardData.objects.filter(user=user, date__in=amz_stock_dates).values("asin", "date").annotate(units=Sum("units"), revenue=Sum("revenue"))
+        amz_sales = {(r["asin"], r["date"]): {"units": int(r["units"] or 0), "revenue": float(r["revenue"] or 0)} for r in amz_sales_qs.iterator(chunk_size=5000)}
+
+    # 5. Flipkart Sales data (ONLY for dates where stock was found)
+    fk_sales = {}
+    fk_rev = {}
+    if fk_stock_dates:
+        fk_sales_qs = FlipkartSearchTraffic.objects.filter(user=user, date__in=fk_stock_dates).values("fsn", "date").annotate(s=Sum("sales"))
+        fk_sales = {(r["fsn"], r["date"]): int(r["s"] or 0) for r in fk_sales_qs.iterator(chunk_size=5000)}
+
+        fk_rev_qs = FlipkartProcessedDashboardData.objects.filter(user=user, date__in=fk_stock_dates).values("fsn", "date").annotate(r=Sum("revenue"))
+        fk_rev = {(r["fsn"], r["date"]): float(r["r"] or 0) for r in fk_rev_qs.iterator(chunk_size=5000)}
 
     # Build keyed sets: Amazon rows = ASINs with stock data for valid Amazon dates
     amz_keys = set()

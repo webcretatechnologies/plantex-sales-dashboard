@@ -60,13 +60,13 @@
         "Flipkart": '<tr><th data-field="fsn">Flipkart SKU</th><th class="num" data-field="fk_pageviews">Page Views</th><th data-field="fk_launch_date">Launch Date</th><th class="num" data-field="fk_ad_spend">Ad Spend</th><th class="num" data-field="fk_fc_stock">FC Stock</th><th class="num" data-field="fk_flex_stock">Flex Stock</th><th class="num" data-field="fk_fc_stock_count">FCs &gt; 0</th><th class="num" data-field="fk_revenue">Revenue</th><th class="num" data-field="fk_units">Units</th><th data-field="category">Category</th><th data-field="portfolio">Portfolio</th><th data-field="category_manager">CM Name</th><th class="num" data-field="fk_doc">DOC</th><th class="num" data-field="fk_conversion">Conversion</th></tr>'
     };
     function currentPlatform() {
-        var sel = document.getElementById("platformSelect");
-        return sel ? (sel.value || "All") : "All";
+        return "{{ request.GET.platform|default:'All' }}";
     }
-    function updateHeader() {
+    function updateHeader(platform) {
         var header = document.getElementById(headerId);
-        if (header) header.innerHTML = HEADERS[currentPlatform()] || HEADERS.All;
+        if (header) header.innerHTML = HEADERS[platform || currentPlatform()] || HEADERS.All;
     }
+    window._updateNpdHeader = updateHeader;
     function renderChart() {
         if (!window.Chart) return;
         var canvas = document.getElementById(chartId);
@@ -81,7 +81,7 @@
             data: {
                 labels: labels,
                 datasets: [
-                    { label: "Page Views", data: trend.pageviews || [], borderColor: "#2563eb", backgroundColor: "rgba(37,99,235,0.14)", fill: true, tension: 0.35, yAxisID: "y" },
+                    { label: "Page Views", data: trend.pageviews || [], borderColor: "#0fafbf", backgroundColor: "rgba(15,175,191,0.14)", fill: true, tension: 0.35, yAxisID: "y" },
                     { label: "Units Sold", data: trend.units || [], borderColor: "#16a34a", backgroundColor: "rgba(22,163,74,0.14)", fill: true, tension: 0.35, yAxisID: "y" },
                     { label: "Conversion Rate", data: trend.conversion || [], borderColor: "#dc2626", backgroundColor: "rgba(220,38,38,0.12)", fill: true, tension: 0.35, yAxisID: "y1" }
                 ]

@@ -11,7 +11,10 @@
                 </div>
             </div>
         </td>
-        <td class="num growth-down">{{ prod.az_drop_pct }}%</td>
+        <td class="num growth-down">
+            {{ prod.az_drop_pct }}%<br>
+            <span style="font-size:9px;color:var(--muted);white-space:nowrap;">({{ prod.az_prev_revenue|default:prod.prev_revenue|fmt_rupee }} &rarr; {{ prod.az_revenue|default:prod.revenue|fmt_rupee }})</span>
+        </td>
         <td class="num danger">{{ prod.az_impact|fmt_rupee }}</td>
         <td class="num">{{ prod.az_pageviews|fmt_num }}</td>
     {% elif request.GET.platform == 'Flipkart' %}
@@ -24,16 +27,28 @@
                 </div>
             </div>
         </td>
-        <td class="num growth-down">{{ prod.fk_drop_pct }}%</td>
+        <td class="num growth-down">
+            {{ prod.fk_drop_pct }}%<br>
+            <span style="font-size:9px;color:var(--muted);white-space:nowrap;">({{ prod.fk_prev_revenue|default:prod.prev_revenue|fmt_rupee }} &rarr; {{ prod.fk_revenue|default:prod.revenue|fmt_rupee }})</span>
+        </td>
         <td class="num danger">{{ prod.fk_impact|fmt_rupee }}</td>
         <td class="num">{{ prod.fk_pageviews|fmt_num }}</td>
     {% else %}
         <td><div style="font-size:10px;color:var(--muted);font-family:monospace;">{{ prod.az_sku|default:"-" }}</div></td>
         <td><div style="font-size:10px;color:var(--muted);font-family:monospace;">{{ prod.fk_sku|default:"-" }}</div></td>
         
-        <td class="num growth-down">{{ prod.az_drop_pct }}%</td>
-        <td class="num growth-down">{{ prod.fk_drop_pct }}%</td>
-        <td class="num growth-down"><strong>{{ prod.drop_pct }}%</strong></td>
+        <td class="num growth-down">
+            {{ prod.az_drop_pct }}%<br>
+            <span style="font-size:9px;color:var(--muted);white-space:nowrap;">({{ prod.az_prev_revenue|fmt_rupee }} &rarr; {{ prod.az_revenue|fmt_rupee }})</span>
+        </td>
+        <td class="num growth-down">
+            {{ prod.fk_drop_pct }}%<br>
+            <span style="font-size:9px;color:var(--muted);white-space:nowrap;">({{ prod.fk_prev_revenue|fmt_rupee }} &rarr; {{ prod.fk_revenue|fmt_rupee }})</span>
+        </td>
+        <td class="num growth-down">
+            <strong>{{ prod.drop_pct }}%</strong><br>
+            <span style="font-size:9px;color:var(--muted);white-space:nowrap;">({{ prod.prev_revenue|fmt_rupee }} &rarr; {{ prod.revenue|fmt_rupee }})</span>
+        </td>
         
         <td class="num danger">{{ prod.az_impact|fmt_rupee }}</td>
         <td class="num danger">{{ prod.fk_impact|fmt_rupee }}</td>

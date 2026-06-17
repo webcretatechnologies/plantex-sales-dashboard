@@ -221,7 +221,7 @@
     };
     function updateBizWinHeader(p) { var h=document.getElementById('bizWinningModalHeader'); if(h) h.innerHTML=BIZ_WIN_H[p]||BIZ_WIN_H['All']; }
     window._updateBizWinHeader = updateBizWinHeader;
-    function readPlatform() { var s=document.getElementById('platformSelect'); return s?(s.value||'All'):'All'; }
+    function readPlatform() { return "{{ request.GET.platform|default:'All' }}"; }
     document.addEventListener('DOMContentLoaded', function(){ updateBizWinHeader(readPlatform()); });
     var applyBtn = document.getElementById('applyFiltersBtn');
     if (applyBtn) applyBtn.addEventListener('click', function(){ setTimeout(function(){ updateBizWinHeader(readPlatform()); }, 200); });
@@ -290,9 +290,9 @@
         var hdr = document.getElementById('invHealthHeaderBiz');
         if (hdr) hdr.innerHTML = HEADERS[platform] || HEADERS['All'];
     }
+    window._updateInvHealthHeaderBiz = updateInvHealthHeaderBiz;
     function readCurrentPlatform() {
-        var sel = document.getElementById('platformSelect');
-        return sel ? (sel.value || 'All') : 'All';
+        return "{{ request.GET.platform|default:'All' }}";
     }
     document.addEventListener('DOMContentLoaded', function() {
         updateInvHealthHeaderBiz(readCurrentPlatform());
@@ -352,7 +352,7 @@
     };
     function updateBizDecHeader(p) { var h=document.getElementById('bizDecliningHeader'); if(h) h.innerHTML=BIZ_DEC_H[p]||BIZ_DEC_H['All']; }
     window._updateBizDecHeader = updateBizDecHeader;
-    function readPlatform() { var s=document.getElementById('platformSelect'); return s?(s.value||'All'):'All'; }
+    function readPlatform() { return "{{ request.GET.platform|default:'All' }}"; }
     document.addEventListener('DOMContentLoaded', function(){ updateBizDecHeader(readPlatform()); });
     var applyBtn = document.getElementById('applyFiltersBtn');
     if (applyBtn) applyBtn.addEventListener('click', function(){ updateBizDecHeader(readPlatform()); });

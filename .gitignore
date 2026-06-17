@@ -1,0 +1,15 @@
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# OS/editor artifacts
+.DS_Store
+
+# Local runtime/generated files
+pltx_dashboard/uploads/

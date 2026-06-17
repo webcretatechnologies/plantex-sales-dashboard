@@ -1,17 +1,40 @@
 from django.db.models import Sum
-
+from concurrent.futures import ThreadPoolExecutor
 
 def generate_bi_data_orm(qs, fk_qs, user=None, asin_meta=None, fsn_meta=None):
     az_asins = {}
-    if qs is not None:
-        # Group by asin only to avoid duplicates from varying category/portfolio values
-        agg = qs.values("asin").annotate(
-            revenue=Sum("revenue"),
-            total_spend=Sum("ad_spend"),
-            orders=Sum("orders"),
-            pageviews=Sum("page_views"),
-            units=Sum("units_sold"),
-        )
+    
+    # Define query execution functions to run in parallel
+    def fetch_az():
+        if qs is not None:
+            return list(qs.values("asin").annotate(
+                revenue=Sum("revenue"),
+                total_spend=Sum("ad_spend"),
+                orders=Sum("orders"),
+                pageviews=Sum("page_views"),
+                units=Sum("units_sold"),
+            ))
+        return []
+
+    def fetch_fk():
+        if fk_qs is not None:
+            return list(fk_qs.values("fsn").annotate(
+                revenue=Sum("revenue"),
+                total_spend=Sum("ad_spend"),
+                orders=Sum("orders"),
+                pageviews=Sum("page_views"),
+                units=Sum("units_sold"),
+            ))
+        return []
+
+    # Evaluate queries concurrently
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        future_az = executor.submit(fetch_az)
+        future_fk = executor.submit(fetch_fk)
+        agg = future_az.result()
+        agg_fk = future_fk.result()
+
+    if agg:
         # Build a separate lookup for the best category/portfolio per ASIN.
         # Use pre-fetched metadata if provided by the caller to avoid duplicate DB queries.
         if asin_meta is None:
@@ -51,15 +74,7 @@ def generate_bi_data_orm(qs, fk_qs, user=None, asin_meta=None, fsn_meta=None):
                 "fk_pageviews": 0,
             }
 
-    if fk_qs is not None:
-        # Group by fsn only to avoid duplicates
-        agg_fk = fk_qs.values("fsn").annotate(
-            revenue=Sum("revenue"),
-            total_spend=Sum("ad_spend"),
-            orders=Sum("orders"),
-            pageviews=Sum("page_views"),
-            units=Sum("units_sold"),
-        )
+    if agg_fk:
         # Use pre-fetched metadata if provided by the caller to avoid duplicate DB queries.
         if fsn_meta is None:
             from apps.dashboard.models import FlipkartCategoryMap
@@ -112,3 +127,4 @@ def generate_bi_data_orm(qs, fk_qs, user=None, asin_meta=None, fsn_meta=None):
                 }
 
     return sorted(az_asins.values(), key=lambda x: x["revenue"], reverse=True)
+

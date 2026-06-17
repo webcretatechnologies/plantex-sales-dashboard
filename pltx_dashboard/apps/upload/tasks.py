@@ -741,22 +741,15 @@ def _run_dashboard_refresh(
         }) if sorted_dates else []
 
         if should_refresh_daily_summary:
-            # Rebuild DashboardDailySummary INLINE (synchronously) so the fast
-            # summary rollup path is ready before the user is notified.
+            from apps.dashboard.services.daily_summary import rebuild_daily_summary_for_user
             try:
-                from apps.dashboard.services.daily_summary import rebuild_daily_summary_for_user
-                _t_ds = time.monotonic()
-                rebuild_daily_summary_for_user(data_owner, only_dates=sorted_dates or None)
-                logger.info(
-                    "[DashboardRefreshTask] Daily summary rebuilt inline in %.1fs for owner=%s",
-                    time.monotonic() - _t_ds, data_owner.id,
-                )
-            except Exception:
-                logger.exception(
-                    "[DashboardRefreshTask] Inline daily summary rebuild failed for owner=%s, "
-                    "falling back to async task.", data_owner.id,
-                )
-                _enqueue_daily_summary_refresh(data_owner.id, affected_dates=sorted_dates)
+                rebuild_daily_summary_for_user(data_owner, only_dates=sorted_dates)
+            except Exception as e:
+                logger.exception("Failed to rebuild daily summary synchronously")
+            
+            # Immediately invalidate the cache now that the daily summary is ready
+            from apps.dashboard.services.invalidation import invalidate_dashboard_cache_for_user
+            invalidate_dashboard_cache_for_user(data_owner.id, clear_materialized=True)
 
         if should_refresh_inventory_summary or should_refresh_asin_monthly_summary or should_refresh_product_daily_summary:
             try:
@@ -816,7 +809,13 @@ def _run_dashboard_refresh(
             _enqueue_dashboard_warmup(
                 data_owner.id,
                 skip_during_upload=True,
-                filter_sets=[{}],
+                filter_sets=[
+                    {},
+                    {"date_range": "last_7_days"},
+                    {"date_range": "last_month"},
+                    {"date_range": "last_3_months"},
+                    {"date_range": "last_6_months"}
+                ],
             )
 
 
@@ -1221,6 +1220,17 @@ def process_upload_file_task(
 
 
     except Exception as exc:
+        from django.db.utils import OperationalError
+        from apps.dashboard.services.materialized_cache import _is_retryable_mysql_lock_error
+
+        if isinstance(exc, OperationalError) and _is_retryable_mysql_lock_error(exc):
+            logger.warning(
+                "[UploadTask] Deadlock/lock timeout for %s (retry %d): %s",
+                file_type, self.request.retries, exc
+            )
+            # Retrying the task will try processing the file again
+            raise self.retry(exc=exc, countdown=2 + self.request.retries * 3, max_retries=10)
+
         logger.exception("[UploadTask] Error processing %s: %s", file_type, exc)
         _send_ws(user_id, f"Error processing file: {str(exc)}", "error")
 

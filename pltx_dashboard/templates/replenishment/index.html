@@ -11,7 +11,7 @@
 <link rel="stylesheet" href="{% static 'replenishment/style.css' %}">
 {% endblock extra_head_scripts %}
 
-{% block extra_head_css %}
+{% block extra_head_inline_css %}
 /* Override some styles to fit within the dashboard layout */
 .app-shell {
 display: block;
@@ -33,7 +33,7 @@ background: #ffffff;
 border: 1px solid #e2e8f0;
 box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
-{% endblock extra_head_css %}
+{% endblock extra_head_inline_css %}
 
 {% block dashboard_title %}Replenishment Report Generator{% endblock %}
 {% block dashboard_subtitle %}{% endblock %}

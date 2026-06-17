@@ -10,12 +10,17 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.RemoveField(
-            model_name='categorymapping',
-            name='colour',
-        ),
-        migrations.RemoveField(
-            model_name='flipkartcategorymap',
-            name='colour',
-        ),
+        migrations.SeparateDatabaseAndState(
+            state_operations=[
+                migrations.RemoveField(
+                    model_name='categorymapping',
+                    name='colour',
+                ),
+                migrations.RemoveField(
+                    model_name='flipkartcategorymap',
+                    name='colour',
+                ),
+            ],
+            database_operations=[]
+        )
     ]

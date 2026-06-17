@@ -115,14 +115,23 @@ def process_fk_inventory_file(file_obj, user):
         has_date_col = "date" in col_lookup
 
         records = []
-        for row in df.to_dict("records"):
-            fsn = str(row.get(col_lookup.get("fsn", "FSN"), "")).strip()
+        
+        fsn_arr = df[col_lookup.get("fsn", "FSN")].fillna("").astype(str).values if col_lookup.get("fsn", "FSN") in df.columns else [""] * len(df)
+        date_arr = df[col_lookup["date"]].values if has_date_col else [None] * len(df)
+        sku_arr = df[col_lookup.get("sku", "SKU")].fillna("").astype(str).values if col_lookup.get("sku", "SKU") in df.columns else [""] * len(df)
+        status_arr = df[col_lookup.get("products status", "PRODUCTS STATUS")].fillna("").astype(str).values if col_lookup.get("products status", "PRODUCTS STATUS") in df.columns else [""] * len(df)
+        type_arr = df[col_lookup.get("products type", "PRODUCTS TYPE")].fillna("").astype(str).values if col_lookup.get("products type", "PRODUCTS TYPE") in df.columns else [""] * len(df)
+        qty_arr = df[col_lookup.get("qty", "Qty")].fillna(0).values if col_lookup.get("qty", "Qty") in df.columns else [0] * len(df)
+
+        for fsn_val, raw_date, sku_val, status_val, type_val, qty_val in zip(
+            fsn_arr, date_arr, sku_arr, status_arr, type_arr, qty_arr
+        ):
+            fsn = str(fsn_val).strip()
             if not fsn or fsn.lower() == "nan":
                 continue
 
             # Determine row-level date
             if has_date_col:
-                raw_date = row.get(col_lookup["date"])
                 if raw_date is not None and str(raw_date).strip():
                     if raw_date not in _date_cache:
                         try:
@@ -137,14 +146,10 @@ def process_fk_inventory_file(file_obj, user):
 
             touched_dates.add(row_date)
 
-            sku = str(row.get(col_lookup.get("sku", "SKU"), "") or "").strip()
-            product_status = str(
-                row.get(col_lookup.get("products status", "PRODUCTS STATUS"), "") or ""
-            ).strip()
-            product_type = str(
-                row.get(col_lookup.get("products type", "PRODUCTS TYPE"), "") or ""
-            ).strip()
-            qty = clean_number(row.get(col_lookup.get("qty", "Qty"), 0))
+            sku = str(sku_val).strip()
+            product_status = str(status_val).strip()
+            product_type = str(type_val).strip()
+            qty = clean_number(qty_val)
 
             records.append(
                 FlipkartInventoryStock(
@@ -212,15 +217,30 @@ def process_fk_fba_stock_file(file_obj, user):
         warehouse_col = col_lookup.get("warehouse id")
         sku_col = col_lookup.get("sku")
         title_col = col_lookup.get("title")
+        listing_col = col_lookup.get("listing id")
+        brand_col = col_lookup.get("brand")
+        price_col = col_lookup.get("flipkart selling price")
 
         records = []
-        for row in df.to_dict("records"):
+        
+        fsn_arr = df[fsn_col].fillna("").astype(str).values if fsn_col in df.columns else [""] * len(df)
+        date_arr = df[date_col].values if date_col in df.columns else [None] * len(df)
+        live_arr = df[live_col].fillna(0).values if live_col in df.columns else [0] * len(df)
+        warehouse_arr = df[warehouse_col].fillna("").astype(str).values if warehouse_col in df.columns else [""] * len(df)
+        sku_arr = df[sku_col].fillna("").astype(str).values if sku_col in df.columns else [""] * len(df)
+        title_arr = df[title_col].fillna("").astype(str).values if title_col in df.columns else [""] * len(df)
+        listing_arr = df[listing_col].fillna("").astype(str).values if listing_col in df.columns else [""] * len(df)
+        brand_arr = df[brand_col].fillna("").astype(str).values if brand_col in df.columns else [""] * len(df)
+        price_arr = df[price_col].fillna(0).values if price_col in df.columns else [0] * len(df)
+
+        for fsn_val, raw_date, live_val, wh_val, sku_val, title_val, listing_val, brand_val, price_val in zip(
+            fsn_arr, date_arr, live_arr, warehouse_arr, sku_arr, title_arr, listing_arr, brand_arr, price_arr
+        ):
             row_number += 1
-            fsn = str(row.get(fsn_col, "") or "").strip()
+            fsn = str(fsn_val).strip()
             if not fsn or fsn.lower() == "nan":
                 continue
 
-            raw_date = row.get(date_col)
             if raw_date is None or str(raw_date).strip() == "":
                 raise ValueError(
                     f"Missing Date value in FK FBA Stock at row {row_number}."
@@ -235,12 +255,11 @@ def process_fk_fba_stock_file(file_obj, user):
             row_date = _date_cache[raw_date]
 
             touched_dates.add(row_date)
-            live_on_website_qty = clean_number(row.get(live_col, 0))
-            location = (
-                str(row.get(warehouse_col, "") or "").strip() if warehouse_col else ""
-            )
-            msku = str(row.get(sku_col, "") or "").strip() if sku_col else ""
-            title = str(row.get(title_col, "") or "").strip() if title_col else ""
+            live_on_website_qty = clean_number(live_val)
+            location = str(wh_val).strip() if warehouse_col else ""
+            msku = str(sku_val).strip() if sku_col else ""
+            title = str(title_val).strip() if title_col else ""
+            
             records.append(
                 Flipkartfba(
                     user=user,
@@ -249,17 +268,9 @@ def process_fk_fba_stock_file(file_obj, user):
                     warehouse_id=location,
                     sku=msku,
                     title=title[:500],
-                    listing_id=str(row.get(col_lookup.get("listing id"), "") or "").strip()
-                    if col_lookup.get("listing id")
-                    else "",
-                    brand=str(row.get(col_lookup.get("brand"), "") or "").strip()
-                    if col_lookup.get("brand")
-                    else "",
-                    flipkart_selling_price=clean_currency(
-                        row.get(col_lookup.get("flipkart selling price"), 0)
-                        if col_lookup.get("flipkart selling price")
-                        else 0
-                    ),
+                    listing_id=str(listing_val).strip() if listing_col else "",
+                    brand=str(brand_val).strip() if brand_col else "",
+                    flipkart_selling_price=clean_currency(price_val) if price_col else 0,
                     live_on_website=live_on_website_qty,
                 )
             )
@@ -304,99 +315,127 @@ def process_fk_search_traffic(file_obj, user):
     Extracts FSN from Listing Id using Mid(Listing Id, 4, 16) → listing_id[3:19].
     Saves per-FSN per-date traffic & sales data.
     """
+    import tempfile
+    import csv
+    from django.db import connection
+    from apps.dashboard.models import FlipkartSearchTraffic
+    import os
+
     total_records = 0
     any_chunk = False
     touched_dates = set()
     all_key_totals = {}
     row_number = 1
     _date_cache = {}
-    for df in iter_file_chunks(file_obj):
-        any_chunk = True
-        require_columns(df, "fk_search_traffic")
+    db_table = FlipkartSearchTraffic._meta.db_table
 
-        for row in df.to_dict("records"):
-            row_number += 1
-            listing_id = str(row.get("Listing Id", "")).strip()
-            if not listing_id or listing_id.lower() == "nan" or len(listing_id) < 19:
-                continue
+    with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.csv') as tmp_csv:
+        writer = csv.writer(tmp_csv, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
+        writer.writerow(["user_id", "fsn", "sku", "vertical", "date", "page_views", "product_clicks", "sales", "revenue"])
 
-            fsn = listing_id[3:19]  # Mid(Listing Id, 4, 16)
-            raw_date = row.get("Impression Date")
-            if raw_date not in _date_cache:
-                try:
-                    _date_cache[raw_date] = parse_report_date(raw_date, prefer_dayfirst=False)
-                except Exception as exc:
-                    raise ValueError(
-                        f"Invalid Impression Date in FK Search Traffic at row {row_number}: {exc}"
-                    )
-            row_date = _date_cache[raw_date]
-            touched_dates.add(row_date)
+        for df in iter_file_chunks(file_obj):
+            any_chunk = True
+            require_columns(df, "fk_search_traffic")
 
-            sku = str(row.get("SKU Id", "") or "").strip().replace('"', "")
-            sku = re.sub(r"(?i)^SKU:\s*", "", sku)
-            key = (fsn, row_date)
-            vertical = str(row.get("Vertical", "") or "").strip()
-            if key not in all_key_totals:
-                all_key_totals[key] = {
-                    "fsn": fsn,
-                    "date": row_date,
-                    "sku": sku,
-                    "vertical": vertical,
-                    "page_views": 0,
-                    "product_clicks": 0,
-                    "sales": 0,
-                    "revenue": 0.0,
-                }
-            else:
-                # Preserve first non-empty descriptive fields for consistency.
-                if not all_key_totals[key]["sku"] and sku:
-                    all_key_totals[key]["sku"] = sku
-                if not all_key_totals[key]["vertical"] and vertical:
-                    all_key_totals[key]["vertical"] = vertical
+            # Pre-extract arrays for speed
+            listing_ids = df["Listing Id"].fillna("").astype(str).values
+            raw_dates = df["Impression Date"].values
+            sku_ids = df["SKU Id"].fillna("").astype(str).values
+            verticals = df["Vertical"].fillna("").astype(str).values
+            product_clicks = df["Product Clicks"].fillna(0).values
+            sales_arr = df["Sales"].fillna(0).values
+            revenues = df["Revenue"].fillna(0).values
 
-            clicks = clean_number(row.get("Product Clicks", 0))
-            all_key_totals[key]["page_views"] += clicks
-            all_key_totals[key]["product_clicks"] += clicks
-            all_key_totals[key]["sales"] += clean_number(row.get("Sales", 0))
-            all_key_totals[key]["revenue"] += float(clean_currency(row.get("Revenue", 0)))
+            for listing_id, raw_date, sku, vertical, clicks, sales, revenue in zip(
+                listing_ids, raw_dates, sku_ids, verticals, product_clicks, sales_arr, revenues
+            ):
+                row_number += 1
+                listing_id = str(listing_id).strip()
+                if not listing_id or listing_id.lower() == "nan" or len(listing_id) < 19:
+                    continue
+
+                fsn = listing_id[3:19]  # Mid(Listing Id, 4, 16)
+                if raw_date not in _date_cache:
+                    try:
+                        _date_cache[raw_date] = parse_report_date(raw_date, prefer_dayfirst=False)
+                    except Exception as exc:
+                        import os
+                        os.remove(tmp_csv.name)
+                        raise ValueError(f"Invalid Impression Date in FK Search Traffic at row {row_number}: {exc}")
+                row_date = _date_cache[raw_date]
+                touched_dates.add(row_date)
+
+                sku = str(sku).strip().replace('"', "")
+                sku = re.sub(r"(?i)^SKU:\s*", "", sku)
+                key = (fsn, row_date)
+                vertical = str(vertical).strip()
+                
+                if key not in all_key_totals:
+                    all_key_totals[key] = {
+                        "fsn": fsn,
+                        "date": row_date,
+                        "sku": sku,
+                        "vertical": vertical,
+                        "page_views": 0,
+                        "product_clicks": 0,
+                        "sales": 0,
+                        "revenue": 0.0,
+                    }
+                else:
+                    if not all_key_totals[key]["sku"] and sku:
+                        all_key_totals[key]["sku"] = sku
+                    if not all_key_totals[key]["vertical"] and vertical:
+                        all_key_totals[key]["vertical"] = vertical
+
+                clicks_val = clean_number(clicks)
+                all_key_totals[key]["page_views"] += clicks_val
+                all_key_totals[key]["product_clicks"] += clicks_val
+                all_key_totals[key]["sales"] += clean_number(sales)
+                all_key_totals[key]["revenue"] += float(clean_currency(revenue))
+
+        for payload in all_key_totals.values():
+            writer.writerow([
+                user.id,
+                payload["fsn"],
+                payload["sku"],
+                payload["vertical"],
+                payload["date"].isoformat(),
+                payload["page_views"],
+                payload["product_clicks"],
+                payload["sales"],
+                payload["revenue"]
+            ])
+            total_records += 1
+            
+        tmp_csv_path = tmp_csv.name
 
     if not any_chunk:
+        os.remove(tmp_csv_path)
         raise ValueError("FK Search Traffic file is empty.")
 
-    records = []
-    for payload in all_key_totals.values():
-        records.append(
-            FlipkartSearchTraffic(
-                user=user,
-                fsn=payload["fsn"],
-                sku=payload["sku"],
-                vertical=payload["vertical"],
-                date=payload["date"],
-                page_views=payload["page_views"],
-                product_clicks=payload["product_clicks"],
-                sales=payload["sales"],
-                revenue=payload["revenue"],
-            )
-        )
-    total_records = len(records)
-    if records:
-        for i in range(0, len(records), DB_BATCH_SIZE):
-            FlipkartSearchTraffic.objects.bulk_create(
-                records[i : i + DB_BATCH_SIZE],
-                **get_upsert_kwargs(
-                    unique_fields=["user", "fsn", "date"],
-                    update_fields=[
-                        "sku",
-                        "vertical",
-                        "page_views",
-                        "product_clicks",
-                        "sales",
-                        "revenue",
-                    ],
-                ),
-            )
+    if total_records > 0:
+        with connection.cursor() as cursor:
+            cursor.execute("SET autocommit=0;")
+            cursor.execute("SET unique_checks=0;")
+            cursor.execute("SET foreign_key_checks=0;")
 
-    logger.info("[FK SearchTraffic] Processed %s records.", total_records)
+            query = f"""
+            LOAD DATA LOCAL INFILE '{tmp_csv_path}'
+            REPLACE INTO TABLE {db_table}
+            FIELDS TERMINATED BY ',' ENCLOSED BY '"'
+            IGNORE 1 LINES
+            (user_id, fsn, sku, vertical, date, page_views, product_clicks, sales, revenue);
+            """
+            cursor.execute(query)
+
+            cursor.execute("COMMIT;")
+            cursor.execute("SET autocommit=1;")
+            cursor.execute("SET unique_checks=1;")
+            cursor.execute("SET foreign_key_checks=1;")
+
+    os.remove(tmp_csv_path)
+
+    logger.info("[FK SearchTraffic] Processed and loaded %s records via INFILE.", total_records)
     return touched_dates
 
 
@@ -468,17 +507,33 @@ def process_fk_category(file_obj, user):
             raise ValueError(f"FK Category missing columns: {', '.join(missing)}")
 
         records = []
-        for row in df.to_dict("records"):
-            fsn = str(row.get(fsn_col, "")).strip()
+
+        # Pre-extract arrays
+        fsn_arr = df[fsn_col].fillna("").astype(str).values
+        asin_arr = df[asin_col].values if asin_col in df.columns else [None] * len(df)
+        sku_arr = df[sku_col].fillna("").astype(str).values
+        portfolio_arr = df[portfolio_col].fillna("").astype(str).values
+        cat_arr = df[category_col].fillna("").astype(str).values
+        subcat_arr = df[subcategory_col].fillna("").astype(str).values
+        status_arr = df[product_status_col].fillna("").astype(str).values if product_status_col in df.columns else [""] * len(df)
+        launch_arr = df[launch_date_col].values if launch_date_col in df.columns else [None] * len(df)
+        cm_arr = df[category_manager_col].values if category_manager_col in df.columns else [None] * len(df)
+        series_arr = df[series_col].values if series_col in df.columns else [None] * len(df)
+        mat_arr = df[material_col].values if material_col in df.columns else [None] * len(df)
+        size_arr = df[size_col].values if size_col in df.columns else [None] * len(df)
+        brand_arr = df[brand_col].values if brand_col in df.columns else [None] * len(df)
+        rating_arr = df[ratings_col].values if ratings_col in df.columns else [None] * len(df)
+        finish_arr = df[finish_col].values if finish_col in df.columns else [None] * len(df)
+
+        for fsn_val, asin_val, sku_val, port_val, cat_val, subcat_val, status_val, launch_val, cm_val, series_val, mat_val, size_val, brand_val, rating_val, finish_val in zip(
+            fsn_arr, asin_arr, sku_arr, portfolio_arr, cat_arr, subcat_arr, status_arr, launch_arr, cm_arr, series_arr, mat_arr, size_arr, brand_arr, rating_arr, finish_arr
+        ):
+            fsn = str(fsn_val).strip()
             if not fsn or fsn.lower() == "nan":
                 continue
             touched_fsns.add(fsn)
 
-            raw_status = (
-                str(row.get(product_status_col, "") or "").strip()
-                if product_status_col
-                else ""
-            )
+            raw_status = str(status_val).strip()
             normalized_status = ""
             status_lower = raw_status.lower()
             if status_lower in ("continued", "continue", "continued/pack of not sales"):
@@ -490,20 +545,20 @@ def process_fk_category(file_obj, user):
                 FlipkartCategoryMap(
                     user=user,
                     fsn=fsn,
-                    asin=_clean_optional_text(row.get(asin_col)) if asin_col else None,
-                    sku=str(row.get(sku_col, "") or "").strip() if sku_col else "",
-                    portfolio=str(row.get(portfolio_col, "") or "").strip(),
-                    category=str(row.get(category_col, "") or "").strip(),
-                    subcategory=str(row.get(subcategory_col, "") or "").strip(),
+                    asin=_clean_optional_text(asin_val) if asin_col else None,
+                    sku=str(sku_val).strip(),
+                    portfolio=str(port_val).strip(),
+                    category=str(cat_val).strip(),
+                    subcategory=str(subcat_val).strip(),
                     product_status=normalized_status,
-                    launch_date=_clean_optional_date(row.get(launch_date_col)) if launch_date_col else None,
-                    category_manager=_clean_optional_text(row.get(category_manager_col)) if category_manager_col else None,
-                    series_name=_clean_optional_text(row.get(series_col)) if series_col else None,
-                    material=_clean_optional_text(row.get(material_col)) if material_col else None,
-                    size=_clean_optional_text(row.get(size_col)) if size_col else None,
-                    brand_name=_clean_optional_text(row.get(brand_col)) if brand_col else None,
-                    ratings=_clean_optional_rating(row.get(ratings_col)) if ratings_col else None,
-                    finish=_clean_optional_text(row.get(finish_col)) if finish_col else None,
+                    launch_date=_clean_optional_date(launch_val) if launch_date_col else None,
+                    category_manager=_clean_optional_text(cm_val) if category_manager_col else None,
+                    series_name=_clean_optional_text(series_val) if series_col else None,
+                    material=_clean_optional_text(mat_val) if material_col else None,
+                    size=_clean_optional_text(size_val) if size_col else None,
+                    brand_name=_clean_optional_text(brand_val) if brand_col else None,
+                    ratings=_clean_optional_rating(rating_val) if ratings_col else None,
+                    finish=_clean_optional_text(finish_val) if finish_col else None,
                 )
             )
 
@@ -558,8 +613,11 @@ def process_fk_price(file_obj, user):
         require_columns(df, "fk_price")
 
         records = []
-        for row in df.to_dict("records"):
-            fsn = str(row.get("Flipkart Serial Number", "")).strip().replace('"', "")
+        fsn_arr = df["Flipkart Serial Number"].fillna("").astype(str).values
+        deal_arr = df["Deal"].fillna(0).values
+
+        for fsn_val, deal_val in zip(fsn_arr, deal_arr):
+            fsn = str(fsn_val).strip().replace('"', "")
             if not fsn or fsn.lower() == "nan":
                 continue
             touched_fsns.add(fsn)
@@ -567,7 +625,7 @@ def process_fk_price(file_obj, user):
                 FlipkartPrice(
                     user=user,
                     fsn=fsn,
-                    price=float(clean_currency(row.get("Deal", 0))),
+                    price=float(clean_currency(deal_val)),
                 )
             )
 
@@ -599,52 +657,81 @@ def process_fk_pla(file_obj, user):
     File has 2 metadata rows then the header row.
     Columns: Campaign ID, Advertised FSN ID, Ad Spend.
     """
+    import tempfile
+    import csv
+    from django.db import connection
+    from apps.dashboard.models import FlipkartPLA
+    import os
+
     total_records = 0
     any_chunk = False
     all_key_spend = {}
+    db_table = FlipkartPLA._meta.db_table
+
     report_date = _extract_fk_report_date_from_metadata(file_obj)
     if report_date is None:
         raise ValueError("FK PLA metadata missing Start Time/End Time.")
 
-    for df in iter_file_chunks(file_obj, skiprows=2):
-        any_chunk = True
-        require_columns(df, "fk_pla")
+    with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.csv') as tmp_csv:
+        writer = csv.writer(tmp_csv, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
+        writer.writerow(["user_id", "campaign_id", "fsn_id", "date", "ad_spend"])
 
-        for row in df.to_dict("records"):
-            campaign_id = str(row.get("Campaign ID", "")).strip()
-            fsn_id = str(row.get("Advertised FSN ID", "")).strip().replace('"', "")
-            if not fsn_id or fsn_id.lower() == "nan":
-                continue
+        for df in iter_file_chunks(file_obj, skiprows=2):
+            any_chunk = True
+            require_columns(df, "fk_pla")
 
-            key = (campaign_id, fsn_id, report_date)
-            all_key_spend[key] = all_key_spend.get(key, 0.0) + float(
-                clean_currency(row.get("Ad Spend", 0))
-            )
+            campaign_arr = df["Campaign ID"].fillna("").astype(str).values
+            fsn_arr = df["Advertised FSN ID"].fillna("").astype(str).values
+            spend_arr = df["Ad Spend"].fillna(0).values
+
+            for camp_val, fsn_val, spend_val in zip(campaign_arr, fsn_arr, spend_arr):
+                campaign_id = str(camp_val).strip()
+                fsn_id = str(fsn_val).strip().replace('"', "")
+                if not fsn_id or fsn_id.lower() == "nan":
+                    continue
+
+                key = (campaign_id, fsn_id, report_date)
+                all_key_spend[key] = all_key_spend.get(key, 0.0) + float(
+                    clean_currency(spend_val)
+                )
+
+        for key, spend in all_key_spend.items():
+            writer.writerow([
+                user.id,
+                key[0],
+                key[1],
+                key[2].isoformat(),
+                spend
+            ])
+            total_records += 1
+
+        tmp_csv_path = tmp_csv.name
 
     if not any_chunk:
+        os.remove(tmp_csv_path)
         raise ValueError("FK PLA file is empty.")
 
-    records = []
-    for key, spend in all_key_spend.items():
-        records.append(
-            FlipkartPLA(
-                user=user,
-                campaign_id=key[0],
-                fsn_id=key[1],
-                date=key[2],
-                ad_spend=spend,
-            )
-        )
-    total_records = len(records)
-    if records:
-        for i in range(0, len(records), DB_BATCH_SIZE):
-            FlipkartPLA.objects.bulk_create(
-                records[i : i + DB_BATCH_SIZE],
-                **get_upsert_kwargs(
-                    unique_fields=["user", "campaign_id", "fsn_id", "date"],
-                    update_fields=["ad_spend"],
-                ),
-            )
+    if total_records > 0:
+        with connection.cursor() as cursor:
+            cursor.execute("SET autocommit=0;")
+            cursor.execute("SET unique_checks=0;")
+            cursor.execute("SET foreign_key_checks=0;")
 
-    logger.info("[FK PLA] Processed %s records.", total_records)
+            query = f"""
+            LOAD DATA LOCAL INFILE '{tmp_csv_path}'
+            REPLACE INTO TABLE {db_table}
+            FIELDS TERMINATED BY ',' ENCLOSED BY '"'
+            IGNORE 1 LINES
+            (user_id, campaign_id, fsn_id, date, ad_spend);
+            """
+            cursor.execute(query)
+
+            cursor.execute("COMMIT;")
+            cursor.execute("SET autocommit=1;")
+            cursor.execute("SET unique_checks=1;")
+            cursor.execute("SET foreign_key_checks=1;")
+
+    os.remove(tmp_csv_path)
+
+    logger.info("[FK PLA] Processed and loaded %s records via INFILE.", total_records)
     return {report_date}

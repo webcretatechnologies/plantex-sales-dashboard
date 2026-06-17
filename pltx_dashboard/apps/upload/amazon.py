@@ -159,85 +159,104 @@ def process_price_file(file_obj, user):
 def process_spend_file(file_obj, user):
     """
     Insert spend rows scoped to the user, or update existing records directly if they already exist.
-
-    Spend values are pre-aggregated (summed) per unique key
-    (user, date, asin, ad_account, ad_type) before upserting, so duplicate
-    rows in the source file are combined instead of silently overwritten.
     """
+    import tempfile
+    import csv
+    from django.db import connection
+    from apps.dashboard.models import SpendData
+    import os
+    
     total_spends = 0
     touched_dates = set()
     any_chunk = False
     row_number = 1
     _date_cache = {}
-    for df in iter_file_chunks(file_obj):
-        any_chunk = True
-        require_columns(df, "spend")
+    
+    db_table = SpendData._meta.db_table
+    
+    with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.csv') as tmp_csv:
+        writer = csv.writer(tmp_csv, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
+        # Write headers based on SpendData fields
+        writer.writerow(["user_id", "date", "asin", "ad_account", "ad_type", "spend"])
+        
+        for df in iter_file_chunks(file_obj):
+            any_chunk = True
+            require_columns(df, "spend")
 
-        # Pre-aggregate spend by unique key to avoid losing data when the
-        # source file contains duplicate (date, asin, ad_account, ad_type) rows.
-        spend_agg = {}  # key -> summed spend
-        for row in df.to_dict("records"):
-            row_number += 1
-            asin = str(row.get("ASIN", "")).strip()
-            if not asin or asin.lower() == "nan":
-                continue
+            spend_agg = {}
+            for row in df.to_dict("records"):
+                row_number += 1
+                asin = str(row.get("ASIN", "")).strip()
+                if not asin or asin.lower() == "nan":
+                    continue
 
-            raw_date = row.get("Date")
-            if raw_date not in _date_cache:
-                try:
-                    _date_cache[raw_date] = parse_report_date(raw_date, prefer_dayfirst=False)
-                except Exception as exc:
-                    raise ValueError(
-                        f"Invalid Date value in Ads Spends at row {row_number}: {exc}"
-                    )
-            row_date = _date_cache[raw_date]
-            touched_dates.add(row_date)
+                raw_date = row.get("Date")
+                if raw_date not in _date_cache:
+                    try:
+                        _date_cache[raw_date] = parse_report_date(raw_date, prefer_dayfirst=False)
+                    except Exception as exc:
+                        import os
+                        os.remove(tmp_csv.name)
+                        raise ValueError(f"Invalid Date value in Ads Spends at row {row_number}: {exc}")
+                row_date = _date_cache[raw_date]
+                touched_dates.add(row_date)
 
-            ad_type = str(row.get("Ad Type", "")).strip().upper()
-            if ad_type in ("SPONSORED PRODUCTS", "SP"):
-                ad_type = "SP"
-            elif ad_type in ("SPONSORED BRANDS", "SB"):
-                ad_type = "SB"
-            elif ad_type in ("SPONSORED DISPLAY", "SD"):
-                ad_type = "SD"
-            else:
-                ad_type = ad_type[:10]
+                ad_type = str(row.get("Ad Type", "")).strip().upper()
+                if ad_type in ("SPONSORED PRODUCTS", "SP"):
+                    ad_type = "SP"
+                elif ad_type in ("SPONSORED BRANDS", "SB"):
+                    ad_type = "SB"
+                elif ad_type in ("SPONSORED DISPLAY", "SD"):
+                    ad_type = "SD"
+                else:
+                    ad_type = ad_type[:10]
 
-            ad_account = str(row.get("Ad Account", "")).strip()
-            spend_val = clean_currency(row.get("Spend", 0))
+                ad_account = str(row.get("Ad Account", "")).strip()
+                spend_val = clean_currency(row.get("Spend", 0))
 
-            key = (row_date, asin, ad_account, ad_type)
-            spend_agg[key] = spend_agg.get(key, 0.0) + spend_val
+                key = (row_date, asin, ad_account, ad_type)
+                spend_agg[key] = spend_agg.get(key, 0.0) + spend_val
 
-        # Build SpendData objects from the aggregated dict
-        new_spends = []
-        for (row_date, asin, ad_account, ad_type), spend_total in spend_agg.items():
-            new_spends.append(
-                SpendData(
-                    user=user,
-                    date=row_date,
-                    asin=asin,
-                    ad_account=ad_account,
-                    ad_type=ad_type,
-                    spend=spend_total,
-                )
-            )
-
-        total_spends += len(new_spends)
-        if new_spends:
-            for i in range(0, len(new_spends), DB_BATCH_SIZE):
-                SpendData.objects.bulk_create(
-                    new_spends[i : i + DB_BATCH_SIZE],
-                    **get_upsert_kwargs(
-                        unique_fields=["user", "date", "asin", "ad_account", "ad_type"],
-                        update_fields=["spend"],
-                    ),
-                )
+            for (row_date, asin, ad_account, ad_type), spend_total in spend_agg.items():
+                writer.writerow([
+                    user.id,
+                    row_date.isoformat(),
+                    asin,
+                    ad_account,
+                    ad_type,
+                    spend_total
+                ])
+                total_spends += 1
+        
+        tmp_csv_path = tmp_csv.name
 
     if not any_chunk:
+        os.remove(tmp_csv_path)
         raise ValueError("Ads Spends file is empty.")
 
-    logger.info("[SpendData] Processed and upserted %s records.", total_spends)
+    if total_spends > 0:
+        with connection.cursor() as cursor:
+            cursor.execute("SET autocommit=0;")
+            cursor.execute("SET unique_checks=0;")
+            cursor.execute("SET foreign_key_checks=0;")
+            
+            query = f"""
+            LOAD DATA LOCAL INFILE '{tmp_csv_path}'
+            REPLACE INTO TABLE {db_table}
+            FIELDS TERMINATED BY ',' ENCLOSED BY '"'
+            IGNORE 1 LINES
+            (user_id, date, asin, ad_account, ad_type, spend);
+            """
+            cursor.execute(query)
+            
+            cursor.execute("COMMIT;")
+            cursor.execute("SET autocommit=1;")
+            cursor.execute("SET unique_checks=1;")
+            cursor.execute("SET foreign_key_checks=1;")
+
+    os.remove(tmp_csv_path)
+
+    logger.info("[SpendData] Processed and loaded %s records via INFILE.", total_spends)
     return touched_dates
 
 
@@ -250,47 +269,71 @@ def process_sales_file(file_obj, date_str, user):
     """
     Insert sales rows scoped to the user, or update existing records directly if they already exist.
     """
+    import tempfile
+    import csv
+    import os
+    from django.db import connection
+    from apps.dashboard.models import SalesData
+    
     date_obj = parse_sales_upload_date(date_str)
+    db_table = SalesData._meta.db_table
 
     total_sales = 0
     any_chunk = False
-    for df in iter_file_chunks(file_obj):
-        any_chunk = True
-        require_columns(df, "sales")
+    
+    with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.csv') as tmp_csv:
+        writer = csv.writer(tmp_csv, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
+        writer.writerow(["user_id", "date", "asin", "pageviews", "units", "orders", "revenue"])
 
-        new_sales = []
-        for row in df.to_dict("records"):
-            asin = str(row.get("(Child) ASIN", "")).strip()
-            if not asin or asin.lower() == "nan":
-                continue
+        for df in iter_file_chunks(file_obj):
+            any_chunk = True
+            require_columns(df, "sales")
 
-            new_sales.append(
-                SalesData(
-                    user=user,
-                    date=date_obj,
-                    asin=asin,
-                    pageviews=clean_number(row.get("Page Views - Total", 0)),
-                    units=clean_number(row.get("Units Ordered", 0)),
-                    orders=clean_number(row.get("Total Order Items", 0)),
-                    revenue=float(clean_currency(row.get("Ordered Product Sales", 0))),
-                )
-            )
+            for row in df.to_dict("records"):
+                asin = str(row.get("(Child) ASIN", "")).strip()
+                if not asin or asin.lower() == "nan":
+                    continue
 
-        total_sales += len(new_sales)
-        if new_sales:
-            for i in range(0, len(new_sales), DB_BATCH_SIZE):
-                SalesData.objects.bulk_create(
-                    new_sales[i : i + DB_BATCH_SIZE],
-                    **get_upsert_kwargs(
-                        unique_fields=["user", "date", "asin"],
-                        update_fields=["pageviews", "units", "orders", "revenue"],
-                    ),
-                )
+                writer.writerow([
+                    user.id,
+                    date_obj.isoformat(),
+                    asin,
+                    clean_number(row.get("Page Views - Total", 0)),
+                    clean_number(row.get("Units Ordered", 0)),
+                    clean_number(row.get("Total Order Items", 0)),
+                    float(clean_currency(row.get("Ordered Product Sales", 0)))
+                ])
+                total_sales += 1
+                
+        tmp_csv_path = tmp_csv.name
 
     if not any_chunk:
+        os.remove(tmp_csv_path)
         raise ValueError("Daily Sales file is empty.")
 
-    logger.info("[SalesData] date=%s, processed and upserted %s records.", date_obj, total_sales)
+    if total_sales > 0:
+        with connection.cursor() as cursor:
+            cursor.execute("SET autocommit=0;")
+            cursor.execute("SET unique_checks=0;")
+            cursor.execute("SET foreign_key_checks=0;")
+
+            query = f"""
+            LOAD DATA LOCAL INFILE '{tmp_csv_path}'
+            REPLACE INTO TABLE {db_table}
+            FIELDS TERMINATED BY ',' ENCLOSED BY '"'
+            IGNORE 1 LINES
+            (user_id, date, asin, pageviews, units, orders, revenue);
+            """
+            cursor.execute(query)
+
+            cursor.execute("COMMIT;")
+            cursor.execute("SET autocommit=1;")
+            cursor.execute("SET unique_checks=1;")
+            cursor.execute("SET foreign_key_checks=1;")
+
+    os.remove(tmp_csv_path)
+
+    logger.info("[SalesData] date=%s, processed and loaded %s records via INFILE.", date_obj, total_sales)
     return {date_obj}
 
 
