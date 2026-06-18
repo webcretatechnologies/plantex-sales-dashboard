@@ -49,14 +49,9 @@ ALLOWED_HOSTS = ['209.182.233.109','admin.plantex.work','desk.sapiosol.com','127
 CSRF_TRUSTED_ORIGINS = [
     'https://admin.plantex.work',
     'http://admin.plantex.work',
-    'https://desk.sapiosol.com',
-    'http://desk.sapiosol.com',
     'https://209.182.233.109',
     'http://209.182.233.109',
-    'http://127.0.0.1',
-    'http://localhost:8000',
 ]
-
 
 # Application definition
 
@@ -124,7 +119,7 @@ CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels_redis.core.RedisChannelLayer",
         "CONFIG": {
-            "hosts": [("127.0.0.1", 6379)],
+            "hosts": [("redis", 6379)],
             # Reduce stale websocket queue buildup and absorb short message bursts.
             "capacity": 800,
             "expiry": 15,
@@ -133,11 +128,8 @@ CHANNEL_LAYERS = {
     },
 }
 
-# Celery Configuration Options
-# CELERY_BROKER_URL = 'redis://redis:6379/0'      # 🔥 FIX
-# CELERY_RESULT_BACKEND = 'redis://redis:6379/0'  # 🔥 FIX
-CELERY_BROKER_URL = 'redis://127.0.0.1:6379/2'
-CELERY_RESULT_BACKEND = 'redis://127.0.0.1:6379/2'
+CELERY_BROKER_URL = 'redis://redis:6379/0'
+CELERY_RESULT_BACKEND = 'redis://redis:6379/0'
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
@@ -165,45 +157,24 @@ CELERY_BEAT_SCHEDULE = {
     },
 }
 
-# ─── Shared Redis Cache ───────────────────────────────────────────────────────
-# IMPORTANT: Must use Redis (not the default LocMemCache) so that cache writes
-# from the Celery worker process (e.g. bumping dashboard_data_version after an
-# upload) are visible to the Daphne web process. LocMemCache is per-process and
-# would silently discard all cross-process cache invalidation.
-# Redis DB 1 is used here to keep it separate from the Celery broker (DB 0).
 CACHES = {
     "default": {
         "BACKEND": "django.core.cache.backends.redis.RedisCache",
-        "LOCATION": "redis://127.0.0.1:6379/1",
+        "LOCATION": "redis://redis:6379/1",
         "OPTIONS": {
             "db": "1",
         },
-        "TIMEOUT": 86400,  # 24 hours default
+        "TIMEOUT": 86400,
     }
 }
-
-
-# Database
-# https://docs.djangoproject.com/en/6.0/ref/settings/#databases
-
-# DATABASES = {
-#     'default': {
-#         'ENGINE': 'django.db.backends.mysql',
-#         'NAME': 'plantex_db',
-#         'USER': 'plantex',
-#         'PASSWORD': 'strongAppPass123',
-#         'HOST': 'mysql',   # 🔥 THIS IS THE FIX
-#         'PORT': '3306',
-#     }
-# }
 
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.mysql",
-        "NAME": "pltx_dashboard",
-        "USER": "root",
-        "PASSWORD": "",
-        "HOST": "127.0.0.1",
+        "NAME": "plantex_db",
+        "USER": "plantex",
+        "PASSWORD": "strongAppPass123",
+        "HOST": "mysql",
         "PORT": "3306",
         "CONN_MAX_AGE": 300,
         "OPTIONS": {
