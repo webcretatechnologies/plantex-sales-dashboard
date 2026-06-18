@@ -80,32 +80,41 @@ def generate_bi_data_orm(qs, fk_qs, user=None, asin_meta=None, fsn_meta=None):
             from apps.dashboard.models import FlipkartCategoryMap
             fsn_meta = {}
             if user:
-                for row in FlipkartCategoryMap.objects.filter(user=user).values("fsn", "category", "portfolio"):
+                for row in FlipkartCategoryMap.objects.filter(user=user).values("fsn", "category", "portfolio", "asin"):
                     fsn_meta[row["fsn"]] = {
                         "category": row["category"] or "",
                         "portfolio": row["portfolio"] or "",
+                        "asin": row["asin"] or "",
                     }
 
         for r in agg_fk:
             fsn = r["fsn"]
-            meta = fsn_meta.get(fsn, {"category": "", "portfolio": ""})
+            meta = fsn_meta.get(fsn, {"category": "", "portfolio": "", "asin": ""})
+            mapped_asin = str(meta.get("asin") or "").strip()
+            
+            # Target key is the mapped ASIN if it exists, otherwise fallback to FSN
+            target_key = mapped_asin if mapped_asin else fsn
+
             fk_pv = int(r["pageviews"] or 0)
-            if fsn in az_asins:
-                az_asins[fsn]["revenue"] += float(r["revenue"] or 0)
-                az_asins[fsn]["total_spend"] += float(r["total_spend"] or 0)
-                az_asins[fsn]["orders"] += int(r["orders"] or 0)
-                az_asins[fsn]["pageviews"] += fk_pv
-                az_asins[fsn]["units"] += int(r["units"] or 0)
-                az_asins[fsn]["fk_revenue"] += float(r["revenue"] or 0)
-                az_asins[fsn]["fk_orders"] = az_asins[fsn].get("fk_orders", 0) + int(r["orders"] or 0)
-                az_asins[fsn]["fk_units"] = az_asins[fsn].get("fk_units", 0) + int(r["units"] or 0)
-                az_asins[fsn]["fk_spend"] = az_asins[fsn].get("fk_spend", 0.0) + float(r["total_spend"] or 0)
-                az_asins[fsn]["fk_pageviews"] = az_asins[fsn].get("fk_pageviews", 0) + fk_pv
+            if target_key in az_asins:
+                az_asins[target_key]["revenue"] += float(r["revenue"] or 0)
+                az_asins[target_key]["total_spend"] += float(r["total_spend"] or 0)
+                az_asins[target_key]["orders"] += int(r["orders"] or 0)
+                az_asins[target_key]["pageviews"] += fk_pv
+                az_asins[target_key]["units"] += int(r["units"] or 0)
+                az_asins[target_key]["fk_revenue"] += float(r["revenue"] or 0)
+                az_asins[target_key]["fk_orders"] = az_asins[target_key].get("fk_orders", 0) + int(r["orders"] or 0)
+                az_asins[target_key]["fk_units"] = az_asins[target_key].get("fk_units", 0) + int(r["units"] or 0)
+                az_asins[target_key]["fk_spend"] = az_asins[target_key].get("fk_spend", 0.0) + float(r["total_spend"] or 0)
+                az_asins[target_key]["fk_pageviews"] = az_asins[target_key].get("fk_pageviews", 0) + fk_pv
             else:
-                az_asins[fsn] = {
-                    "asin": fsn,
-                    "category": meta["category"],
-                    "portfolio": meta["portfolio"],
+                amz_meta = asin_meta.get(target_key, {}) if asin_meta else {}
+                cat = amz_meta.get("category") or meta["category"]
+                port = amz_meta.get("portfolio") or meta["portfolio"]
+                az_asins[target_key] = {
+                    "asin": target_key,
+                    "category": cat,
+                    "portfolio": port,
                     "revenue": float(r["revenue"] or 0),
                     "total_spend": float(r["total_spend"] or 0),
                     "orders": int(r["orders"] or 0),

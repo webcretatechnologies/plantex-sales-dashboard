@@ -86,22 +86,26 @@ DASHBOARD_MODAL_ROWS_TEMPLATE_MAP = {
     ("business", "declining-products"): ("dashboard/modals/rows/declining_products_rows.html", "cat_all_under_products"),
     ("category", "cluster-performance"): ("dashboard/modals/rows/cluster_performance_rows.html", "cluster_performance"),
     ("category", "inventory-health"): ("dashboard/modals/rows/inventory_health_rows.html", "inventory.details"),
-    ("category", "top-products"): ("dashboard/modals/rows/top_products_category_rows.html", "cat_all_top_products"),
+    ("category", "top-products"): ("dashboard/modals/rows/top_products_simple_rows.html", "cat_all_top_products"),
     ("category", "npd-performance"): ("dashboard/modals/rows/npd_performance_rows.html", "npd_products_all"),
     ("category", "declining-products"): ("dashboard/modals/rows/declining_products_rows.html", "cat_all_under_products"),
 }
 DASHBOARD_PRODUCT_CARD_TEMPLATE_MAP = {
-    ("business", "top-products"): "dashboard/partials/product_cards/top_products_business_rows.html",
+    ("business", "top-products"): "dashboard/partials/product_cards/top_products_simple_rows.html",
     ("business", "declining-products"): "dashboard/partials/product_cards/declining_products_rows.html",
+    ("business", "npd-performance"): "dashboard/partials/product_cards/npd_performance_rows.html",
     ("ceo", "top-products"): "dashboard/partials/product_cards/top_products_simple_rows.html",
     ("ceo", "declining-products"): "dashboard/partials/product_cards/declining_products_rows.html",
-    ("category", "top-products"): "dashboard/partials/product_cards/top_products_category_rows.html",
+    ("ceo", "npd-performance"): "dashboard/partials/product_cards/npd_performance_rows.html",
+    ("category", "top-products"): "dashboard/partials/product_cards/top_products_simple_rows.html",
     ("category", "declining-products"): "dashboard/partials/product_cards/declining_products_rows.html",
+    ("category", "npd-performance"): "dashboard/partials/product_cards/npd_performance_rows.html",
 }
 
 DASHBOARD_PRODUCT_CARD_PAYLOAD_KEY_MAP = {
-    "top-products": "cat_all_top_products",
-    "declining-products": "cat_all_under_products",
+    "top-products": "cat_top_products",
+    "declining-products": "cat_under_products",
+    "npd-performance": "npd_products",
 }
 
 DASHBOARD_CATEGORY_PERFORMANCE_ROWS_TEMPLATE_MAP = {
@@ -369,109 +373,6 @@ def _get_filtered_processed_querysets(data_owner, filters):
     return apply_dashboard_entity_filters(qs, fk_qs, filters, user=data_owner)
 
 
-def _get_asin_fsn_report_monthly_rows(data_owner, filters, report_date_range, report_limit):
-    monthly_filters = _asin_fsn_monthly_filters(filters, report_date_range)
-    if monthly_filters is None:
-        return None
-
-    try:
-        from apps.dashboard.services.asin_monthly_summary import get_ams_qs
-    except Exception:
-        return None
-
-    ams_qs = get_ams_qs(data_owner, monthly_filters)
-    if ams_qs is None:
-        return None
-
-    asin_filter = monthly_filters.get("asin")
-    fsn_filter = monthly_filters.get("fsn")
-    platform = monthly_filters.get("platform") or "All"
-    show_amazon = platform != "Flipkart" and not (fsn_filter and not asin_filter)
-    show_flipkart = platform != "Amazon" and not (asin_filter and not fsn_filter)
-
-    asin_rows = []
-    fsn_rows = []
-    if show_amazon:
-        asin_rows = list(
-            ams_qs.filter(platform="Amazon")
-            .exclude(asin__isnull=True)
-            .exclude(asin="")
-            .values("asin")
-            .annotate(
-                pageviews=Sum("pageviews"),
-                units=Sum("units"),
-                revenue=Sum("revenue"),
-                ad_spend=Sum("total_spend"),
-            )
-            .order_by("-revenue", "-units", "-pageviews", "asin")[:report_limit]
-        )
-    if show_flipkart:
-        fsn_rows = list(
-            ams_qs.filter(platform="Flipkart")
-            .exclude(asin__isnull=True)
-            .exclude(asin="")
-            .values("asin")
-            .annotate(
-                pageviews=Sum("pageviews"),
-                units=Sum("units"),
-                revenue=Sum("revenue"),
-                ad_spend=Sum("total_spend"),
-            )
-            .order_by("-revenue", "-units", "-pageviews", "asin")[:report_limit]
-        )
-
-    if not asin_rows and not fsn_rows:
-        return None
-
-    asin_skus = {
-        row["asin"]: row["msku"] or ""
-        for row in CategoryMapping.objects.filter(
-            user=data_owner,
-            asin__in=[row.get("asin") for row in asin_rows if row.get("asin")],
-        ).values("asin", "msku")
-    }
-    fsn_skus = {
-        row["fsn"]: row["sku"] or ""
-        for row in FlipkartCategoryMap.objects.filter(
-            user=data_owner,
-            fsn__in=[row.get("asin") for row in fsn_rows if row.get("asin")],
-        ).values("fsn", "sku")
-    }
-
-    rows = [
-        {
-            "product_id": row.get("asin") or "",
-            "sku": asin_skus.get(row.get("asin"), ""),
-            "platform": "Amazon",
-            "pageviews": int(row.get("pageviews") or 0),
-            "units": int(row.get("units") or 0),
-            "revenue": float(row.get("revenue") or 0),
-            "ad_spend": float(row.get("ad_spend") or 0),
-        }
-        for row in asin_rows
-    ]
-    rows.extend(
-        {
-            "product_id": row.get("asin") or "",
-            "sku": fsn_skus.get(row.get("asin"), ""),
-            "platform": "Flipkart",
-            "pageviews": int(row.get("pageviews") or 0),
-            "units": int(row.get("units") or 0),
-            "revenue": float(row.get("revenue") or 0),
-            "ad_spend": float(row.get("ad_spend") or 0),
-        }
-        for row in fsn_rows
-    )
-    rows.sort(
-        key=lambda row: (
-            float(row.get("revenue") or 0),
-            int(row.get("units") or 0),
-            int(row.get("pageviews") or 0),
-        ),
-        reverse=True,
-    )
-    return rows[:report_limit]
-
 
 def _get_asin_fsn_report_product_daily_rows(data_owner, filters, report_date_range, report_limit, report_start_date=None, report_end_date=None):
     # Summary table has product ids and dashboard dimensions, but not mapping-only
@@ -657,12 +558,6 @@ def _get_asin_fsn_report_rows(data_owner, filters, report_date_range, report_lim
     report_limit = _parse_positive_int(
         report_limit, default=10, minimum=1, maximum=100
     )
-    # Bypass monthly helper to enforce daily Date granularity:
-    # monthly_rows = _get_asin_fsn_report_monthly_rows(
-    #     data_owner, filters, report_date_range, report_limit
-    # )
-    # if monthly_rows is not None:
-    #     return monthly_rows
     product_daily_rows = _get_asin_fsn_report_product_daily_rows(
         data_owner, filters, report_date_range, report_limit, report_start_date, report_end_date
     )
@@ -2156,22 +2051,27 @@ def dashboard_product_card_rows_view(request, view_name, card_key):
     if cached_html:
         return HttpResponse(cached_html)
 
-    ctx = get_dashboard_context(
-        request,
-        include_payload=True,
-        cache_view_type=f"{view_name}-dashboard",
-        section_scope="analytics",
-        compute_scope="full",
-    )
-    if ctx is None:
-        return JsonResponse({"error": "Not authenticated"}, status=401)
+    if card_key == "top-products":
+        rows = _get_top_product_modal_rows(data_owner, filters)
+    elif card_key == "declining-products":
+        rows = _get_declining_product_modal_rows(data_owner, filters)
+    elif card_key == "npd-performance":
+        rows = _get_npd_modal_rows(data_owner, filters)
+    else:
+        rows = []
 
-    rows = _resolve_payload_key((ctx.get("payload") or {}), payload_key)
     if not isinstance(rows, list):
         rows = []
-    rows = rows[:10]
+        
+    limit_str = request.GET.get('limit')
+    limit = 10
+    if limit_str and limit_str.isdigit():
+        limit = int(limit_str)
+    
+    rows = rows[:limit]
 
-    html = render_to_string(template_name, {"rows": rows}, request=request)
+    platform = filters.get("platform") or "All"
+    html = render_to_string(template_name, {"rows": rows, "platform": platform}, request=request)
     cache.set(cache_key, html, timeout=300)
     return HttpResponse(html)
 
@@ -2204,7 +2104,7 @@ def dashboard_category_performance_rows_view(request, view_name):
         include_payload=True,
         cache_view_type=f"{view_name}-dashboard",
         section_scope="details",
-        compute_scope="details",
+        compute_scope="analytics",
     )
     if ctx is None:
         return JsonResponse({"error": "Not authenticated"}, status=401)

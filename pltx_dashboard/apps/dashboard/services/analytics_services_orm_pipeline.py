@@ -1055,7 +1055,8 @@ def _build_declining_product_rows(
 ):
     cm_az_rev, pm_az_rev = {}, {}
     cm_fk_rev, pm_fk_rev = {}, {}
-    cm_az_pageviews, cm_fk_pageviews = {}, {}
+    cm_az_pageviews, pm_az_pageviews = {}, {}
+    cm_fk_pageviews, pm_fk_pageviews = {}, {}
     period_min = min(cm_start, pm_start)
     period_max = max(cm_end, pm_end)
 
@@ -1901,13 +1902,16 @@ def run_orm_computation(
     summary_kpi_payload = None
     normalized_section_scope = str(section_scope or "all").lower()
     normalized_dashboard_view = str(dashboard_view or "").lower()
+    # Only skip activity metrics (selling SKUs, 0-sales SKU, continue/discontinue)
+    # for the visuals section — they are lightweight and needed on all other scopes.
+    # The details section uses these KPIs, so must NOT be excluded.
     include_activity_metrics = not (
-        normalized_section_scope == "details"
-        or (
-            normalized_section_scope == "visuals"
-            and normalized_dashboard_view in {"ceo", "category"}
-        )
+        normalized_section_scope == "visuals"
+        and normalized_dashboard_view in {"ceo", "category"}
     )
+    # Skip the heavy top/declining/NPD product blocks ONLY when section scope is
+    # visuals or kpis — these sections never render those widgets.
+    skip_product_tables = normalized_section_scope in {"visuals", "kpis"}
 
     if str(compute_scope or "full").lower() == "kpis":
         return run_kpi_only_computation(
@@ -2030,29 +2034,29 @@ def run_orm_computation(
         kpis = _skpi
         kpis["active_asins"] = len(table_data)
     else:
-        total_revenue = sum(r["revenue"] for r in table_data)
-        total_spend = sum(r["total_spend"] for r in table_data)
-        _az_pageviews = sum(r.get("az_pageviews", 0) for r in table_data)
-        _fk_pageviews = sum(r.get("fk_pageviews", 0) for r in table_data)
-        _total_pageviews = sum(r["pageviews"] for r in table_data)
+        total_revenue = sum(r["revenue"] for r in (table_data or []))
+        total_spend = sum(r["total_spend"] for r in (table_data or []))
+        _az_pageviews = sum(r.get("az_pageviews", 0) for r in (table_data or []))
+        _fk_pageviews = sum(r.get("fk_pageviews", 0) for r in (table_data or []))
+        _total_pageviews = sum(r["pageviews"] for r in (table_data or []))
         kpis = {
             "revenue": total_revenue,
-            "az_revenue": sum(r.get("az_revenue", 0) for r in table_data),
-            "fk_revenue": sum(r.get("fk_revenue", 0) for r in table_data),
-            "orders": sum(r["orders"] for r in table_data),
-            "az_orders": sum(r.get("az_orders", 0) for r in table_data),
-            "fk_orders": sum(r.get("fk_orders", 0) for r in table_data),
-            "units": sum(r["units"] for r in table_data),
-            "az_units": sum(r.get("az_units", 0) for r in table_data),
-            "fk_units": sum(r.get("fk_units", 0) for r in table_data),
+            "az_revenue": sum(r.get("az_revenue", 0) for r in (table_data or [])),
+            "fk_revenue": sum(r.get("fk_revenue", 0) for r in (table_data or [])),
+            "orders": sum(r["orders"] for r in (table_data or [])),
+            "az_orders": sum(r.get("az_orders", 0) for r in (table_data or [])),
+            "fk_orders": sum(r.get("fk_orders", 0) for r in (table_data or [])),
+            "units": sum(r["units"] for r in (table_data or [])),
+            "az_units": sum(r.get("az_units", 0) for r in (table_data or [])),
+            "fk_units": sum(r.get("fk_units", 0) for r in (table_data or [])),
             "pageviews": _total_pageviews,
             "page_views": _total_pageviews,  # alias used by templates
             "az_pageviews": _az_pageviews,
             "fk_pageviews": _fk_pageviews,
             "spend": total_spend,
-            "az_spend": sum(r.get("az_spend", 0) for r in table_data),
-            "fk_spend": sum(r.get("fk_spend", 0) for r in table_data),
-            "active_asins": len(table_data),
+            "az_spend": sum(r.get("az_spend", 0) for r in (table_data or [])),
+            "fk_spend": sum(r.get("fk_spend", 0) for r in (table_data or [])),
+            "active_asins": len(table_data or []),
         }
 
     platform_filter = (filters.get("platform") or "").strip()
@@ -2081,7 +2085,7 @@ def run_orm_computation(
             # and fall back to DB-backed computation.
             az_asins_with_spend = set()
             fk_fsns_with_spend = set()
-            for row in table_data:
+            for row in (table_data or []):
                 sku = str(row.get("asin", "")).strip()
                 if not sku:
                     continue
@@ -2792,7 +2796,7 @@ def run_orm_computation(
     npd_all = []
     npd_trend = {"labels": [], "pageviews": [], "units": [], "conversion": []}
 
-    if include_activity_metrics:
+    if not skip_product_tables:
         try:
             from apps.dashboard.services.asin_monthly_summary import (
                 build_top_products_from_monthly,
@@ -2819,6 +2823,14 @@ def run_orm_computation(
             top_prods = None
             under_prods = None
 
+        if top_prods is None or under_prods is None:
+            product_summary_az_base, product_summary_fk_base = _get_product_daily_summary_querysets(
+                user, filters, apply_date_filter=False
+            )
+            product_summary_az_f, product_summary_fk_f = apply_dashboard_entity_filters(
+                product_summary_az_base, product_summary_fk_base, filters, user=user
+            )
+
         if top_prods is None:
             top_prods = _build_top_product_rows(
                 qs_f,
@@ -2828,8 +2840,8 @@ def run_orm_computation(
                 asin_meta=_asin_meta,
                 fsn_meta=_fsn_meta,
                 include_full_payload=include_full_payload,
-                summary_qs_f=product_summary_az_f,
-                fk_summary_qs_f=product_summary_fk_f,
+                summary_qs_f=product_summary_az_f.filter(date__gte=cm_start, date__lte=cm_end),
+                fk_summary_qs_f=product_summary_fk_f.filter(date__gte=cm_start, date__lte=cm_end),
                 summary_prev_f=get_prev_period_qs(product_summary_az_base, filters),
                 fk_summary_prev_f=get_prev_period_qs(product_summary_fk_base, filters),
             )
@@ -2838,13 +2850,14 @@ def run_orm_computation(
                 qs, fk_qs, cm_start, cm_end, pm_start, pm_end,
                 include_full_payload=include_full_payload,
                 asin_meta=_asin_meta, fsn_meta=_fsn_meta,
-                summary_qs=product_summary_az_base,
-                fk_summary_qs=product_summary_fk_base,
+                summary_qs=product_summary_az_f,
+                fk_summary_qs=product_summary_fk_f,
             )
 
         try:
             from apps.dashboard.services.npd import build_npd_performance
-            npd_payload = build_npd_performance(user, filters, qs_f, fk_qs_f)
+            _npd_include_trend = True
+            npd_payload = build_npd_performance(user, filters, qs_f, fk_qs_f, include_trend=_npd_include_trend)
         except Exception:
             npd_payload = {
                 "rows": [],
@@ -2865,6 +2878,22 @@ def run_orm_computation(
                 summary_qs_f, "portfolio"
             ).items()
         }
+    elif table_data is None:
+        port_perf_dict = {}
+        if qs_f is not None:
+            for _row in qs_f.values("portfolio").annotate(rev=Sum("revenue")):
+                port = str(_row.get("portfolio") or "Unknown")
+                revenue = float(_row.get("rev") or 0.0)
+                if port not in port_perf_dict:
+                    port_perf_dict[port] = {"cluster": port, "revenue": 0.0}
+                port_perf_dict[port]["revenue"] += revenue
+        if fk_qs_f is not None:
+            for _row in fk_qs_f.values("portfolio").annotate(rev=Sum("revenue")):
+                port = str(_row.get("portfolio") or "Unknown")
+                revenue = float(_row.get("rev") or 0.0)
+                if port not in port_perf_dict:
+                    port_perf_dict[port] = {"cluster": port, "revenue": 0.0}
+                port_perf_dict[port]["revenue"] += revenue
     else:
         port_perf_dict = {}
         for r in table_data:
@@ -2886,6 +2915,11 @@ def run_orm_computation(
         })
     cluster_performance.sort(key=lambda x: x["revenue"], reverse=True)
 
+    # Normalize: when skip_product_tables=True these stay None; ensure empty lists so
+    # templates never receive None and the [:N] slices below never raise TypeError.
+    _top = top_prods or []
+    _under = under_prods or []
+
     return {
         "_compute_scope": "full",
         "kpis": kpis, "charts": charts, "category_performance": cat_perf_list,
@@ -2894,10 +2928,10 @@ def run_orm_computation(
         "inventory": inventory, "inventory_position": inventory_position, "forecast": forecast,
         "priorities": priorities, "marketing": marketing,
         "cluster_performance": cluster_performance,
-        "cat_top_products": top_prods[:10] if include_full_payload else top_prods,
-        "cat_under_products": under_prods[:10] if include_full_payload else under_prods,
-        "cat_all_top_products": top_prods if include_full_payload else [],
-        "cat_all_under_products": under_prods if include_full_payload else [],
+        "cat_top_products": _top[:10] if include_full_payload else _top,
+        "cat_under_products": _under[:10] if include_full_payload else _under,
+        "cat_all_top_products": _top if include_full_payload else [],
+        "cat_all_under_products": _under if include_full_payload else [],
         "npd_products": npd_all[:8],
         "npd_products_all": npd_all if include_full_payload else [],
         "npd_trend": npd_trend,

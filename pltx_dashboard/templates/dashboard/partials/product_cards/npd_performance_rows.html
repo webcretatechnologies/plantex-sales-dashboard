@@ -1,0 +1,47 @@
+{% load dashboard_extras %}
+{% for row in rows %}
+<tr>
+    {% if request.GET.platform == 'Amazon' %}
+    <td>
+        <div class="ceo-sku-cell">
+            <div class="ceo-sku-thumb"><img src="/static/logo/amazon_logo.png" style="width:14px;height:14px;"></div>
+            <div>
+                <div style="font-weight:700;font-size:12px;line-height:1.3;">{{ row.amazon_sku|default:"-" }}</div>
+                <div style="font-size:10px;color:#f59e0b;font-family:monospace;">{{ row.asin|default:"-" }}</div>
+            </div>
+        </div>
+    </td>
+    <td class="num">{{ row.az_pageviews|fmt_num }}</td>
+    <td>{{ row.az_launch_date_display|default:"-" }}</td>
+    <td class="num">{{ row.az_revenue|fmt_rupee }}</td>
+    <td class="num">{{ row.az_units|fmt_num }}</td>
+    <td class="num">{{ row.az_conversion|floatformat:2 }}%</td>
+    {% elif request.GET.platform == 'Flipkart' %}
+    <td>
+        <div class="ceo-sku-cell">
+            <div class="ceo-sku-thumb"><img src="/static/logo/flipkart_logo.png" style="width:14px;height:14px;"></div>
+            <div>
+                <div style="font-weight:700;font-size:12px;line-height:1.3;">{{ row.flipkart_sku|default:"-" }}</div>
+                <div style="font-size:10px;color:#38bdf8;font-family:monospace;">{{ row.fsn|default:"-" }}</div>
+            </div>
+        </div>
+    </td>
+    <td class="num">{{ row.fk_pageviews|fmt_num }}</td>
+    <td>{{ row.fk_launch_date_display|default:"-" }}</td>
+    <td class="num">{{ row.fk_revenue|fmt_rupee }}</td>
+    <td class="num">{{ row.fk_units|fmt_num }}</td>
+    <td class="num">{{ row.fk_conversion|floatformat:2 }}%</td>
+    {% else %}
+    <td>{% if row.asin %}{{ row.amazon_sku|default:"-" }}<div style="font-size:10px;color:#f59e0b;font-family:monospace;">{{ row.asin }}</div>{% else %}-{% endif %}</td>
+    <td>{% if row.fsn %}{{ row.flipkart_sku|default:"-" }}<div style="font-size:10px;color:#38bdf8;font-family:monospace;">{{ row.fsn }}</div>{% else %}-{% endif %}</td>
+    <td class="num">{{ row.az_revenue|fmt_rupee }}</td>
+    <td class="num">{{ row.fk_revenue|fmt_rupee }}</td>
+    <td>{{ row.az_launch_date_display|default:"-" }}</td>
+    <td>{{ row.fk_launch_date_display|default:"-" }}</td>
+    <td class="num">{{ row.az_conversion|floatformat:2 }}%</td>
+    <td class="num">{{ row.fk_conversion|floatformat:2 }}%</td>
+    {% endif %}
+</tr>
+{% empty %}
+<tr><td colspan="8" class="empty">No NPD data available</td></tr>
+{% endfor %}

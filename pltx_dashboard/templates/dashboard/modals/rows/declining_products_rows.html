@@ -20,12 +20,12 @@
     </td>
     <td class="num" data-order="{{ prod.az_pageviews|default:prod.pageviews|default:0 }}">
         <div style="font-weight:600;">{{ prod.az_pageviews|default:prod.pageviews|fmt_num }}</div>
-        {% if prod.az_pv_drop_pct|default:prod.pv_drop_pct < 0 %}
-            <span style="color:#ef4444;font-size:10px;font-weight:700;">▼ {{ prod.az_pv_drop_pct|default:prod.pv_drop_pct|abs_val }}%</span>
-        {% elif prod.az_pv_drop_pct|default:prod.pv_drop_pct > 0 %}
-            <span style="color:#10b981;font-size:10px;font-weight:700;">▲ {{ prod.az_pv_drop_pct|default:prod.pv_drop_pct|abs_val }}%</span>
+        {% if prod.az_pv_drop_pct|default:prod.pv_drop_pct|default:0 < 0 %}
+            <span style="color:#ef4444;font-size:10px;font-weight:700;">▼ {{ prod.az_pv_drop_pct|default:prod.pv_drop_pct|default:0|abs_val }}%</span>
+        {% elif prod.az_pv_drop_pct|default:prod.pv_drop_pct|default:0 > 0 %}
+            <span style="color:#10b981;font-size:10px;font-weight:700;">▲ {{ prod.az_pv_drop_pct|default:prod.pv_drop_pct|default:0|abs_val }}%</span>
         {% endif %}
-        <div style="font-size:10px;color:var(--muted);white-space:nowrap;">({{ prod.az_prev_pageviews|default:prod.prev_pageviews|fmt_num }} &rarr; {{ prod.az_pageviews|default:prod.pageviews|fmt_num }})</div>
+        <div style="font-size:10px;color:var(--muted);white-space:nowrap;">({{ prod.az_prev_pageviews|default:prod.prev_pageviews|default:0|fmt_num }} &rarr; {{ prod.az_pageviews|default:prod.pageviews|fmt_num }})</div>
     </td>
 
     {% elif platform == "Flipkart" %}
@@ -47,12 +47,12 @@
     </td>
     <td class="num" data-order="{{ prod.fk_pageviews|default:prod.pageviews|default:0 }}">
         <div style="font-weight:600;">{{ prod.fk_pageviews|default:prod.pageviews|fmt_num }}</div>
-        {% if prod.fk_pv_drop_pct|default:prod.pv_drop_pct < 0 %}
-            <span style="color:#ef4444;font-size:10px;font-weight:700;">▼ {{ prod.fk_pv_drop_pct|default:prod.pv_drop_pct|abs_val }}%</span>
-        {% elif prod.fk_pv_drop_pct|default:prod.pv_drop_pct > 0 %}
-            <span style="color:#10b981;font-size:10px;font-weight:700;">▲ {{ prod.fk_pv_drop_pct|default:prod.pv_drop_pct|abs_val }}%</span>
+        {% if prod.fk_pv_drop_pct|default:prod.pv_drop_pct|default:0 < 0 %}
+            <span style="color:#ef4444;font-size:10px;font-weight:700;">▼ {{ prod.fk_pv_drop_pct|default:prod.pv_drop_pct|default:0|abs_val }}%</span>
+        {% elif prod.fk_pv_drop_pct|default:prod.pv_drop_pct|default:0 > 0 %}
+            <span style="color:#10b981;font-size:10px;font-weight:700;">▲ {{ prod.fk_pv_drop_pct|default:prod.pv_drop_pct|default:0|abs_val }}%</span>
         {% endif %}
-        <div style="font-size:10px;color:var(--muted);white-space:nowrap;">({{ prod.fk_prev_pageviews|default:prod.prev_pageviews|fmt_num }} &rarr; {{ prod.fk_pageviews|default:prod.pageviews|fmt_num }})</div>
+        <div style="font-size:10px;color:var(--muted);white-space:nowrap;">({{ prod.fk_prev_pageviews|default:prod.prev_pageviews|default:0|fmt_num }} &rarr; {{ prod.fk_pageviews|default:prod.pageviews|fmt_num }})</div>
     </td>
 
     {% else %}
@@ -111,33 +111,33 @@
     <td class="num" data-order="{{ prod.az_pageviews|default:0 }}">
         {% if prod.az_sku %}
             <div style="font-weight:600;">{{ prod.az_pageviews|fmt_num }}</div>
-            {% if prod.az_pv_drop_pct < 0 %}
-                <span style="color:#ef4444;font-size:10px;font-weight:700;">▼ {{ prod.az_pv_drop_pct|abs_val }}%</span>
-            {% elif prod.az_pv_drop_pct > 0 %}
-                <span style="color:#10b981;font-size:10px;font-weight:700;">▲ {{ prod.az_pv_drop_pct|abs_val }}%</span>
+            {% if prod.az_pv_drop_pct|default:0 < 0 %}
+                <span style="color:#ef4444;font-size:10px;font-weight:700;">▼ {{ prod.az_pv_drop_pct|default:0|abs_val }}%</span>
+            {% elif prod.az_pv_drop_pct|default:0 > 0 %}
+                <span style="color:#10b981;font-size:10px;font-weight:700;">▲ {{ prod.az_pv_drop_pct|default:0|abs_val }}%</span>
             {% endif %}
-            <div style="font-size:10px;color:var(--muted);white-space:nowrap;">({{ prod.az_prev_pageviews|fmt_num }} &rarr; {{ prod.az_pageviews|fmt_num }})</div>
+            <div style="font-size:10px;color:var(--muted);white-space:nowrap;">({{ prod.az_prev_pageviews|default:0|fmt_num }} &rarr; {{ prod.az_pageviews|fmt_num }})</div>
         {% else %}-{% endif %}
     </td>
     <td class="num" data-order="{{ prod.fk_pageviews|default:0 }}">
         {% if prod.fk_sku %}
             <div style="font-weight:600;">{{ prod.fk_pageviews|fmt_num }}</div>
-            {% if prod.fk_pv_drop_pct < 0 %}
-                <span style="color:#ef4444;font-size:10px;font-weight:700;">▼ {{ prod.fk_pv_drop_pct|abs_val }}%</span>
-            {% elif prod.fk_pv_drop_pct > 0 %}
-                <span style="color:#10b981;font-size:10px;font-weight:700;">▲ {{ prod.fk_pv_drop_pct|abs_val }}%</span>
+            {% if prod.fk_pv_drop_pct|default:0 < 0 %}
+                <span style="color:#ef4444;font-size:10px;font-weight:700;">▼ {{ prod.fk_pv_drop_pct|default:0|abs_val }}%</span>
+            {% elif prod.fk_pv_drop_pct|default:0 > 0 %}
+                <span style="color:#10b981;font-size:10px;font-weight:700;">▲ {{ prod.fk_pv_drop_pct|default:0|abs_val }}%</span>
             {% endif %}
-            <div style="font-size:10px;color:var(--muted);white-space:nowrap;">({{ prod.fk_prev_pageviews|fmt_num }} &rarr; {{ prod.fk_pageviews|fmt_num }})</div>
+            <div style="font-size:10px;color:var(--muted);white-space:nowrap;">({{ prod.fk_prev_pageviews|default:0|fmt_num }} &rarr; {{ prod.fk_pageviews|fmt_num }})</div>
         {% else %}-{% endif %}
     </td>
     <td class="num" data-order="{{ prod.pageviews|default:0 }}">
         <strong>{{ prod.pageviews|fmt_num }}</strong>
-        {% if prod.pv_drop_pct < 0 %}
-            <br><span style="color:#ef4444;font-size:10px;font-weight:700;">▼ {{ prod.pv_drop_pct|abs_val }}%</span>
-        {% elif prod.pv_drop_pct > 0 %}
-            <br><span style="color:#10b981;font-size:10px;font-weight:700;">▲ {{ prod.pv_drop_pct|abs_val }}%</span>
+        {% if prod.pv_drop_pct|default:0 < 0 %}
+            <br><span style="color:#ef4444;font-size:10px;font-weight:700;">▼ {{ prod.pv_drop_pct|default:0|abs_val }}%</span>
+        {% elif prod.pv_drop_pct|default:0 > 0 %}
+            <br><span style="color:#10b981;font-size:10px;font-weight:700;">▲ {{ prod.pv_drop_pct|default:0|abs_val }}%</span>
         {% endif %}
-        <div style="font-size:10px;color:var(--muted);white-space:nowrap;">({{ prod.prev_pageviews|fmt_num }} &rarr; {{ prod.pageviews|fmt_num }})</div>
+        <div style="font-size:10px;color:var(--muted);white-space:nowrap;">({{ prod.prev_pageviews|default:0|fmt_num }} &rarr; {{ prod.pageviews|fmt_num }})</div>
     </td>
     {% endif %}
 </tr>

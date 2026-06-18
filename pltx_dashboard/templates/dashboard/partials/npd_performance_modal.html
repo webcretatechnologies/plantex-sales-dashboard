@@ -60,7 +60,9 @@
         "Flipkart": '<tr><th data-field="fsn">Flipkart SKU</th><th class="num" data-field="fk_pageviews">Page Views</th><th data-field="fk_launch_date">Launch Date</th><th class="num" data-field="fk_ad_spend">Ad Spend</th><th class="num" data-field="fk_fc_stock">FC Stock</th><th class="num" data-field="fk_flex_stock">Flex Stock</th><th class="num" data-field="fk_fc_stock_count">FCs &gt; 0</th><th class="num" data-field="fk_revenue">Revenue</th><th class="num" data-field="fk_units">Units</th><th data-field="category">Category</th><th data-field="portfolio">Portfolio</th><th data-field="category_manager">CM Name</th><th class="num" data-field="fk_doc">DOC</th><th class="num" data-field="fk_conversion">Conversion</th></tr>'
     };
     function currentPlatform() {
-        return "{{ request.GET.platform|default:'All' }}";
+        var sel = document.getElementById('platformSelect');
+        if (sel) return sel.value || 'All';
+        return "{{ request.GET.platform|default:'' }}" || 'All';
     }
     function updateHeader(platform) {
         var header = document.getElementById(headerId);
@@ -98,7 +100,13 @@
             }
         });
     }
-    document.addEventListener("DOMContentLoaded", updateHeader);
+    document.addEventListener("dashboardContentLoaded", renderChart);
+    document.addEventListener("DOMContentLoaded", renderChart);
+    document.addEventListener("modalOpened", function(e) {
+        if (e.detail && e.detail.id === modalId) {
+            setTimeout(renderChart, 50); // small delay to ensure modal is fully visible
+        }
+    });
     document.addEventListener("click", function(e) {
         var opener = e.target && e.target.closest ? e.target.closest("[onclick*='" + modalId + "']") : null;
         if (opener) setTimeout(function(){ updateHeader(); renderChart(); }, 80);

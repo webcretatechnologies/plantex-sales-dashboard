@@ -475,7 +475,7 @@
     </div>
 </div>
 
-{% include "dashboard/partials/npd_performance_card.html" with npd_card_id="ceo-card-npd-performance" npd_modal_id="npdPerformanceModal" %}
+{% include "dashboard/partials/npd_performance_card.html" with npd_card_id="ceo-card-npd-performance" npd_modal_id="npdPerformanceModal" npd_view_name="ceo" %}
 
 <!-- ════════════ ROW 4: Top Revenue Contributors | Declining Products ════════════ -->
 <div class="ceo-row-5">
@@ -498,6 +498,7 @@
                     </tr>
                     {% else %}
                     <tr>
+                        <th>SKU</th>
                         <th>Amazon SKU</th>
                         <th>Flipkart SKU</th>
                         <th class="num">Amazon Revenue</th>
@@ -512,8 +513,8 @@
                     </tr>
                     {% endif %}
                 </thead>
-                <tbody>
-                    {% include "dashboard/modals/rows/top_products_simple_rows.html" with rows=payload.cat_top_products|slice:":5" platform=filters.platform|default:'All' %}
+                <tbody id="ceo-top-products-tbody">
+                    <tr><td colspan="12" class="empty" style="text-align:center;padding:20px;color:var(--muted);">Loading data...</td></tr>
                 </tbody>
             </table>
         </div>
@@ -538,6 +539,7 @@
                     </tr>
                     {% else %}
                     <tr>
+                        <th>SKU</th>
                         <th>Amazon SKU</th>
                         <th>Flipkart SKU</th>
                         <th class="num">Amazon MOM Drop %</th>
@@ -552,11 +554,37 @@
                     </tr>
                     {% endif %}
                 </thead>
-                <tbody>
-                    {% include "dashboard/modals/rows/declining_products_rows.html" with rows=payload.cat_under_products|slice:":5" platform=filters.platform|default:'All' %}
+                <tbody id="ceo-declining-tbody">
+                    <tr><td colspan="12" class="empty" style="text-align:center;padding:20px;color:var(--muted);">Loading data...</td></tr>
                 </tbody>
             </table>
         </div>
     </div>
 
 </div>
+<script>
+(function(){
+    var tbody = document.getElementById('ceo-top-products-tbody');
+    if (!tbody) return;
+    var params = new URLSearchParams(window.location.search || '');
+    params.set('limit', '5');
+    fetch("{% url 'dashboard-product-card-rows' 'ceo' 'top-products' %}" + '?' + params.toString(), {
+        headers: { 'X-Requested-With': 'XMLHttpRequest' }
+    })
+    .then(function(r){ return r.ok ? r.text() : Promise.reject(r.status); })
+    .then(function(html){ tbody.innerHTML = html || '<tr><td colspan="11" class="empty">No data available</td></tr>'; })
+    .catch(function(){ tbody.innerHTML = '<tr><td colspan="11" class="empty">Failed to load. Please retry.</td></tr>'; });
+})();
+(function(){
+    var tbody = document.getElementById('ceo-declining-tbody');
+    if (!tbody) return;
+    var params = new URLSearchParams(window.location.search || '');
+    params.set('limit', '5');
+    fetch("{% url 'dashboard-product-card-rows' 'ceo' 'declining-products' %}" + '?' + params.toString(), {
+        headers: { 'X-Requested-With': 'XMLHttpRequest' }
+    })
+    .then(function(r){ return r.ok ? r.text() : Promise.reject(r.status); })
+    .then(function(html){ tbody.innerHTML = html || '<tr><td colspan="11" class="empty">No data available</td></tr>'; })
+    .catch(function(){ tbody.innerHTML = '<tr><td colspan="11" class="empty">Failed to load. Please retry.</td></tr>'; });
+})();
+</script>

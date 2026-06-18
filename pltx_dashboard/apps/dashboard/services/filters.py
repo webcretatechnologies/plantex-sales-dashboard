@@ -141,6 +141,22 @@ def _apply_in_filter(qs, field_name, values, chunk_size=LARGE_IN_FILTER_CHUNK_SI
     return qs.filter(predicate)
 
 
+def _has_sku_filters(filters):
+    missing_fields = {
+        "brand_name",
+        "ratings",
+        "finish",
+        "category_manager",
+        "series_name",
+        "material",
+        "size",
+        "inventory_health",
+        "parent_asin",
+        "sku",
+    }
+    return any(filters.get(field) for field in missing_fields)
+
+
 def _has_mapping_filters(filters):
     return bool(filters.get("parent_asin") or filters.get("sku") or any(filters.get(field) for field in MAPPING_FILTER_FIELDS))
 

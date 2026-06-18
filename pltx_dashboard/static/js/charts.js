@@ -821,6 +821,8 @@ function openModal(id) {
         _loadModalRowsOnDemand(el);
         el.classList.add('active');
         document.body.style.overflow = 'hidden';
+        var event = new CustomEvent('modalOpened', { detail: { id: id } });
+        document.dispatchEvent(event);
     }
 }
 function closeModal(id) {
