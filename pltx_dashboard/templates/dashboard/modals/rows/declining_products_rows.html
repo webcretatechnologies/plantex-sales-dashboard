@@ -12,12 +12,21 @@
         </div>
     </td>
     <td class="num growth-down" data-order="{{ prod.az_drop_pct|default:prod.drop_pct|default:0 }}">
-        <span style="color:#ef4444;font-weight:700;">▼ {{ prod.az_drop_pct|default:prod.drop_pct|abs_val }}%</span>
+        <span style="color:#ef4444;font-weight:700;">▼ {{ prod.az_drop_pct|default:prod.drop_pct|abs_val }}%</span><br>
+        <span style="font-size:10px;color:var(--muted);white-space:nowrap;">({{ prod.az_prev_revenue|default:prod.prev_revenue|fmt_rupee }} &rarr; {{ prod.az_revenue|default:prod.revenue|fmt_rupee }})</span>
     </td>
     <td class="num" data-order="{{ prod.az_impact|default:prod.impact|default:0 }}">
         <span style="color:#ef4444;font-weight:600;">-{{ prod.az_impact|default:prod.impact|fmt_rupee }}</span>
     </td>
-    <td class="num" data-order="{{ prod.az_pageviews|default:prod.pageviews|default:0 }}">{{ prod.az_pageviews|default:prod.pageviews|fmt_num }}</td>
+    <td class="num" data-order="{{ prod.az_pageviews|default:prod.pageviews|default:0 }}">
+        <div style="font-weight:600;">{{ prod.az_pageviews|default:prod.pageviews|fmt_num }}</div>
+        {% if prod.az_pv_drop_pct|default:prod.pv_drop_pct|default:0 < 0 %}
+            <span style="color:#ef4444;font-size:10px;font-weight:700;">▼ {{ prod.az_pv_drop_pct|default:prod.pv_drop_pct|default:0|abs_val }}%</span>
+        {% elif prod.az_pv_drop_pct|default:prod.pv_drop_pct|default:0 > 0 %}
+            <span style="color:#10b981;font-size:10px;font-weight:700;">▲ {{ prod.az_pv_drop_pct|default:prod.pv_drop_pct|default:0|abs_val }}%</span>
+        {% endif %}
+        <div style="font-size:10px;color:var(--muted);white-space:nowrap;">({{ prod.az_prev_pageviews|default:prod.prev_pageviews|default:0|fmt_num }} &rarr; {{ prod.az_pageviews|default:prod.pageviews|fmt_num }})</div>
+    </td>
 
     {% elif platform == "Flipkart" %}
     <td>
@@ -30,12 +39,21 @@
         </div>
     </td>
     <td class="num growth-down" data-order="{{ prod.fk_drop_pct|default:prod.drop_pct|default:0 }}">
-        <span style="color:#ef4444;font-weight:700;">▼ {{ prod.fk_drop_pct|default:prod.drop_pct|abs_val }}%</span>
+        <span style="color:#ef4444;font-weight:700;">▼ {{ prod.fk_drop_pct|default:prod.drop_pct|abs_val }}%</span><br>
+        <span style="font-size:10px;color:var(--muted);white-space:nowrap;">({{ prod.fk_prev_revenue|default:prod.prev_revenue|fmt_rupee }} &rarr; {{ prod.fk_revenue|default:prod.revenue|fmt_rupee }})</span>
     </td>
     <td class="num" data-order="{{ prod.fk_impact|default:prod.impact|default:0 }}">
         <span style="color:#ef4444;font-weight:600;">-{{ prod.fk_impact|default:prod.impact|fmt_rupee }}</span>
     </td>
-    <td class="num" data-order="{{ prod.fk_pageviews|default:prod.pageviews|default:0 }}">{{ prod.fk_pageviews|default:prod.pageviews|fmt_num }}</td>
+    <td class="num" data-order="{{ prod.fk_pageviews|default:prod.pageviews|default:0 }}">
+        <div style="font-weight:600;">{{ prod.fk_pageviews|default:prod.pageviews|fmt_num }}</div>
+        {% if prod.fk_pv_drop_pct|default:prod.pv_drop_pct|default:0 < 0 %}
+            <span style="color:#ef4444;font-size:10px;font-weight:700;">▼ {{ prod.fk_pv_drop_pct|default:prod.pv_drop_pct|default:0|abs_val }}%</span>
+        {% elif prod.fk_pv_drop_pct|default:prod.pv_drop_pct|default:0 > 0 %}
+            <span style="color:#10b981;font-size:10px;font-weight:700;">▲ {{ prod.fk_pv_drop_pct|default:prod.pv_drop_pct|default:0|abs_val }}%</span>
+        {% endif %}
+        <div style="font-size:10px;color:var(--muted);white-space:nowrap;">({{ prod.fk_prev_pageviews|default:prod.prev_pageviews|default:0|fmt_num }} &rarr; {{ prod.fk_pageviews|default:prod.pageviews|fmt_num }})</div>
+    </td>
 
     {% else %}
     {# All: Amazon SKU (col 1), Flipkart SKU (col 2), Az Drop%, FK Drop%, Total Drop%, Az Impact, FK Impact, Total Impact, Az PV, FK PV, Total PV = 11 cols #}
@@ -62,13 +80,24 @@
         {% else %}<span style="color:var(--muted)">-</span>{% endif %}
     </td>
     <td class="num growth-down" data-order="{{ prod.az_drop_pct|default:0 }}">
-        {% if prod.az_sku %}<span style="color:#ef4444;font-weight:700;">▼ {{ prod.az_drop_pct|abs_val }}%</span>{% else %}<span style="color:var(--muted)">-</span>{% endif %}
+        {% if prod.az_sku %}
+            <span style="color:#ef4444;font-weight:700;">▼ {{ prod.az_drop_pct|abs_val }}%</span><br>
+            <span style="font-size:10px;color:var(--muted);white-space:nowrap;">({{ prod.az_prev_revenue|fmt_rupee }} &rarr; {{ prod.az_revenue|fmt_rupee }})</span>
+        {% else %}
+            <span style="color:var(--muted)">-</span>
+        {% endif %}
     </td>
     <td class="num growth-down" data-order="{{ prod.fk_drop_pct|default:0 }}">
-        {% if prod.fk_sku %}<span style="color:#ef4444;font-weight:700;">▼ {{ prod.fk_drop_pct|abs_val }}%</span>{% else %}<span style="color:var(--muted)">-</span>{% endif %}
+        {% if prod.fk_sku %}
+            <span style="color:#ef4444;font-weight:700;">▼ {{ prod.fk_drop_pct|abs_val }}%</span><br>
+            <span style="font-size:10px;color:var(--muted);white-space:nowrap;">({{ prod.fk_prev_revenue|fmt_rupee }} &rarr; {{ prod.fk_revenue|fmt_rupee }})</span>
+        {% else %}
+            <span style="color:var(--muted)">-</span>
+        {% endif %}
     </td>
     <td class="num growth-down" data-order="{{ prod.drop_pct|default:0 }}">
-        <span style="color:#ef4444;font-weight:700;"><strong>▼ {{ prod.drop_pct|abs_val }}%</strong></span>
+        <span style="color:#ef4444;font-weight:700;"><strong>▼ {{ prod.drop_pct|abs_val }}%</strong></span><br>
+        <span style="font-size:10px;color:var(--muted);white-space:nowrap;">({{ prod.prev_revenue|fmt_rupee }} &rarr; {{ prod.revenue|fmt_rupee }})</span>
     </td>
     <td class="num" data-order="{{ prod.az_impact|default:0 }}">
         {% if prod.az_sku %}<span style="color:#ef4444;font-weight:600;">-{{ prod.az_impact|fmt_rupee }}</span>{% else %}-{% endif %}
@@ -79,9 +108,37 @@
     <td class="num" data-order="{{ prod.impact|default:0 }}">
         <span style="color:#ef4444;font-weight:600;"><strong>-{{ prod.impact|fmt_rupee }}</strong></span>
     </td>
-    <td class="num" data-order="{{ prod.az_pageviews|default:0 }}">{% if prod.az_sku %}{{ prod.az_pageviews|fmt_num }}{% else %}-{% endif %}</td>
-    <td class="num" data-order="{{ prod.fk_pageviews|default:0 }}">{% if prod.fk_sku %}{{ prod.fk_pageviews|fmt_num }}{% else %}-{% endif %}</td>
-    <td class="num" data-order="{{ prod.pageviews|default:0 }}"><strong>{{ prod.pageviews|fmt_num }}</strong></td>
+    <td class="num" data-order="{{ prod.az_pageviews|default:0 }}">
+        {% if prod.az_sku %}
+            <div style="font-weight:600;">{{ prod.az_pageviews|fmt_num }}</div>
+            {% if prod.az_pv_drop_pct|default:0 < 0 %}
+                <span style="color:#ef4444;font-size:10px;font-weight:700;">▼ {{ prod.az_pv_drop_pct|default:0|abs_val }}%</span>
+            {% elif prod.az_pv_drop_pct|default:0 > 0 %}
+                <span style="color:#10b981;font-size:10px;font-weight:700;">▲ {{ prod.az_pv_drop_pct|default:0|abs_val }}%</span>
+            {% endif %}
+            <div style="font-size:10px;color:var(--muted);white-space:nowrap;">({{ prod.az_prev_pageviews|default:0|fmt_num }} &rarr; {{ prod.az_pageviews|fmt_num }})</div>
+        {% else %}-{% endif %}
+    </td>
+    <td class="num" data-order="{{ prod.fk_pageviews|default:0 }}">
+        {% if prod.fk_sku %}
+            <div style="font-weight:600;">{{ prod.fk_pageviews|fmt_num }}</div>
+            {% if prod.fk_pv_drop_pct|default:0 < 0 %}
+                <span style="color:#ef4444;font-size:10px;font-weight:700;">▼ {{ prod.fk_pv_drop_pct|default:0|abs_val }}%</span>
+            {% elif prod.fk_pv_drop_pct|default:0 > 0 %}
+                <span style="color:#10b981;font-size:10px;font-weight:700;">▲ {{ prod.fk_pv_drop_pct|default:0|abs_val }}%</span>
+            {% endif %}
+            <div style="font-size:10px;color:var(--muted);white-space:nowrap;">({{ prod.fk_prev_pageviews|default:0|fmt_num }} &rarr; {{ prod.fk_pageviews|fmt_num }})</div>
+        {% else %}-{% endif %}
+    </td>
+    <td class="num" data-order="{{ prod.pageviews|default:0 }}">
+        <strong>{{ prod.pageviews|fmt_num }}</strong>
+        {% if prod.pv_drop_pct|default:0 < 0 %}
+            <br><span style="color:#ef4444;font-size:10px;font-weight:700;">▼ {{ prod.pv_drop_pct|default:0|abs_val }}%</span>
+        {% elif prod.pv_drop_pct|default:0 > 0 %}
+            <br><span style="color:#10b981;font-size:10px;font-weight:700;">▲ {{ prod.pv_drop_pct|default:0|abs_val }}%</span>
+        {% endif %}
+        <div style="font-size:10px;color:var(--muted);white-space:nowrap;">({{ prod.prev_pageviews|default:0|fmt_num }} &rarr; {{ prod.pageviews|fmt_num }})</div>
+    </td>
     {% endif %}
 </tr>
 {% empty %}

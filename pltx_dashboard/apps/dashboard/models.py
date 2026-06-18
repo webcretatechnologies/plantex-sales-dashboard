@@ -512,6 +512,9 @@ class DashboardProductDailySummary(models.Model):
     page_views = models.IntegerField(default=0)
     orders = models.IntegerField(default=0)
     ad_spend = models.FloatField(default=0.0)
+    spend_sp = models.FloatField(default=0.0)
+    spend_sb = models.FloatField(default=0.0)
+    spend_sd = models.FloatField(default=0.0)
     product_clicks = models.IntegerField(default=0)
     sales = models.IntegerField(default=0)
 
@@ -519,7 +522,10 @@ class DashboardProductDailySummary(models.Model):
         unique_together = ("user", "date", "platform", "sku")
         indexes = [
             models.Index(fields=["user", "date", "platform"], name="idx_dpds_u_d_p"),
+            models.Index(fields=["user", "platform", "date"], name="idx_dpds_u_p_d"),
             models.Index(fields=["user", "platform", "sku", "date"], name="idx_dpds_u_p_s_d"),
+            models.Index(fields=["user", "platform", "date", "sku"], name="idx_dpds_u_p_d_s"),
+            models.Index(fields=["user", "platform", "fsn"], name="idx_dpds_u_p_fsn"),
             models.Index(fields=["user", "asin", "date"], name="idx_dpds_u_asn_d"),
             models.Index(fields=["user", "fsn", "date"], name="idx_dpds_u_fsn_d"),
             models.Index(fields=["user", "category", "date"], name="idx_dpds_u_cat_d"),

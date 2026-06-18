@@ -1,19 +1,17 @@
 DEFAULT_DASHBOARD_VIEW_TYPES = (
-    "business-dashboard",
     "ceo-dashboard",
-    "category-dashboard",
 )
 
 # Increment this version whenever you want to invalidate all dashboard API caches.
-DASHBOARD_PAYLOAD_CACHE_VERSION = "v7"
+DASHBOARD_PAYLOAD_CACHE_VERSION = "v8"
 DASHBOARD_SCHEMA_VERSION = "v5"
 
 # In-memory payload cache TTL tuning
-DASHBOARD_CACHE_TTL_LITE_SECONDS = 60 * 60 * 6   # 6 hours
-DASHBOARD_CACHE_TTL_FULL_SECONDS = 60 * 60 * 4    # 4 hours
+DASHBOARD_CACHE_TTL_LITE_SECONDS = 604800   # 7 days
+DASHBOARD_CACHE_TTL_FULL_SECONDS = 604800   # 7 days
 
 # Cache schema marker to prevent stale-key collisions after key format changes.
-DASHBOARD_CACHE_SCHEMA_VERSION = 10
+DASHBOARD_CACHE_SCHEMA_VERSION = 11
 
 DEFAULT_WARMUP_FILTER_SETS = (
     {},

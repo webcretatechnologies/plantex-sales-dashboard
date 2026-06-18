@@ -11,7 +11,7 @@ from io import BytesIO, StringIO
 import pandas as pd
 from django.conf import settings
 from django.core.cache import cache
-from django.db.models import F, Max, Q, Sum
+from django.db.models import F, Max, Q, Sum, Case, When, Value, IntegerField
 from django.http import FileResponse, HttpResponse, JsonResponse
 from django.shortcuts import render, redirect
 from django.template.loader import render_to_string
@@ -86,22 +86,26 @@ DASHBOARD_MODAL_ROWS_TEMPLATE_MAP = {
     ("business", "declining-products"): ("dashboard/modals/rows/declining_products_rows.html", "cat_all_under_products"),
     ("category", "cluster-performance"): ("dashboard/modals/rows/cluster_performance_rows.html", "cluster_performance"),
     ("category", "inventory-health"): ("dashboard/modals/rows/inventory_health_rows.html", "inventory.details"),
-    ("category", "top-products"): ("dashboard/modals/rows/top_products_category_rows.html", "cat_all_top_products"),
+    ("category", "top-products"): ("dashboard/modals/rows/top_products_simple_rows.html", "cat_all_top_products"),
     ("category", "npd-performance"): ("dashboard/modals/rows/npd_performance_rows.html", "npd_products_all"),
     ("category", "declining-products"): ("dashboard/modals/rows/declining_products_rows.html", "cat_all_under_products"),
 }
 DASHBOARD_PRODUCT_CARD_TEMPLATE_MAP = {
-    ("business", "top-products"): "dashboard/partials/product_cards/top_products_business_rows.html",
+    ("business", "top-products"): "dashboard/partials/product_cards/top_products_simple_rows.html",
     ("business", "declining-products"): "dashboard/partials/product_cards/declining_products_rows.html",
+    ("business", "npd-performance"): "dashboard/partials/product_cards/npd_performance_rows.html",
     ("ceo", "top-products"): "dashboard/partials/product_cards/top_products_simple_rows.html",
     ("ceo", "declining-products"): "dashboard/partials/product_cards/declining_products_rows.html",
-    ("category", "top-products"): "dashboard/partials/product_cards/top_products_category_rows.html",
+    ("ceo", "npd-performance"): "dashboard/partials/product_cards/npd_performance_rows.html",
+    ("category", "top-products"): "dashboard/partials/product_cards/top_products_simple_rows.html",
     ("category", "declining-products"): "dashboard/partials/product_cards/declining_products_rows.html",
+    ("category", "npd-performance"): "dashboard/partials/product_cards/npd_performance_rows.html",
 }
 
 DASHBOARD_PRODUCT_CARD_PAYLOAD_KEY_MAP = {
-    "top-products": "cat_all_top_products",
-    "declining-products": "cat_all_under_products",
+    "top-products": "cat_top_products",
+    "declining-products": "cat_under_products",
+    "npd-performance": "npd_products",
 }
 
 DASHBOARD_CATEGORY_PERFORMANCE_ROWS_TEMPLATE_MAP = {
@@ -136,9 +140,21 @@ def _resolve_payload_key(payload, payload_key):
 
 
 
-def _resolve_asin_fsn_report_bounds(date_range):
+def _resolve_asin_fsn_report_bounds(date_range, start_date=None, end_date=None):
     date_range = str(date_range or "all").strip().lower()
     today = timezone.localdate()
+
+    if date_range == "custom":
+        start = None
+        end = None
+        try:
+            if start_date:
+                start = datetime.datetime.strptime(start_date, "%Y-%m-%d").date()
+            if end_date:
+                end = datetime.datetime.strptime(end_date, "%Y-%m-%d").date()
+        except ValueError:
+            pass
+        return start, end
 
     if date_range == "last_7_days":
         return today - datetime.timedelta(days=6), today
@@ -157,10 +173,21 @@ def _resolve_asin_fsn_report_bounds(date_range):
     return None, None
 
 
-def _apply_asin_fsn_report_date_range(qs, date_range):
-    start, end = _resolve_asin_fsn_report_bounds(date_range)
+def _apply_asin_fsn_report_date_range(qs, date_range, start_date=None, end_date=None):
+    start, end = _resolve_asin_fsn_report_bounds(date_range, start_date, end_date)
+    
+    if date_range == "custom":
+        if start and not end:
+            end = start
+        elif end and not start:
+            start = end
+
     if start and end:
         return qs.filter(date__gte=start, date__lte=end)
+    elif start:
+        return qs.filter(date__gte=start)
+    elif end:
+        return qs.filter(date__lte=end)
     return qs
 
 
@@ -346,111 +373,8 @@ def _get_filtered_processed_querysets(data_owner, filters):
     return apply_dashboard_entity_filters(qs, fk_qs, filters, user=data_owner)
 
 
-def _get_asin_fsn_report_monthly_rows(data_owner, filters, report_date_range, report_limit):
-    monthly_filters = _asin_fsn_monthly_filters(filters, report_date_range)
-    if monthly_filters is None:
-        return None
 
-    try:
-        from apps.dashboard.services.asin_monthly_summary import get_ams_qs
-    except Exception:
-        return None
-
-    ams_qs = get_ams_qs(data_owner, monthly_filters)
-    if ams_qs is None:
-        return None
-
-    asin_filter = monthly_filters.get("asin")
-    fsn_filter = monthly_filters.get("fsn")
-    platform = monthly_filters.get("platform") or "All"
-    show_amazon = platform != "Flipkart" and not (fsn_filter and not asin_filter)
-    show_flipkart = platform != "Amazon" and not (asin_filter and not fsn_filter)
-
-    asin_rows = []
-    fsn_rows = []
-    if show_amazon:
-        asin_rows = list(
-            ams_qs.filter(platform="Amazon")
-            .exclude(asin__isnull=True)
-            .exclude(asin="")
-            .values("asin")
-            .annotate(
-                pageviews=Sum("pageviews"),
-                units=Sum("units"),
-                revenue=Sum("revenue"),
-                ad_spend=Sum("total_spend"),
-            )
-            .order_by("-revenue", "-units", "-pageviews", "asin")[:report_limit]
-        )
-    if show_flipkart:
-        fsn_rows = list(
-            ams_qs.filter(platform="Flipkart")
-            .exclude(asin__isnull=True)
-            .exclude(asin="")
-            .values("asin")
-            .annotate(
-                pageviews=Sum("pageviews"),
-                units=Sum("units"),
-                revenue=Sum("revenue"),
-                ad_spend=Sum("total_spend"),
-            )
-            .order_by("-revenue", "-units", "-pageviews", "asin")[:report_limit]
-        )
-
-    if not asin_rows and not fsn_rows:
-        return None
-
-    asin_skus = {
-        row["asin"]: row["msku"] or ""
-        for row in CategoryMapping.objects.filter(
-            user=data_owner,
-            asin__in=[row.get("asin") for row in asin_rows if row.get("asin")],
-        ).values("asin", "msku")
-    }
-    fsn_skus = {
-        row["fsn"]: row["sku"] or ""
-        for row in FlipkartCategoryMap.objects.filter(
-            user=data_owner,
-            fsn__in=[row.get("asin") for row in fsn_rows if row.get("asin")],
-        ).values("fsn", "sku")
-    }
-
-    rows = [
-        {
-            "product_id": row.get("asin") or "",
-            "sku": asin_skus.get(row.get("asin"), ""),
-            "platform": "Amazon",
-            "pageviews": int(row.get("pageviews") or 0),
-            "units": int(row.get("units") or 0),
-            "revenue": float(row.get("revenue") or 0),
-            "ad_spend": float(row.get("ad_spend") or 0),
-        }
-        for row in asin_rows
-    ]
-    rows.extend(
-        {
-            "product_id": row.get("asin") or "",
-            "sku": fsn_skus.get(row.get("asin"), ""),
-            "platform": "Flipkart",
-            "pageviews": int(row.get("pageviews") or 0),
-            "units": int(row.get("units") or 0),
-            "revenue": float(row.get("revenue") or 0),
-            "ad_spend": float(row.get("ad_spend") or 0),
-        }
-        for row in fsn_rows
-    )
-    rows.sort(
-        key=lambda row: (
-            float(row.get("revenue") or 0),
-            int(row.get("units") or 0),
-            int(row.get("pageviews") or 0),
-        ),
-        reverse=True,
-    )
-    return rows[:report_limit]
-
-
-def _get_asin_fsn_report_product_daily_rows(data_owner, filters, report_date_range, report_limit):
+def _get_asin_fsn_report_product_daily_rows(data_owner, filters, report_date_range, report_limit, report_start_date=None, report_end_date=None):
     # Summary table has product ids and dashboard dimensions, but not mapping-only
     # filters such as CM/material/rating/launch-date. Preserve exact behavior by
     # falling back to the raw processed tables for those cases.
@@ -473,7 +397,7 @@ def _get_asin_fsn_report_product_daily_rows(data_owner, filters, report_date_ran
         return None
 
     qs = DashboardProductDailySummary.objects.filter(user=data_owner)
-    qs = _apply_asin_fsn_report_date_range(qs, report_date_range)
+    qs = _apply_asin_fsn_report_date_range(qs, report_date_range, report_start_date, report_end_date)
     qs = _list_or_scalar_filter(qs, "category", filters.get("category"))
     qs = _list_or_scalar_filter(qs, "portfolio", filters.get("portfolio"))
     qs = _list_or_scalar_filter(qs, "subcategory", filters.get("subcategory"))
@@ -486,58 +410,115 @@ def _get_asin_fsn_report_product_daily_rows(data_owner, filters, report_date_ran
 
     asin_rows = []
     fsn_rows = []
-    if show_amazon:
+    combined_totals = []
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    def fetch_az_totals():
+        if show_amazon:
+            az_qs = qs.filter(platform="Amazon")
+            az_qs = _list_or_scalar_filter(az_qs, "asin", asin_filter)
+            return list(
+                az_qs.exclude(sku__isnull=True)
+                .exclude(sku="")
+                .values("sku")
+                .annotate(total_rev=Sum("revenue"))
+                .order_by("-total_rev")[:report_limit]
+            )
+        return []
+
+    def fetch_fk_totals():
+        if show_flipkart:
+            fk_qs = qs.filter(platform="Flipkart")
+            fk_qs = _list_or_scalar_filter(fk_qs, "fsn", fsn_filter)
+            return list(
+                fk_qs.exclude(sku__isnull=True)
+                .exclude(sku="")
+                .values("sku")
+                .annotate(total_rev=Sum("revenue"))
+                .order_by("-total_rev")[:report_limit]
+            )
+        return []
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        future_az_totals = executor.submit(fetch_az_totals)
+        future_fk_totals = executor.submit(fetch_fk_totals)
+        az_totals = future_az_totals.result()
+        fk_totals = future_fk_totals.result()
+
+    for t in az_totals:
+        combined_totals.append({"sku": t["sku"], "rev": t["total_rev"] or 0, "plat": "Amazon"})
+    for t in fk_totals:
+        combined_totals.append({"sku": t["sku"], "rev": t["total_rev"] or 0, "plat": "Flipkart"})
+
+    combined_totals.sort(key=lambda x: x["rev"], reverse=True)
+    combined_totals = combined_totals[:report_limit]
+
+    top_az_skus = [x["sku"] for x in combined_totals if x["plat"] == "Amazon"]
+    top_fk_skus = [x["sku"] for x in combined_totals if x["plat"] == "Flipkart"]
+
+    def fetch_az_rows_and_skus():
+        if not top_az_skus:
+            return [], {}
         az_qs = qs.filter(platform="Amazon")
         az_qs = _list_or_scalar_filter(az_qs, "asin", asin_filter)
-        asin_rows = list(
-            az_qs.exclude(sku__isnull=True)
-            .exclude(sku="")
-            .values("sku")
+        rows = list(
+            az_qs.filter(sku__in=top_az_skus)
+            .values("sku", "date")
             .annotate(
                 pageviews=Sum("page_views"),
                 units=Sum("units_sold"),
                 revenue=Sum("revenue"),
                 ad_spend=Sum("ad_spend"),
             )
-            .order_by("-revenue", "-units", "-pageviews", "sku")[:report_limit]
+            .order_by("-date", "-revenue", "-units", "-pageviews", "sku")
         )
+        skus = {
+            r["asin"]: r["msku"] or ""
+            for r in CategoryMapping.objects.filter(
+                user=data_owner,
+                asin__in=[r.get("sku") for r in rows if r.get("sku")],
+            ).values("asin", "msku")
+        }
+        return rows, skus
 
-    if show_flipkart:
+    def fetch_fk_rows_and_skus():
+        if not top_fk_skus:
+            return [], {}
         fk_qs = qs.filter(platform="Flipkart")
         fk_qs = _list_or_scalar_filter(fk_qs, "fsn", fsn_filter)
-        fsn_rows = list(
-            fk_qs.exclude(sku__isnull=True)
-            .exclude(sku="")
-            .values("sku")
+        rows = list(
+            fk_qs.filter(sku__in=top_fk_skus)
+            .values("sku", "date")
             .annotate(
                 pageviews=Sum("page_views"),
                 units=Sum("units_sold"),
                 revenue=Sum("revenue"),
                 ad_spend=Sum("ad_spend"),
             )
-            .order_by("-revenue", "-units", "-pageviews", "sku")[:report_limit]
+            .order_by("-date", "-revenue", "-units", "-pageviews", "sku")
         )
+        skus = {
+            r["fsn"]: r["sku"] or ""
+            for r in FlipkartCategoryMap.objects.filter(
+                user=data_owner,
+                fsn__in=[r.get("sku") for r in rows if r.get("sku")],
+            ).values("fsn", "sku")
+        }
+        return rows, skus
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        future_az_rows = executor.submit(fetch_az_rows_and_skus)
+        future_fk_rows = executor.submit(fetch_fk_rows_and_skus)
+        asin_rows, asin_skus = future_az_rows.result()
+        fsn_rows, fsn_skus = future_fk_rows.result()
 
     if not asin_rows and not fsn_rows:
         return None
 
-    asin_skus = {
-        row["asin"]: row["msku"] or ""
-        for row in CategoryMapping.objects.filter(
-            user=data_owner,
-            asin__in=[row.get("sku") for row in asin_rows if row.get("sku")],
-        ).values("asin", "msku")
-    }
-    fsn_skus = {
-        row["fsn"]: row["sku"] or ""
-        for row in FlipkartCategoryMap.objects.filter(
-            user=data_owner,
-            fsn__in=[row.get("sku") for row in fsn_rows if row.get("sku")],
-        ).values("fsn", "sku")
-    }
-
     rows = [
         {
+            "date": row.get("date"),
             "product_id": row.get("sku") or "",
             "sku": asin_skus.get(row.get("sku"), ""),
             "platform": "Amazon",
@@ -550,6 +531,7 @@ def _get_asin_fsn_report_product_daily_rows(data_owner, filters, report_date_ran
     ]
     rows.extend(
         {
+            "date": row.get("date"),
             "product_id": row.get("sku") or "",
             "sku": fsn_skus.get(row.get("sku"), ""),
             "platform": "Flipkart",
@@ -562,64 +544,90 @@ def _get_asin_fsn_report_product_daily_rows(data_owner, filters, report_date_ran
     )
     rows.sort(
         key=lambda row: (
+            row.get("date") or datetime.date.min,
             float(row.get("revenue") or 0),
             int(row.get("units") or 0),
             int(row.get("pageviews") or 0),
         ),
         reverse=True,
     )
-    return rows[:report_limit]
+    return rows
 
 
-def _get_asin_fsn_report_rows(data_owner, filters, report_date_range, report_limit):
+def _get_asin_fsn_report_rows(data_owner, filters, report_date_range, report_limit, report_start_date=None, report_end_date=None):
     report_limit = _parse_positive_int(
         report_limit, default=10, minimum=1, maximum=100
     )
-    monthly_rows = _get_asin_fsn_report_monthly_rows(
-        data_owner, filters, report_date_range, report_limit
-    )
-    if monthly_rows is not None:
-        return monthly_rows
     product_daily_rows = _get_asin_fsn_report_product_daily_rows(
-        data_owner, filters, report_date_range, report_limit
+        data_owner, filters, report_date_range, report_limit, report_start_date, report_end_date
     )
     if product_daily_rows is not None:
         return product_daily_rows
 
     qs, fk_qs = _get_filtered_processed_querysets(data_owner, filters)
-    qs = _apply_asin_fsn_report_date_range(qs, report_date_range)
-    fk_qs = _apply_asin_fsn_report_date_range(fk_qs, report_date_range)
+    qs = _apply_asin_fsn_report_date_range(qs, report_date_range, report_start_date, report_end_date)
+    fk_qs = _apply_asin_fsn_report_date_range(fk_qs, report_date_range, report_start_date, report_end_date)
 
     asin_rows = []
     fsn_rows = []
     platform = filters.get("platform") or "All"
+    show_amazon = platform != "Flipkart"
+    show_flipkart = platform != "Amazon"
 
-    if platform != "Flipkart":
-        asin_rows = list(
+    combined_totals = []
+
+    if show_amazon:
+        az_totals = list(
             qs.exclude(asin__isnull=True)
             .exclude(asin="")
             .values("asin")
-            .annotate(
-                pageviews=Sum("pageviews"),
-                units=Sum("units"),
-                revenue=Sum("revenue"),
-                ad_spend=Sum("total_spend"),
-            )
-            .order_by("-revenue", "-units", "-pageviews", "asin")[:report_limit]
+            .annotate(total_rev=Sum("revenue"))
+            .order_by("-total_rev")[:report_limit]
         )
+        for t in az_totals:
+            combined_totals.append({"sku": t["asin"], "rev": t["total_rev"] or 0, "plat": "Amazon"})
 
-    if platform != "Amazon":
-        fsn_rows = list(
+    if show_flipkart:
+        fk_totals = list(
             fk_qs.exclude(fsn__isnull=True)
             .exclude(fsn="")
             .values("fsn")
+            .annotate(total_rev=Sum("revenue"))
+            .order_by("-total_rev")[:report_limit]
+        )
+        for t in fk_totals:
+            combined_totals.append({"sku": t["fsn"], "rev": t["total_rev"] or 0, "plat": "Flipkart"})
+
+    combined_totals.sort(key=lambda x: x["rev"], reverse=True)
+    combined_totals = combined_totals[:report_limit]
+
+    top_az_skus = [x["sku"] for x in combined_totals if x["plat"] == "Amazon"]
+    top_fk_skus = [x["sku"] for x in combined_totals if x["plat"] == "Flipkart"]
+
+    if top_az_skus:
+        asin_rows = list(
+            qs.filter(asin__in=top_az_skus)
+            .values("asin", "date")
             .annotate(
                 pageviews=Sum("pageviews"),
                 units=Sum("units"),
                 revenue=Sum("revenue"),
                 ad_spend=Sum("total_spend"),
             )
-            .order_by("-revenue", "-units", "-pageviews", "fsn")[:report_limit]
+            .order_by("-date", "-revenue", "-units", "-pageviews", "asin")
+        )
+
+    if top_fk_skus:
+        fsn_rows = list(
+            fk_qs.filter(fsn__in=top_fk_skus)
+            .values("fsn", "date")
+            .annotate(
+                pageviews=Sum("pageviews"),
+                units=Sum("units"),
+                revenue=Sum("revenue"),
+                ad_spend=Sum("total_spend"),
+            )
+            .order_by("-date", "-revenue", "-units", "-pageviews", "fsn")
         )
 
     asin_skus = {
@@ -639,6 +647,7 @@ def _get_asin_fsn_report_rows(data_owner, filters, report_date_range, report_lim
 
     rows = [
         {
+            "date": row.get("date"),
             "product_id": row.get("asin") or "",
             "sku": asin_skus.get(row.get("asin"), ""),
             "platform": "Amazon",
@@ -651,6 +660,7 @@ def _get_asin_fsn_report_rows(data_owner, filters, report_date_range, report_lim
     ]
     rows.extend(
         {
+            "date": row.get("date"),
             "product_id": row.get("fsn") or "",
             "sku": fsn_skus.get(row.get("fsn"), ""),
             "platform": "Flipkart",
@@ -663,13 +673,14 @@ def _get_asin_fsn_report_rows(data_owner, filters, report_date_range, report_lim
     )
     rows.sort(
         key=lambda row: (
+            row.get("date") or datetime.date.min,
             float(row.get("revenue") or 0),
             int(row.get("units") or 0),
             int(row.get("pageviews") or 0),
         ),
         reverse=True,
     )
-    return rows[:report_limit]
+    return rows
 
 
 def _get_light_filter_metadata(data_owner_id, data_version):
@@ -920,7 +931,7 @@ def _get_npd_modal_rows(data_owner, filters):
     qs, fk_qs = _get_filtered_processed_querysets(data_owner, filters)
     qs_f = apply_global_filters_orm(qs, filters)
     fk_qs_f = apply_global_filters_orm(fk_qs, filters)
-    return (build_npd_performance(data_owner, filters, qs_f, fk_qs_f).get("rows") or [])
+    return (build_npd_performance(data_owner, filters, qs_f, fk_qs_f, include_trend=False).get("rows") or [])
 
 
 def _inventory_summary_row_dict(row, msku_map=None):
@@ -1276,31 +1287,33 @@ def get_dashboard_context(
     uploaded_dates = cache.get(uploaded_dates_key)
     pending_dates = cache.get(pending_dates_key)
     if uploaded_dates is None or pending_dates is None:
-        az_dates = set(
-            DashboardDailySummary.objects
-            .filter(user_id=data_owner.id, platform="Amazon")
-            .dates("date", "day")
-        )
-        fk_dates = set(
-            DashboardDailySummary.objects
-            .filter(user_id=data_owner.id, platform="Flipkart")
-            .dates("date", "day")
-        )
-        all_processed_dates = az_dates | fk_dates
+        from concurrent.futures import ThreadPoolExecutor
 
-        # Dates that have raw uploads but no processed output yet — shown with orange/pending dot
-        raw_fk_dates = set(
-            FlipkartSearchTraffic.objects
-            .filter(user_id=data_owner.id)
-            .dates("date", "day")
-        )
-        raw_az_dates = set(
-            SalesData.objects
-            .filter(user_id=data_owner.id)
-            .dates("date", "day")
-        )
+        def fetch_az_dates():
+            return set(DashboardDailySummary.objects.filter(user_id=data_owner.id, platform="Amazon").dates("date", "day"))
+
+        def fetch_fk_dates():
+            return set(DashboardDailySummary.objects.filter(user_id=data_owner.id, platform="Flipkart").dates("date", "day"))
+
+        def fetch_raw_fk_dates():
+            return set(FlipkartSearchTraffic.objects.filter(user_id=data_owner.id).dates("date", "day"))
+
+        def fetch_raw_az_dates():
+            return set(SalesData.objects.filter(user_id=data_owner.id).dates("date", "day"))
+
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            f_az = executor.submit(fetch_az_dates)
+            f_fk = executor.submit(fetch_fk_dates)
+            f_raw_fk = executor.submit(fetch_raw_fk_dates)
+            f_raw_az = executor.submit(fetch_raw_az_dates)
+
+            az_dates = f_az.result()
+            fk_dates = f_fk.result()
+            raw_fk_dates = f_raw_fk.result()
+            raw_az_dates = f_raw_az.result()
+
+        all_processed_dates = az_dates | fk_dates
         all_raw_dates = raw_fk_dates | raw_az_dates
-        # Pending = raw exists but NO processed data for that date
         pending_only_dates = all_raw_dates - all_processed_dates
 
         # Blue tick dates = processed data ready (union of all sources for selectability)
@@ -1385,13 +1398,16 @@ def get_dashboard_context(
         or filters.get("launch_start_date")
         or filters.get("launch_end_date")
     ):
-        spend_qs = spend_qs.filter(asin__in=qs.values("asin").distinct())
+        from apps.dashboard.services.filters import get_filtered_mapping_querysets
+        az_map_qs, _ = get_filtered_mapping_querysets(filters, user=data_owner)
+        spend_qs = spend_qs.filter(asin__in=az_map_qs.values("asin"))
 
     from apps.dashboard.services.analytics_services_orm_pipeline import run_orm_computation
 
     # Normalize filters once; reuse in memory cache + materialized summary table.
     view_type = cache_view_type or request.resolver_match.url_name or "shared"
-
+    if view_type in ["business-dashboard", "category-dashboard", "ceo-dashboard"]:
+        view_type = "ceo-dashboard"
     cache_mode = "full" if include_full_payload else "lite"
     cache_key = (
         f"dashboard_payload_v{DASHBOARD_PAYLOAD_CACHE_VERSION}_"
@@ -1426,15 +1442,13 @@ def get_dashboard_context(
             )
         else:
             compute_lock_key = f"{cache_key}:lock"
-        have_lock = cache.add(compute_lock_key, "1", timeout=120)
+        have_lock = cache.add(compute_lock_key, "1", timeout=300)
         if not have_lock:
             # Another section is computing the same dataset; wait and reuse.
             # With monthly summary the typical computation is 1–3 s, so reduce
             # wait_sleep to 0.5 s and check materialized summary every 4 iterations
-            # instead of every iteration (reduces repeated DB hits from ~30 to ~8).
-            wait_iters, wait_sleep = (24, 0.5) if is_shared_full_lock else (8, 0.15)
-            for _wi, _ in enumerate(range(wait_iters)):
-                time.sleep(wait_sleep)
+            for _wi in range(400):
+                time.sleep(0.5)
                 payload = cache.get(cache_key)
                 if payload:
                     break
@@ -1621,12 +1635,14 @@ def dashboard_section_view(request, view_name, section):
     if not template_name:
         return JsonResponse({"error": "Invalid section."}, status=404)
 
+    compute_scope = (request.GET.get("scope") or "full").strip().lower()
+
     ctx = get_dashboard_context(
         request,
         include_payload=True,
         cache_view_type=f"{view_name}-dashboard",
         section_scope=section,
-        compute_scope="kpis" if section == "overview" and view_name != "ceo" else "full",
+        compute_scope=compute_scope,
     )
     if ctx is None:
         return JsonResponse({"error": "Not authenticated"}, status=401)
@@ -1659,7 +1675,7 @@ def dashboard_modal_rows_view(request, view_name, modal_key):
     dt_draw = request.GET.get("draw")
     if dt_draw:
         query = (request.GET.get("search[value]") or "").strip().lower()
-        dt_start = _parse_positive_int(request.GET.get("start"), default=0, minimum=0)
+        dt_start = _parse_positive_int(request.GET.get("start"), default=0, minimum=0, maximum=10_000_000)
         dt_length = _parse_positive_int(request.GET.get("length"), default=25, minimum=10, maximum=200)
         page_size = dt_length
         page = (dt_start // page_size) + 1
@@ -2035,22 +2051,27 @@ def dashboard_product_card_rows_view(request, view_name, card_key):
     if cached_html:
         return HttpResponse(cached_html)
 
-    ctx = get_dashboard_context(
-        request,
-        include_payload=True,
-        cache_view_type=f"{view_name}-dashboard",
-        section_scope="analytics",
-        compute_scope="full",
-    )
-    if ctx is None:
-        return JsonResponse({"error": "Not authenticated"}, status=401)
+    if card_key == "top-products":
+        rows = _get_top_product_modal_rows(data_owner, filters)
+    elif card_key == "declining-products":
+        rows = _get_declining_product_modal_rows(data_owner, filters)
+    elif card_key == "npd-performance":
+        rows = _get_npd_modal_rows(data_owner, filters)
+    else:
+        rows = []
 
-    rows = _resolve_payload_key((ctx.get("payload") or {}), payload_key)
     if not isinstance(rows, list):
         rows = []
-    rows = rows[:10]
+        
+    limit_str = request.GET.get('limit')
+    limit = 10
+    if limit_str and limit_str.isdigit():
+        limit = int(limit_str)
+    
+    rows = rows[:limit]
 
-    html = render_to_string(template_name, {"rows": rows}, request=request)
+    platform = filters.get("platform") or "All"
+    html = render_to_string(template_name, {"rows": rows, "platform": platform}, request=request)
     cache.set(cache_key, html, timeout=300)
     return HttpResponse(html)
 
@@ -2082,8 +2103,8 @@ def dashboard_category_performance_rows_view(request, view_name):
         request,
         include_payload=True,
         cache_view_type=f"{view_name}-dashboard",
-        section_scope="analytics",
-        compute_scope="full",
+        section_scope="details",
+        compute_scope="analytics",
     )
     if ctx is None:
         return JsonResponse({"error": "Not authenticated"}, status=401)
@@ -2164,6 +2185,8 @@ def dashboard_asin_fsn_report_rows_view(request):
         request.GET.get("report_limit"), default=10, minimum=1, maximum=100
     )
     report_date_range = (request.GET.get("report_date_range") or "all").strip().lower()
+    report_start_date = request.GET.get("report_start_date") or ""
+    report_end_date = request.GET.get("report_end_date") or ""
     export_format = (request.GET.get("export") or "").strip().lower()
     load_all = request.GET.get("all") == "1"
     filters = _strip_non_dashboard_filters(build_filters_from_querydict(request.GET))
@@ -2171,8 +2194,8 @@ def dashboard_asin_fsn_report_rows_view(request):
     data_version = cache.get(f"dashboard_data_version_{data_owner.id}", 0)
     filter_hash = hashlib.md5(cache_filter_string(filters).encode("utf-8")).hexdigest()
     report_cache_key = (
-        "dashboard_asin_fsn_report_rows_v2_"
-        f"{data_owner.id}_{data_version}_{filter_hash}_{report_date_range}"
+        "dashboard_asin_fsn_report_rows_v4_"
+        f"{data_owner.id}_{data_version}_{filter_hash}_{report_date_range}_{report_start_date}_{report_end_date}_{report_limit}"
     )
     report_cache_ttl = int(
         getattr(settings, "DASHBOARD_MODAL_ROWS_CACHE_TTL_SECONDS", 180)
@@ -2183,10 +2206,12 @@ def dashboard_asin_fsn_report_rows_view(request):
             data_owner=data_owner,
             filters=filters,
             report_date_range=report_date_range,
-            report_limit=100,
+            report_limit=report_limit,
+            report_start_date=report_start_date,
+            report_end_date=report_end_date,
         )
         cache.set(report_cache_key, cached_rows or [], timeout=report_cache_ttl)
-    rows = (cached_rows or [])[:report_limit]
+    rows = cached_rows or []
 
     if export_format in {"csv", "excel", "xlsx"}:
         headers, table_rows = _asin_fsn_report_export_table(rows)
@@ -2344,31 +2369,21 @@ def _search_paginated_single_source(base_qs, field_name, q, offset, page_size):
     values_qs = _distinct_option_values_qs(base_qs, field_name)
     if not q:
         ordered = values_qs.order_by("option_value")
-        total = ordered.count()
-        rows = list(ordered[offset : offset + page_size])
-        return total, [str(r["option_value"]).strip() for r in rows if r["option_value"]]
-
-    starts_qs = values_qs.filter(**{f"{field_name}__istartswith": q}).order_by(
-        "option_value"
-    )
-    contains_qs = (
-        values_qs.filter(**{f"{field_name}__icontains": q})
-        .exclude(**{f"{field_name}__istartswith": q})
-        .order_by("option_value")
-    )
-    starts_total = starts_qs.count()
-    contains_total = contains_qs.count()
-    total = starts_total + contains_total
-
-    if offset < starts_total:
-        rows = list(starts_qs[offset : offset + page_size])
-        remaining = page_size - len(rows)
-        if remaining > 0:
-            rows.extend(list(contains_qs[:remaining]))
     else:
-        contains_offset = offset - starts_total
-        rows = list(contains_qs[contains_offset : contains_offset + page_size])
+        ordered = values_qs.filter(
+            option_value__icontains=q
+        ).annotate(
+            starts_with_q=Case(
+                When(option_value__istartswith=q, then=Value(0)),
+                default=Value(1),
+                output_field=IntegerField()
+            )
+        ).order_by("starts_with_q", "option_value")
 
+    rows = list(ordered[offset : offset + page_size + 1])
+    has_next = len(rows) > page_size
+    rows = rows[:page_size]
+    total = offset + page_size + (1 if has_next else 0)
     return total, [str(r["option_value"]).strip() for r in rows if r["option_value"]]
 
 
@@ -2377,37 +2392,30 @@ def _search_paginated_dual_source(az_qs, fk_qs, field_name, q, offset, page_size
     fk_field = fk_field or field_name
     az_values = _distinct_option_values_qs(az_qs, az_field)
     fk_values = _distinct_option_values_qs(fk_qs, fk_field)
+    
     if not q:
         merged_qs = az_values.union(fk_values).order_by("option_value")
-        total = merged_qs.count()
-        rows = list(merged_qs[offset : offset + page_size])
-        return total, [str(r["option_value"]).strip() for r in rows if r["option_value"]]
-
-    az_starts = az_values.filter(**{f"{az_field}__istartswith": q})
-    fk_starts = fk_values.filter(**{f"{fk_field}__istartswith": q})
-    starts_qs = az_starts.union(fk_starts).order_by("option_value")
-
-    az_contains = az_values.filter(**{f"{az_field}__icontains": q}).exclude(
-        **{f"{az_field}__istartswith": q}
-    )
-    fk_contains = fk_values.filter(**{f"{fk_field}__icontains": q}).exclude(
-        **{f"{fk_field}__istartswith": q}
-    )
-    contains_qs = az_contains.union(fk_contains).order_by("option_value")
-
-    starts_total = starts_qs.count()
-    contains_total = contains_qs.count()
-    total = starts_total + contains_total
-
-    if offset < starts_total:
-        rows = list(starts_qs[offset : offset + page_size])
-        remaining = page_size - len(rows)
-        if remaining > 0:
-            rows.extend(list(contains_qs[:remaining]))
     else:
-        contains_offset = offset - starts_total
-        rows = list(contains_qs[contains_offset : contains_offset + page_size])
+        az_q = az_values.filter(option_value__icontains=q).annotate(
+            starts_with_q=Case(
+                When(option_value__istartswith=q, then=Value(0)),
+                default=Value(1),
+                output_field=IntegerField()
+            )
+        )
+        fk_q = fk_values.filter(option_value__icontains=q).annotate(
+            starts_with_q=Case(
+                When(option_value__istartswith=q, then=Value(0)),
+                default=Value(1),
+                output_field=IntegerField()
+            )
+        )
+        merged_qs = az_q.union(fk_q).order_by("starts_with_q", "option_value")
 
+    rows = list(merged_qs[offset : offset + page_size + 1])
+    has_next = len(rows) > page_size
+    rows = rows[:page_size]
+    total = offset + page_size + (1 if has_next else 0)
     return total, [str(r["option_value"]).strip() for r in rows if r["option_value"]]
 
 
@@ -2461,38 +2469,31 @@ def filter_dropdown_options(request):
     if cached_payload:
         return JsonResponse(cached_payload)
 
-    qs = ProcessedDashboardData.objects.filter(user=data_owner)
-    fk_qs = FlipkartProcessedDashboardData.objects.filter(user=data_owner)
-    qs, fk_qs = apply_dashboard_entity_filters(qs, fk_qs, filters, user=data_owner)
+    from apps.dashboard.services.filters import get_filtered_mapping_querysets
+    az_map_qs, fk_map_qs = get_filtered_mapping_querysets(filters, user=data_owner)
 
     results = []
     total = 0
 
     if field == "asin":
-        asin_qs = qs.exclude(asin__isnull=True).exclude(asin="")
+        asin_qs = az_map_qs.exclude(asin__isnull=True).exclude(asin="")
         total, results = _search_paginated_single_source(
             asin_qs, "asin", q, offset, page_size
         )
     elif field == "fsn":
-        fsn_qs = fk_qs.exclude(fsn__isnull=True).exclude(fsn="")
+        fsn_qs = fk_map_qs.exclude(fsn__isnull=True).exclude(fsn="")
         total, results = _search_paginated_single_source(
             fsn_qs, "fsn", q, offset, page_size
         )
     elif field == "parent_asin":
-        az_map_qs = CategoryMapping.objects.filter(
-            user=data_owner,
-            asin__in=qs.values("asin"),
-        )
-        linked_fk_asins = FlipkartCategoryMap.objects.filter(
-            user=data_owner,
-            fsn__in=fk_qs.values("fsn"),
-        ).exclude(asin__isnull=True).exclude(asin="").values("asin")
+        az_parent_qs = az_map_qs.exclude(parent_asin__isnull=True).exclude(parent_asin="")
+        linked_fk_asins = fk_map_qs.exclude(asin__isnull=True).exclude(asin="").values("asin")
         fk_parent_qs = CategoryMapping.objects.filter(
             user=data_owner,
             asin__in=linked_fk_asins,
-        )
+        ).exclude(parent_asin__isnull=True).exclude(parent_asin="")
         total, results = _search_paginated_dual_source(
-            az_map_qs,
+            az_parent_qs,
             fk_parent_qs,
             "parent_asin",
             q,
@@ -2500,17 +2501,11 @@ def filter_dropdown_options(request):
             page_size,
         )
     elif field == "sku":
-        az_map_qs = CategoryMapping.objects.filter(
-            user=data_owner,
-            asin__in=qs.values("asin"),
-        ).exclude(msku__isnull=True).exclude(msku="")
-        fk_map_qs = FlipkartCategoryMap.objects.filter(
-            user=data_owner,
-            fsn__in=fk_qs.values("fsn"),
-        ).exclude(sku__isnull=True).exclude(sku="")
+        az_sku_qs = az_map_qs.exclude(msku__isnull=True).exclude(msku="")
+        fk_sku_qs = fk_map_qs.exclude(sku__isnull=True).exclude(sku="")
         total, results = _search_paginated_dual_source(
-            az_map_qs,
-            fk_map_qs,
+            az_sku_qs,
+            fk_sku_qs,
             "sku",
             q,
             offset,
@@ -2531,18 +2526,15 @@ def filter_dropdown_options(request):
         "size",
         "brand_name",
         "finish",
+        "category",
+        "portfolio",
+        "subcategory",
     }:
-        az_map_qs = CategoryMapping.objects.filter(
-            user=data_owner,
-            asin__in=qs.values("asin"),
-        ).exclude(**{f"{field}__isnull": True}).exclude(**{field: ""}).exclude(**{field: "0"})
-        fk_map_qs = FlipkartCategoryMap.objects.filter(
-            user=data_owner,
-            fsn__in=fk_qs.values("fsn"),
-        ).exclude(**{f"{field}__isnull": True}).exclude(**{field: ""}).exclude(**{field: "0"})
+        az_field_qs = az_map_qs.exclude(**{f"{field}__isnull": True}).exclude(**{field: ""}).exclude(**{field: "0"})
+        fk_field_qs = fk_map_qs.exclude(**{f"{field}__isnull": True}).exclude(**{field: ""}).exclude(**{field: "0"})
         total, results = _search_paginated_dual_source(
-            az_map_qs,
-            fk_map_qs,
+            az_field_qs,
+            fk_field_qs,
             field,
             q,
             offset,
@@ -2556,10 +2548,10 @@ def filter_dropdown_options(request):
         fk_statuses = []
         if max_date:
             az_statuses = DashboardInventoryHealthSummary.objects.filter(
-                user=data_owner, date=max_date, asin__in=qs.values("asin")
+                user=data_owner, date=max_date, asin__in=az_map_qs.values("asin")
             ).exclude(status="").values_list("status", flat=True).distinct()
             fk_statuses = DashboardInventoryHealthSummary.objects.filter(
-                user=data_owner, date=max_date, fsn__in=fk_qs.values("fsn")
+                user=data_owner, date=max_date, fsn__in=fk_map_qs.values("fsn")
             ).exclude(fk_status="").values_list("fk_status", flat=True).distinct()
         all_statuses = sorted(list(set(az_statuses) | set(fk_statuses)))
         if q:
@@ -2567,13 +2559,7 @@ def filter_dropdown_options(request):
         total = len(all_statuses)
         results = all_statuses[offset : offset + page_size]
     else:
-        az_qs = qs.exclude(**{f"{field}__isnull": True}).exclude(**{f"{field}": ""})
-        fk_field_qs = fk_qs.exclude(**{f"{field}__isnull": True}).exclude(
-            **{f"{field}": ""}
-        )
-        total, results = _search_paginated_dual_source(
-            az_qs, fk_field_qs, field, q, offset, page_size
-        )
+        total, results = 0, []
     payload = {
         "field": field,
         "results": [{"value": value, "label": value} for value in results],

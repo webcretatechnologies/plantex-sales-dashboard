@@ -12,6 +12,7 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 
 from pathlib import Path
 import os
+from celery.schedules import crontab
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -30,14 +31,26 @@ def env_bool(name, default=False):
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def env_int(name, default):
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = env_bool("DEBUG", True)
 
-ALLOWED_HOSTS = ['209.182.233.109','admin.plantex.work','127.0.0.1']
+ALLOWED_HOSTS = ['209.182.233.109','admin.plantex.work','desk.sapiosol.com','127.0.0.1']
 
 CSRF_TRUSTED_ORIGINS = [
     'https://admin.plantex.work',
     'http://admin.plantex.work',
+    'https://desk.sapiosol.com',
+    'http://desk.sapiosol.com',
     'https://209.182.233.109',
     'http://209.182.233.109',
     'http://127.0.0.1',
@@ -73,6 +86,7 @@ MIDDLEWARE = [
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
+    "apps.dashboard.middleware.DashboardQueryProfilingMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
@@ -111,6 +125,10 @@ CHANNEL_LAYERS = {
         "BACKEND": "channels_redis.core.RedisChannelLayer",
         "CONFIG": {
             "hosts": [("127.0.0.1", 6379)],
+            # Reduce stale websocket queue buildup and absorb short message bursts.
+            "capacity": 800,
+            "expiry": 15,
+            "group_expiry": 300,
         },
     },
 }
@@ -128,6 +146,24 @@ CELERY_TIMEZONE = 'Asia/Kolkata'
 CELERY_TASK_TRACK_STARTED = True
 # Expire task results after 1 hour to avoid Redis bloat
 CELERY_TASK_RESULT_EXPIRES = 3600
+CELERY_BEAT_SCHEDULE = {
+    "dashboard-materialized-summary-cleanup-nightly": {
+        "task": "apps.dashboard.tasks.cleanup_dashboard_materialized_summaries_task",
+        "schedule": crontab(minute=25, hour=3),
+    },
+    "dashboard-daily-summary-refresh-nightly": {
+        "task": "apps.dashboard.tasks.refresh_all_dashboard_daily_summaries_task",
+        "schedule": crontab(minute=45, hour=3),
+    },
+    "dashboard-product-daily-summary-refresh-nightly": {
+        "task": "apps.dashboard.tasks.refresh_all_dashboard_product_daily_summaries_task",
+        "schedule": crontab(minute=55, hour=3),
+    },
+    "dashboard-inventory-summary-refresh-nightly": {
+        "task": "apps.dashboard.tasks.refresh_all_dashboard_inventory_summaries_task",
+        "schedule": crontab(minute=10, hour=4),
+    },
+}
 
 # ─── Shared Redis Cache ───────────────────────────────────────────────────────
 # IMPORTANT: Must use Redis (not the default LocMemCache) so that cache writes
@@ -162,14 +198,18 @@ CACHES = {
 # }
 
 DATABASES = {
-   "default": {
-       "ENGINE": "django.db.backends.mysql",
-       "NAME": "pltx_dashboard",
-       "USER": "root",
-       "PASSWORD": "",
-       "HOST": "localhost",
-       "PORT": "3306",
-   }
+    "default": {
+        "ENGINE": "django.db.backends.mysql",
+        "NAME": "pltx_dashboard",
+        "USER": "root",
+        "PASSWORD": "",
+        "HOST": "127.0.0.1",
+        "PORT": "3306",
+        "CONN_MAX_AGE": 300,
+        "OPTIONS": {
+            "local_infile": 1,
+        },
+    }
 }
 
 # Password validation
@@ -220,7 +260,51 @@ LOGIN_URL = "/accounts/login/"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-# File upload limits — reports can be large
-DATA_UPLOAD_MAX_MEMORY_SIZE = 629145600   # 200 MB
-FILE_UPLOAD_MAX_MEMORY_SIZE = 629145600   # 200 MB
+# File upload limits — keep request body generous, but force temp-file handling
+# for large uploads to avoid expensive in-memory buffering/copies.
+DATA_UPLOAD_MAX_MEMORY_SIZE = max(env_int("DATA_UPLOAD_MAX_MEMORY_SIZE", 629145600), 10485760)
+FILE_UPLOAD_MAX_MEMORY_SIZE = max(env_int("FILE_UPLOAD_MAX_MEMORY_SIZE", 8388608), 1048576)
 DATA_UPLOAD_MAX_NUMBER_FILES = 20
+
+# Frontend polling timeout for upload Celery tasks (seconds).
+# Large historical refreshes can legitimately take longer than a few minutes.
+UPLOAD_TASK_TIMEOUT_SECONDS = max(env_int("UPLOAD_TASK_TIMEOUT_SECONDS", 1800), 60)
+# Keep source files in uploads/ after processing (set False to auto-delete).
+UPLOAD_KEEP_FILES = env_bool("UPLOAD_KEEP_FILES", True)
+
+# Dashboard materialized summary retention + warmup.
+DASHBOARD_SUMMARY_RETENTION_DAYS = max(
+    env_int("DASHBOARD_SUMMARY_RETENTION_DAYS", 14), 1
+)
+DASHBOARD_SUMMARY_MAX_ROWS_PER_VIEW = max(
+    env_int("DASHBOARD_SUMMARY_MAX_ROWS_PER_VIEW", 800), 50
+)
+DASHBOARD_WARMUP_ENABLED = env_bool("DASHBOARD_WARMUP_ENABLED", True)
+DASHBOARD_WARMUP_MAX_FILTER_SETS = max(
+    env_int("DASHBOARD_WARMUP_MAX_FILTER_SETS", 7), 1
+)
+DASHBOARD_DAILY_SUMMARY_ENABLED = env_bool("DASHBOARD_DAILY_SUMMARY_ENABLED", True)
+DASHBOARD_PRODUCT_DAILY_SUMMARY_ENABLED = env_bool(
+    "DASHBOARD_PRODUCT_DAILY_SUMMARY_ENABLED", True
+)
+DASHBOARD_INVENTORY_SUMMARY_ENABLED = env_bool("DASHBOARD_INVENTORY_SUMMARY_ENABLED", True)
+DASHBOARD_MODAL_ROWS_CACHE_TTL_SECONDS = max(
+    env_int("DASHBOARD_MODAL_ROWS_CACHE_TTL_SECONDS", 604800), 60
+)
+
+# Slow-query / endpoint profiling for dashboard pages.
+DASHBOARD_QUERY_PROFILING_ENABLED = env_bool("DASHBOARD_QUERY_PROFILING_ENABLED", True)
+DASHBOARD_SLOW_QUERY_MS = max(env_int("DASHBOARD_SLOW_QUERY_MS", 200), 50)
+DASHBOARD_SLOW_ENDPOINT_MS = max(env_int("DASHBOARD_SLOW_ENDPOINT_MS", 800), 100)
+DASHBOARD_TOP_EXPENSIVE_QUERIES = max(env_int("DASHBOARD_TOP_EXPENSIVE_QUERIES", 5), 1)
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'loggers': {
+        'daphne.server': {
+            'level': 'ERROR',
+            'propagate': True,
+        },
+    },
+}

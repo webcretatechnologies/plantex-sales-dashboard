@@ -1,23 +1,39 @@
 {% include section_template %}
 <script>
-    window.DASHBOARD_PAYLOAD = {{ payload_json|safe|default:"null" }};
-    document.body.dispatchEvent(new CustomEvent('dashboardPayloadReady'));
-    document.body.dispatchEvent(new CustomEvent('dashboardSectionLoaded', {
-        detail: {
-            viewType: '{{ dashboard_section_view_type }}',
-            section: '{{ dashboard_section_name }}'
+    (function () {
+        var incoming = {{ payload_json|safe|default:"null" }};
+        if (incoming) {
+            var existing = window.DASHBOARD_PAYLOAD || {};
+            {% if dashboard_section_name == 'details' %}
+            // The details section does not compute charts — preserve existing chart data
+            // from the visuals section payload so charts don't flash and disappear.
+            var mergedPayload = Object.assign({}, existing, incoming);
+            if (existing.charts && (!incoming.charts || Object.keys(incoming.charts).length === 0)) {
+                mergedPayload.charts = existing.charts;
+            }
+            window.DASHBOARD_PAYLOAD = mergedPayload;
+            {% else %}
+            window.DASHBOARD_PAYLOAD = Object.assign({}, existing, incoming);
+            {% endif %}
         }
-    }));
-    {% if dashboard_section_name == 'overview' %}
-    document.body.dispatchEvent(new CustomEvent('dashboardOverviewLoaded', {
-        detail: { viewType: '{{ dashboard_section_view_type }}' }
-    }));
-    {% elif dashboard_section_name == 'visuals' %}
-    document.body.dispatchEvent(new CustomEvent('dashboardVisualsLoaded', {
-        detail: { viewType: '{{ dashboard_section_view_type }}' }
-    }));
-    {% endif %}
-    document.dispatchEvent(new CustomEvent('dashboardContentLoaded', {
-        detail: { viewType: '{{ dashboard_section_view_type }}' }
-    }));
+        document.body.dispatchEvent(new CustomEvent('dashboardPayloadReady'));
+        document.body.dispatchEvent(new CustomEvent('dashboardSectionLoaded', {
+            detail: {
+                viewType: '{{ dashboard_section_view_type }}',
+                section: '{{ dashboard_section_name }}'
+            }
+        }));
+        {% if dashboard_section_name == 'overview' %}
+        document.body.dispatchEvent(new CustomEvent('dashboardOverviewLoaded', {
+            detail: { viewType: '{{ dashboard_section_view_type }}' }
+        }));
+        {% elif dashboard_section_name == 'visuals' %}
+        document.body.dispatchEvent(new CustomEvent('dashboardVisualsLoaded', {
+            detail: { viewType: '{{ dashboard_section_view_type }}' }
+        }));
+        {% endif %}
+        document.dispatchEvent(new CustomEvent('dashboardContentLoaded', {
+            detail: { viewType: '{{ dashboard_section_view_type }}' }
+        }));
+    })();
 </script>

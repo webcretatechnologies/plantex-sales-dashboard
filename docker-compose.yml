@@ -1,0 +1,316 @@
+services:
+
+  # ─── Nginx Reverse Proxy ───────────────────────────────────
+  nginx:
+    image: nginx:alpine
+    container_name: nginx_proxy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/certbot/www:/var/www/certbot:ro
+      - certbot_certs:/etc/letsencrypt:ro
+
+       # ✅ ADD THIS (important)
+      - ./apps/resume/media:/app/media:ro
+      - ./apps/plantex-dashboard/pltx_dashboard/staticfiles:/app/pltx_static:ro
+    depends_on:
+      - plantex-dashboard
+      - marketing
+      - resume
+    networks:
+      - plantex_network
+
+  # ─── Certbot (SSL) ─────────────────────────────────────────
+  certbot:
+    image: certbot/certbot
+    container_name: certbot
+    volumes:
+      - certbot_certs:/etc/letsencrypt
+      - ./nginx/certbot/www:/var/www/certbot
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+
+
+  # ─── API: Python / Django (Daphne) ─────────────────────────
+  plantex-dashboard:
+    build:
+      context: ./apps/plantex-dashboard
+      dockerfile: Dockerfile
+    container_name: app_plantex-dashboard
+    restart: unless-stopped
+    command: sh -c "
+       cd pltx_dashboard &&
+       python manage.py migrate --noinput &&
+       python manage.py collectstatic --noinput &&
+       gunicorn pltx_dashboard.asgi:application \
+       -k uvicorn.workers.UvicornWorker \
+       --workers 6 \
+       --worker-connections 1000 \
+       --timeout 300 \
+       --keep-alive 5 \
+       --bind 0.0.0.0:8000
+       "
+    environment:
+      - DATABASE_URL=mysql://${MYSQL_USER}:${MYSQL_PASSWORD}@mysql/${MYSQL_DATABASE}
+      - REDIS_URL=redis://redis:6379/0
+      - CHANNEL_REDIS_URL=redis://redis:6379/0
+      - CACHE_URL=redis://redis:6379/1
+      - CELERY_BROKER_URL=redis://redis:6379/2
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY}
+      - DEBUG=False
+      - PYTHONUNBUFFERED=1
+      - UPLOAD_ROOT_DIR=/tmp/upload_queue
+    volumes:
+      - shared_tmp:/tmp
+      # uploads persistent storage
+      - ./apps/plantex-dashboard/pltx_dashboard/uploads:/app/pltx_dashboard/uploads
+      - ./apps/plantex-dashboard/pltx_dashboard/staticfiles:/app/pltx_dashboard/staticfiles
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+    deploy:
+      resources:
+        limits:
+          cpus: "8"
+          memory: 30G
+
+    networks:
+      - plantex_network
+
+  marketing:
+    build:
+      context: ./apps/marketing-webcreta
+      dockerfile: Dockerfile
+    container_name: app_marketing
+    restart: unless-stopped
+    # temp
+    ports:
+      - "8001:8001"
+    command: sh -c "python manage.py migrate --noinput && python manage.py runserver 0.0.0.0:8001"  
+    environment:
+      - DATABASE_URL=mysql+pymysql://${MYSQL_USER}:${MYSQL_PASSWORD}@mysql/${MYSQL_DATABASE}
+      - REDIS_URL=redis://redis:6379
+      - DEBUG=False
+      - UPLOAD_ROOT_DIR=/tmp/upload_queue
+    volumes:
+      - shared_tmp:/tmp   
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - plantex_network
+
+  resume:
+    build:
+      context: ./apps/resume
+      dockerfile: Dockerfile
+    container_name: app_resume
+    restart: unless-stopped
+    # temp
+    ports:
+      - "8002:8002"
+    command: python manage.py runserver 0.0.0.0:8002
+    environment:
+      - DATABASE_URL=mysql+pymysql://${MYSQL_USER}:${MYSQL_PASSWORD}@mysql/${MYSQL_DATABASE}
+      - REDIS_URL=redis://redis:6379
+      - DEBUG=False
+      - UPLOAD_ROOT_DIR=/tmp/upload_queue
+    volumes:
+      - ./apps/resume/media:/app/media     # ✅ ADD THIS
+      - shared_tmp:/tmp   
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - plantex_network
+
+  # ─── MySQL ─────────────────────────────────────────────────
+  mysql:
+    image: mysql:8.0
+    container_name: mysql_db
+    restart: unless-stopped
+    command:
+      - --default-authentication-plugin=mysql_native_password
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --max-connections=300
+      - --innodb-buffer-pool-size=2G
+      - --tmp-table-size=256M
+      - --max-heap-table-size=256M
+      - --sort-buffer-size=4M
+      - --read-buffer-size=4M
+      - --innodb-log-file-size=256M
+      - --innodb-flush-log-at-trx-commit=2
+      - --thread-cache-size=16
+      - --table-open-cache=4000
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - plantex_network
+
+  # ─── Redis ─────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: redis_cache
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - plantex_network
+
+  # ─── Portainer (Docker GUI) ────────────────────────────────
+  portainer:
+    image: portainer/portainer-ce
+    container_name: portainer
+    restart: unless-stopped
+    ports:
+      - "9443:9443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer_data:/data
+    networks:
+      - plantex_network
+
+  celery:
+    build:
+      context: ./apps/plantex-dashboard
+      dockerfile: Dockerfile
+    container_name: celery_worker
+    command: sh -c "python manage.py migrate --noinput && celery -A pltx_dashboard worker -l info --concurrency=4"
+    working_dir: /app/pltx_dashboard
+    environment:
+      - DATABASE_URL=mysql+pymysql://${MYSQL_USER}:${MYSQL_PASSWORD}@mysql/${MYSQL_DATABASE}
+      - REDIS_URL=redis://redis:6379/0
+      - CHANNEL_REDIS_URL=redis://redis:6379/0
+      - CACHE_URL=redis://redis:6379/1
+      - CELERY_BROKER_URL=redis://redis:6379/2
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY}
+      - DEBUG=False
+      - UPLOAD_ROOT_DIR=/tmp/upload_queue
+      - DJANGO_SETTINGS_MODULE=pltx_dashboard.settings
+    volumes:
+      - shared_tmp:/tmp
+    depends_on:
+      redis:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    networks:
+      - plantex_network
+    restart: unless-stopped
+
+  # ─── Celery Beat: Plantex Dashboard (scheduler) ───────────
+  celery_beat:
+    build:
+      context: ./apps/plantex-dashboard
+      dockerfile: Dockerfile
+    container_name: celery_dashboard_beat
+    command: sh -c "python manage.py migrate --noinput && celery -A pltx_dashboard beat -l info"
+    working_dir: /app/pltx_dashboard
+    environment:
+      - DATABASE_URL=mysql+pymysql://${MYSQL_USER}:${MYSQL_PASSWORD}@mysql/${MYSQL_DATABASE}
+      - REDIS_URL=redis://redis:6379/0
+      - CHANNEL_REDIS_URL=redis://redis:6379/0
+      - CACHE_URL=redis://redis:6379/1
+      - CELERY_BROKER_URL=redis://redis:6379/2
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY}
+      - DEBUG=False
+      - UPLOAD_ROOT_DIR=/tmp/upload_queue
+      - DJANGO_SETTINGS_MODULE=pltx_dashboard.settings
+    volumes:
+      - shared_tmp:/tmp
+    depends_on:
+      redis:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    networks:
+      - plantex_network
+    restart: unless-stopped
+
+  celery_marketing:
+    build:
+      context: ./apps/marketing-webcreta
+      dockerfile: Dockerfile
+    container_name: celery_marketing_worker
+    command: sh -c "python manage.py migrate --noinput && celery -A core worker -l info"
+    working_dir: /app
+    environment:
+      - DATABASE_URL=mysql+pymysql://${MYSQL_USER}:${MYSQL_PASSWORD}@mysql/${MYSQL_DATABASE}
+      - REDIS_URL=redis://redis:6379
+      - DEBUG=False
+      - UPLOAD_ROOT_DIR=/tmp/upload_queue
+      - DJANGO_SETTINGS_MODULE=core.settings
+    volumes:
+      - shared_tmp:/tmp
+    depends_on:
+      redis:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    networks:
+      - plantex_network
+    restart: unless-stopped
+
+
+  celery_marketing_beat:
+    build:
+      context: ./apps/marketing-webcreta
+      dockerfile: Dockerfile
+    container_name: celery_marketing_beat
+    command: sh -c "python manage.py migrate --noinput && celery -A core beat -l info"
+    working_dir: /app
+    environment:
+      - DATABASE_URL=mysql+pymysql://${MYSQL_USER}:${MYSQL_PASSWORD}@mysql/${MYSQL_DATABASE}
+      - REDIS_URL=redis://redis:6379
+      - DEBUG=False
+      - UPLOAD_ROOT_DIR=/tmp/upload_queue
+      - DJANGO_SETTINGS_MODULE=core.settings
+    volumes:
+      - shared_tmp:/tmp
+    depends_on:
+      redis:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    networks:
+      - plantex_network
+    restart: unless-stopped
+
+networks:
+  plantex_network:
+    driver: bridge
+
+volumes:
+  mysql_data:
+  redis_data:
+  certbot_certs:
+  portainer_data:
+  shared_tmp:

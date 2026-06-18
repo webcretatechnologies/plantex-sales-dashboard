@@ -58,7 +58,7 @@ daphne pltx_dashboard.asgi:application --port 8000
 In a separate terminal window, run:
 ```bash
 cd pltx_dashboard
-celery -A pltx_dashboard worker -l info
+celery -A pltx_dashboard worker -l info & celery -A pltx_dashboard worker -l info --concurrency=6
 ```
 > Note: While Daphne handles the WebSockets and HTTP traffic, Celery is required to execute the intensive Replenishment and Master Report generation tasks in the background.
 Navigate to `http://127.0.0.1:8000/` and test real-time dashboard analytics out right now!

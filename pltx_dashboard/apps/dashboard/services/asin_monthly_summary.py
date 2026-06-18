@@ -263,18 +263,22 @@ def _apply_dimension_filters(qs, filters):
             qs = qs.filter(subcategory=str(subcategory))
 
     asin_filter = filters.get("asin")
-    if asin_filter:
-        if isinstance(asin_filter, (list, tuple)):
-            qs = qs.filter(asin__in=[str(a) for a in asin_filter])
-        else:
-            qs = qs.filter(asin=str(asin_filter))
-
     fsn_filter = filters.get("fsn")
-    if fsn_filter:
-        if isinstance(fsn_filter, (list, tuple)):
-            qs = qs.filter(asin__in=[str(f) for f in fsn_filter])
-        else:
-            qs = qs.filter(asin=str(fsn_filter))
+    
+    if asin_filter or fsn_filter:
+        from django.db.models import Q
+        q_obj = Q()
+        if asin_filter:
+            if isinstance(asin_filter, (list, tuple)):
+                q_obj |= Q(platform="Amazon", asin__in=[str(a) for a in asin_filter])
+            else:
+                q_obj |= Q(platform="Amazon", asin=str(asin_filter))
+        if fsn_filter:
+            if isinstance(fsn_filter, (list, tuple)):
+                q_obj |= Q(platform="Flipkart", asin__in=[str(f) for f in fsn_filter])
+            else:
+                q_obj |= Q(platform="Flipkart", asin=str(fsn_filter))
+        qs = qs.filter(q_obj)
 
     return qs
 
@@ -520,8 +524,8 @@ def build_declining_products_from_monthly(
     from django.db.models import Case, F, Value, When, FloatField
 
     # We will fetch az and fk separately to merge by MSKU
-    cm_az_rev, pm_az_rev, pv_az = {}, {}, {}
-    cm_fk_rev, pm_fk_rev, pv_fk = {}, {}, {}
+    cm_az_rev, pm_az_rev, pv_az, pm_pv_az = {}, {}, {}, {}
+    cm_fk_rev, pm_fk_rev, pv_fk, pm_pv_fk = {}, {}, {}, {}
 
     for row in (
         base_qs.values("asin", "platform")
@@ -529,6 +533,7 @@ def build_declining_products_from_monthly(
             cm_r=Sum(Case(When(year_month__gte=cm_ym_start, year_month__lte=cm_ym_end, then=F("revenue")), default=Value(0.0), output_field=FloatField())),
             pm_r=Sum(Case(When(year_month__gte=pm_ym_start, year_month__lte=pm_ym_end, then=F("revenue")), default=Value(0.0), output_field=FloatField())),
             pv=Sum(Case(When(year_month__gte=cm_ym_start, year_month__lte=cm_ym_end, then=F("pageviews")), default=Value(0.0), output_field=FloatField())),
+            pm_pv=Sum(Case(When(year_month__gte=pm_ym_start, year_month__lte=pm_ym_end, then=F("pageviews")), default=Value(0.0), output_field=FloatField())),
         )
         .iterator(chunk_size=5000)
     ):
@@ -540,15 +545,18 @@ def build_declining_products_from_monthly(
         cm_r = _to_float(row.get("cm_r"))
         pm_r = _to_float(row.get("pm_r"))
         pv = int(row.get("pv") or 0)
+        pm_pv_val = int(row.get("pm_pv") or 0)
         
         if pf == "Amazon":
             cm_az_rev[sku] = cm_az_rev.get(sku, 0.0) + cm_r
             pm_az_rev[sku] = pm_az_rev.get(sku, 0.0) + pm_r
             pv_az[sku] = pv_az.get(sku, 0) + pv
+            pm_pv_az[sku] = pm_pv_az.get(sku, 0) + pm_pv_val
         elif pf == "Flipkart":
             cm_fk_rev[sku] = cm_fk_rev.get(sku, 0.0) + cm_r
             pm_fk_rev[sku] = pm_fk_rev.get(sku, 0.0) + pm_r
             pv_fk[sku] = pv_fk.get(sku, 0) + pv
+            pm_pv_fk[sku] = pm_pv_fk.get(sku, 0) + pm_pv_val
 
     if not cm_az_rev and not pm_az_rev and not cm_fk_rev and not pm_fk_rev:
         return None
@@ -562,6 +570,8 @@ def build_declining_products_from_monthly(
     for asin in set(cm_az_rev) | set(pm_az_rev):
         curr = cm_az_rev.get(asin, 0.0)
         prev = pm_az_rev.get(asin, 0.0)
+        az_pv = pv_az.get(asin, 0)
+        az_prev_pv = pm_pv_az.get(asin, 0)
         msku = _asin_meta.get(asin, {}).get("msku") or _asin_meta.get(asin, {}).get("sku") or ""
         key = msku if msku else f"az_{asin}"
         
@@ -572,14 +582,19 @@ def build_declining_products_from_monthly(
             "az_prev_revenue": round(prev, 2), "fk_prev_revenue": 0.0,
             "az_drop_pct": _safe_growth(curr, prev), "fk_drop_pct": 0.0,
             "az_impact": max(prev - curr, 0.0), "fk_impact": 0.0,
-            "az_pageviews": pv_az.get(asin, 0), "fk_pageviews": 0,
+            "az_pageviews": az_pv, "fk_pageviews": 0,
+            "az_prev_pageviews": az_prev_pv, "fk_prev_pageviews": 0,
+            "az_pv_drop_pct": _safe_growth(az_pv, az_prev_pv), "fk_pv_drop_pct": 0.0,
+            "az_pv_impact": max(az_prev_pv - az_pv, 0), "fk_pv_impact": 0,
             "revenue": round(curr, 2), "prev_revenue": round(prev, 2),
-            "pageviews": pv_az.get(asin, 0),
+            "pageviews": az_pv, "prev_pageviews": az_prev_pv,
         }
 
     for fsn in set(cm_fk_rev) | set(pm_fk_rev):
         curr = cm_fk_rev.get(fsn, 0.0)
         prev = pm_fk_rev.get(fsn, 0.0)
+        fk_pv = pv_fk.get(fsn, 0)
+        fk_prev_pv = pm_pv_fk.get(fsn, 0)
         msku = _fsn_meta.get(fsn, {}).get("sku") or ""
         key = msku if msku else f"fk_{fsn}"
         
@@ -590,10 +605,14 @@ def build_declining_products_from_monthly(
             r["fk_prev_revenue"] = round(prev, 2)
             r["fk_drop_pct"] = _safe_growth(curr, prev)
             r["fk_impact"] = max(prev - curr, 0.0)
-            r["fk_pageviews"] = pv_fk.get(fsn, 0)
+            r["fk_pageviews"] = fk_pv
+            r["fk_prev_pageviews"] = fk_prev_pv
+            r["fk_pv_drop_pct"] = _safe_growth(fk_pv, fk_prev_pv)
+            r["fk_pv_impact"] = max(fk_prev_pv - fk_pv, 0)
             r["revenue"] = round(_to_float(r.get("revenue")) + curr, 2)
             r["prev_revenue"] = round(_to_float(r.get("prev_revenue")) + prev, 2)
-            r["pageviews"] += pv_fk.get(fsn, 0)
+            r["pageviews"] += fk_pv
+            r["prev_pageviews"] += fk_prev_pv
         else:
             merged[key] = {
                 "sku": fsn, "msku": msku or fsn,
@@ -602,9 +621,12 @@ def build_declining_products_from_monthly(
                 "az_prev_revenue": 0.0, "fk_prev_revenue": round(prev, 2),
                 "az_drop_pct": 0.0, "fk_drop_pct": _safe_growth(curr, prev),
                 "az_impact": 0.0, "fk_impact": max(prev - curr, 0.0),
-                "az_pageviews": 0, "fk_pageviews": pv_fk.get(fsn, 0),
+                "az_pageviews": 0, "fk_pageviews": fk_pv,
+                "az_prev_pageviews": 0, "fk_prev_pageviews": fk_prev_pv,
+                "az_pv_drop_pct": 0.0, "fk_pv_drop_pct": _safe_growth(fk_pv, fk_prev_pv),
+                "az_pv_impact": 0, "fk_pv_impact": max(fk_prev_pv - fk_pv, 0),
                 "revenue": round(curr, 2), "prev_revenue": round(prev, 2),
-                "pageviews": pv_fk.get(fsn, 0),
+                "pageviews": fk_pv, "prev_pageviews": fk_prev_pv,
             }
 
     declining = []
@@ -619,7 +641,14 @@ def build_declining_products_from_monthly(
         if drop_pct < 0:
             r["drop_pct"] = drop_pct
             r["impact"] = round(max(r["prev_revenue"] - r["revenue"], 0.0), 2)
+            # Combined pv stats
+            total_pv = int(r.get("pageviews") or 0)
+            total_prev_pv = int(r.get("prev_pageviews") or 0)
+            r["pv_drop_pct"] = _safe_growth(total_pv, total_prev_pv)
+            r["pv_impact"] = max(total_prev_pv - total_pv, 0)
             declining.append(r)
 
-    declining.sort(key=lambda r: _to_float(r.get("drop_pct")))
+    # Sort by MoM Revenue Impact descending (largest absolute drop in revenue first)
+    declining.sort(key=lambda r: _to_float(r.get("impact")), reverse=True)
     return declining if include_full_payload else declining[:5]
+

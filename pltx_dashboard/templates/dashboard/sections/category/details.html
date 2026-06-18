@@ -170,7 +170,14 @@
                 <option value="last_28_days">Last 28 Days</option>
                 <option value="last_month">Last Month</option>
                 <option value="current_month">Current Month</option>
+                <option value="custom">Custom Date Range</option>
             </select>
+            <div id="catAsinFsnCustomDateGroup" style="display:none; align-items:center; gap:8px;">
+                <input type="date" id="catAsinFsnStartDate" class="filter-date-top">
+                <span style="color:var(--muted); font-size:13px;">to</span>
+                <input type="date" id="catAsinFsnEndDate" class="filter-date-top">
+                <button type="button" id="catAsinFsnApplyCustomDateBtn" class="btn-primary" style="padding: 6px 12px; font-size: 13px; border-radius: 6px; cursor: pointer;">Apply</button>
+            </div>
             <button type="button" class="ceo-view-all-btn" id="catAsinFsnCsvBtn">Download CSV</button>
             <button type="button" class="ceo-view-all-btn" id="catAsinFsnExcelBtn">Download Excel</button>
         </div>
@@ -179,6 +186,7 @@
         <table class="ceo-table" id="catAsinFsnReportTable" style="min-width:900px;">
             <thead>
                 <tr>
+                    <th>Date</th>
                     <th>ASIN / FSN</th>
                     <th>SKU</th>
                     <th>Platform Name</th>
@@ -204,6 +212,10 @@
         const tbody = table ? table.querySelector('tbody') : null;
         const limitSelect = document.getElementById('catAsinFsnLimitSelect');
         const dateRangeSelect = document.getElementById('catAsinFsnDateRangeSelect');
+        const customDateGroup = document.getElementById('catAsinFsnCustomDateGroup');
+        const startDateInput = document.getElementById('catAsinFsnStartDate');
+        const endDateInput = document.getElementById('catAsinFsnEndDate');
+        const applyCustomDateBtn = document.getElementById('catAsinFsnApplyCustomDateBtn');
         const csvBtn = document.getElementById('catAsinFsnCsvBtn');
         const excelBtn = document.getElementById('catAsinFsnExcelBtn');
         let inFlightController = null;
@@ -213,6 +225,10 @@
         function applyReportParams(params) {
             params.set('report_limit', limitSelect.value || '10');
             params.set('report_date_range', dateRangeSelect.value || 'all');
+            if (dateRangeSelect.value === 'custom') {
+                if (startDateInput && startDateInput.value) params.set('report_start_date', startDateInput.value);
+                if (endDateInput && endDateInput.value) params.set('report_end_date', endDateInput.value);
+            }
             return params;
         }
 
@@ -245,7 +261,7 @@
                 lengthMenu: [10, 25, 50, 100],
                 searching: true,
                 ordering: true,
-                order: [[5, 'desc']],
+                order: [[0, 'desc'], [6, 'desc']],
                 info: true,
                 autoWidth: false,
                 responsive: true,
@@ -297,7 +313,15 @@
         }
 
         limitSelect.onchange = loadReport;
-        dateRangeSelect.onchange = loadReport;
+        dateRangeSelect.onchange = function() {
+            if (dateRangeSelect.value === 'custom') {
+                customDateGroup.style.display = 'flex';
+            } else {
+                customDateGroup.style.display = 'none';
+                loadReport();
+            }
+        };
+        if (applyCustomDateBtn) applyCustomDateBtn.onclick = loadReport;
         if (csvBtn) csvBtn.onclick = function () { downloadAsinFsnReport('csv'); };
         if (excelBtn) excelBtn.onclick = function () { downloadAsinFsnReport('excel'); };
 
@@ -368,13 +392,17 @@
 <script>
 (function(){
     var CAT_TOP_H = {
-        'All': '<tr><th data-field="asin">Amazon SKU</th><th data-field="fsn">Flipkart SKU</th><th class="num" data-field="az_revenue">Amazon Revenue</th><th class="num" data-field="fk_revenue">Flipkart Revenue</th><th class="num" data-field="total_revenue">Total Revenue</th><th class="num" data-field="az_growth">Amazon MOM Growth</th><th class="num" data-field="fk_growth">Flipkart MOM Growth</th><th class="num" data-field="az_contribution">Amazon Contribution</th><th class="num" data-field="fk_contribution">Flipkart Contribution</th><th class="num" data-field="az_pageviews">Amazon Page Views</th><th class="num" data-field="fk_pageviews">Flipkart Page Views</th></tr>',
-        'Amazon': '<tr><th data-field="asin">SKU</th><th data-field="cluster">Cluster</th><th class="num" data-field="az_revenue">Revenue</th><th class="num" data-field="az_growth">MoM Growth</th><th class="num" data-field="az_units">Units</th></tr>',
-        'Flipkart': '<tr><th data-field="fsn">SKU</th><th data-field="cluster">Cluster</th><th class="num" data-field="fk_revenue">Revenue</th><th class="num" data-field="fk_growth">MoM Growth</th><th class="num" data-field="fk_units">Units</th></tr>',
+        'All': '<tr><th data-field="az_sku">Amazon SKU</th><th data-field="fk_sku">Flipkart SKU</th><th class="num" data-field="az_revenue">Amazon Revenue</th><th class="num" data-field="fk_revenue">Flipkart Revenue</th><th class="num" data-field="revenue">Total Revenue</th><th class="num" data-field="az_mom_growth">Amazon MOM Growth</th><th class="num" data-field="fk_mom_growth">Flipkart MOM Growth</th><th class="num" data-field="az_contribution">Amazon Contribution</th><th class="num" data-field="fk_contribution">Flipkart Contribution</th><th class="num" data-field="az_pageviews">Amazon Page Views</th><th class="num" data-field="fk_pageviews">Flipkart Page Views</th></tr>',
+        'Amazon': '<tr><th data-field="az_sku">SKU</th><th class="num" data-field="az_revenue">Revenue</th><th class="num" data-field="az_mom_growth">MoM Growth</th><th class="num" data-field="az_pageviews">Page Views</th></tr>',
+        'Flipkart': '<tr><th data-field="fk_sku">SKU</th><th class="num" data-field="fk_revenue">Revenue</th><th class="num" data-field="fk_mom_growth">MoM Growth</th><th class="num" data-field="fk_pageviews">Page Views</th></tr>',
     };
     function updateCatTopHeader(p) { var h=document.getElementById('catTopProductsHeader'); if(h) h.innerHTML=CAT_TOP_H[p]||CAT_TOP_H['All']; }
     window._updateCatTopHeader = updateCatTopHeader;
-    function readPlatform() { var s=document.getElementById('platformSelect'); return s?(s.value||'All'):'All'; }
+    function readPlatform() {
+        var sel = document.getElementById('platformSelect');
+        if (sel) return sel.value || 'All';
+        return "{{ request.GET.platform|default:'' }}" || 'All';
+    }
     document.addEventListener('DOMContentLoaded', function(){ updateCatTopHeader(readPlatform()); });
     var applyBtn = document.getElementById('applyFiltersBtn');
     if (applyBtn) applyBtn.addEventListener('click', function(){ setTimeout(function(){ updateCatTopHeader(readPlatform()); }, 200); });
@@ -415,13 +443,17 @@
 <script>
 (function(){
     var CAT_DEC_H = {
-        'All': '<tr><th data-field="asin">Amazon SKU</th><th data-field="fsn">Flipkart SKU</th><th class="num" data-field="az_drop">Amazon MOM Drop %</th><th class="num" data-field="fk_drop">Flipkart MOM Drop %</th><th class="num" data-field="total_drop">Total MOM Drop %</th><th class="num" data-field="az_impact">Amazon Impact (₹)</th><th class="num" data-field="fk_impact">Flipkart Impact (₹)</th><th class="num" data-field="total_impact">Total Impact (₹)</th><th class="num" data-field="az_pageviews">Amazon Page Views</th><th class="num" data-field="fk_pageviews">Flipkart Page Views</th><th class="num" data-field="total_pageviews">Total Page Views</th></tr>',
-        'Amazon': '<tr><th data-field="asin">SKU</th><th class="num" data-field="az_drop">MOM Drop %</th><th class="num" data-field="az_impact">Impact (₹)</th></tr>',
-        'Flipkart': '<tr><th data-field="fsn">SKU</th><th class="num" data-field="fk_drop">MOM Drop %</th><th class="num" data-field="fk_impact">Impact (₹)</th></tr>',
+        'All': '<tr><th data-field="az_sku">Amazon SKU</th><th data-field="fk_sku">Flipkart SKU</th><th class="num" data-field="az_drop_pct">Amazon MOM Drop %</th><th class="num" data-field="fk_drop_pct">Flipkart MOM Drop %</th><th class="num" data-field="drop_pct">Total MOM Drop %</th><th class="num" data-field="az_impact">Amazon Impact (₹)</th><th class="num" data-field="fk_impact">Flipkart Impact (₹)</th><th class="num" data-field="impact">Total Impact (₹)</th><th class="num" data-field="az_pageviews">Amazon Page Views</th><th class="num" data-field="fk_pageviews">Flipkart Page Views</th><th class="num" data-field="pageviews">Total Page Views</th></tr>',
+        'Amazon': '<tr><th data-field="az_sku">SKU</th><th class="num" data-field="az_drop_pct">MOM Drop %</th><th class="num" data-field="az_impact">Impact (₹)</th><th class="num" data-field="az_pageviews">Page Views</th></tr>',
+        'Flipkart': '<tr><th data-field="fk_sku">SKU</th><th class="num" data-field="fk_drop_pct">MOM Drop %</th><th class="num" data-field="fk_impact">Impact (₹)</th><th class="num" data-field="fk_pageviews">Page Views</th></tr>',
     };
     function updateCatDecHeader(p) { var h=document.getElementById('catDecliningHeader'); if(h) h.innerHTML=CAT_DEC_H[p]||CAT_DEC_H['All']; }
     window._updateCatDecHeader = updateCatDecHeader;
-    function readPlatform() { var s=document.getElementById('platformSelect'); return s?(s.value||'All'):'All'; }
+    function readPlatform() {
+        var sel = document.getElementById('platformSelect');
+        if (sel) return sel.value || 'All';
+        return "{{ request.GET.platform|default:'' }}" || 'All';
+    }
     document.addEventListener('DOMContentLoaded', function(){ updateCatDecHeader(readPlatform()); });
     var applyBtn = document.getElementById('applyFiltersBtn');
     if (applyBtn) applyBtn.addEventListener('click', function(){ setTimeout(function(){ updateCatDecHeader(readPlatform()); }, 200); });
@@ -480,16 +512,18 @@
 (function(){
     var HEADERS = {
         'All': '<tr><th data-field="date">Date</th><th data-field="sku">Amazon SKU / Flipkart SKU</th><th data-field="category">Category</th><th class="num" data-field="amz_stock">Amz Stock</th><th class="num" data-field="amz_sales">Amz Sales</th><th class="num" data-field="amz_doc">Amz DOC</th><th class="num" data-field="amz_revenue">Amz Revenue</th><th data-field="amz_status">Amz Status</th><th class="num" data-field="fk_stock">FK Stock</th><th class="num" data-field="fk_sales">FK Sales</th><th class="num" data-field="fk_doc">FK DOC</th><th class="num" data-field="fk_revenue">FK Revenue</th><th data-field="fk_status">FK Status</th><th data-field="reason">Calculation</th></tr>',
-        'Amazon': '<tr><th data-field="date">Date</th><th data-field="asin">SKU</th><th data-field="category">Category</th><th class="num" data-field="amz_stock">Stock</th><th class="num" data-field="amz_sales">Sales</th><th class="num" data-field="amz_doc">DOC</th><th class="num" data-field="amz_revenue">Revenue</th><th data-field="amz_status">Status</th><th data-field="reason">Calculation</th></tr>',
-        'Flipkart': '<tr><th data-field="date">Date</th><th data-field="fsn">SKU</th><th data-field="category">Category</th><th class="num" data-field="fk_stock">Stock</th><th class="num" data-field="fk_sales">Sales</th><th class="num" data-field="fk_doc">DOC</th><th class="num" data-field="fk_revenue">Revenue</th><th data-field="fk_status">Status</th><th data-field="fk_reason">Calculation</th></tr>',
+        'Amazon': '<tr><th data-field="date">Date</th><th data-field="az_sku">SKU</th><th data-field="category">Category</th><th class="num" data-field="amz_stock">Stock</th><th class="num" data-field="amz_sales">Sales</th><th class="num" data-field="amz_doc">DOC</th><th class="num" data-field="amz_revenue">Revenue</th><th data-field="amz_status">Status</th><th data-field="reason">Calculation</th></tr>',
+        'Flipkart': '<tr><th data-field="date">Date</th><th data-field="fk_sku">SKU</th><th data-field="category">Category</th><th class="num" data-field="fk_stock">Stock</th><th class="num" data-field="fk_sales">Sales</th><th class="num" data-field="fk_doc">DOC</th><th class="num" data-field="fk_revenue">Revenue</th><th data-field="fk_status">Status</th><th data-field="fk_reason">Calculation</th></tr>',
     };
     function updateInvHealthHeaderCat(platform) {
         var hdr = document.getElementById('invHealthHeaderCat');
         if (hdr) hdr.innerHTML = HEADERS[platform] || HEADERS['All'];
     }
+    window._updateInvHealthHeaderCat = updateInvHealthHeaderCat;
     function readCurrentPlatform() {
         var sel = document.getElementById('platformSelect');
-        return sel ? (sel.value || 'All') : 'All';
+        if (sel) return sel.value || 'All';
+        return "{{ request.GET.platform|default:'' }}" || 'All';
     }
     document.addEventListener('DOMContentLoaded', function() {
         updateInvHealthHeaderCat(readCurrentPlatform());

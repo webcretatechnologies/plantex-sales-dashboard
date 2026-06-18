@@ -130,6 +130,15 @@ def _mysql_insert_processed_dashboard_rows(user_id, target_dates):
         LEFT JOIN {price_table} pd
             ON pd.user_id = %s AND pd.asin = s.asin
         WHERE s.user_id = %s {sales_date_filter}
+        ON DUPLICATE KEY UPDATE
+            portfolio = VALUES(portfolio),
+            category = VALUES(category),
+            subcategory = VALUES(subcategory),
+            price = VALUES(price),
+            pageviews = VALUES(pageviews),
+            units = VALUES(units),
+            orders = VALUES(orders),
+            revenue = VALUES(revenue)
     """
 
     upsert_spend_sql = f"""
@@ -633,7 +642,7 @@ def _mysql_insert_fk_processed_rows(user_id, target_dates):
     date_filter = f" AND date IN ({date_ph})" if target_dates else ""
 
     insert_traffic_sql = f"""
-        INSERT IGNORE INTO {processed_table} (
+        INSERT INTO {processed_table} (
             user_id, date, fsn, platform, portfolio, category, subcategory, price,
             pageviews, units, orders, revenue, total_spend, spend_sp, spend_sb, spend_sd
         )
@@ -671,10 +680,23 @@ def _mysql_insert_fk_processed_rows(user_id, target_dates):
         ) p ON p.fsn_id = t.fsn AND p.date = t.date
         LEFT JOIN {cat_table} cm ON cm.user_id = %s AND cm.fsn = t.fsn
         LEFT JOIN {price_table} fp ON fp.user_id = %s AND fp.fsn = t.fsn
+        ON DUPLICATE KEY UPDATE
+            portfolio = VALUES(portfolio),
+            category = VALUES(category),
+            subcategory = VALUES(subcategory),
+            price = VALUES(price),
+            pageviews = VALUES(pageviews),
+            units = VALUES(units),
+            orders = VALUES(orders),
+            revenue = VALUES(revenue),
+            total_spend = VALUES(total_spend),
+            spend_sp = VALUES(spend_sp),
+            spend_sb = VALUES(spend_sb),
+            spend_sd = VALUES(spend_sd)
     """
 
     insert_spend_only_sql = f"""
-        INSERT IGNORE INTO {processed_table} (
+        INSERT INTO {processed_table} (
             user_id, date, fsn, platform, portfolio, category, subcategory, price,
             pageviews, units, orders, revenue, total_spend, spend_sp, spend_sb, spend_sd
         )
@@ -707,6 +729,19 @@ def _mysql_insert_fk_processed_rows(user_id, target_dates):
             SELECT 1 FROM {traffic_table} t
             WHERE t.user_id = %s AND t.fsn = p.fsn_id AND t.date = p.date
         )
+        ON DUPLICATE KEY UPDATE
+            portfolio = VALUES(portfolio),
+            category = VALUES(category),
+            subcategory = VALUES(subcategory),
+            price = VALUES(price),
+            pageviews = VALUES(pageviews),
+            units = VALUES(units),
+            orders = VALUES(orders),
+            revenue = VALUES(revenue),
+            total_spend = VALUES(total_spend),
+            spend_sp = VALUES(spend_sp),
+            spend_sb = VALUES(spend_sb),
+            spend_sd = VALUES(spend_sd)
     """
 
     traffic_params = [user_id, user_id]

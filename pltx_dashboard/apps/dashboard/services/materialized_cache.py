@@ -69,16 +69,31 @@ def store_materialized_summary(
     payload,
 ):
     payload_blob = _pack_payload(payload)
-    DashboardMaterializedSummary.objects.update_or_create(
-        user_id=user_id,
-        view_type=view_type,
-        data_version=data_version,
-        filter_hash=filter_hash,
-        defaults={
-            "normalized_filters": normalized_filters,
-            "payload_blob": payload_blob,
-        },
-    )
+    max_retries = 3
+    for attempt in range(1, max_retries + 1):
+        try:
+            DashboardMaterializedSummary.objects.update_or_create(
+                user_id=user_id,
+                view_type=view_type,
+                data_version=data_version,
+                filter_hash=filter_hash,
+                defaults={
+                    "normalized_filters": normalized_filters,
+                    "payload_blob": payload_blob,
+                },
+            )
+            return
+        except OperationalError as exc:
+            if not _is_retryable_mysql_lock_error(exc):
+                raise
+            if attempt >= max_retries:
+                logger.warning(
+                    "[MaterializedCache] Lock retry exhausted for user=%s while storing summary: %s",
+                    user_id,
+                    exc,
+                )
+                raise
+            time.sleep(0.25 * attempt)
 
 
 def clear_materialized_summaries_for_user(user_id):

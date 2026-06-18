@@ -112,7 +112,7 @@
     </div>
 </div>
 
-{% include "dashboard/partials/npd_performance_card.html" with npd_card_id="cat-card-npd-performance" npd_modal_id="catNpdPerformanceModal" %}
+{% include "dashboard/partials/npd_performance_card.html" with npd_card_id="cat-card-npd-performance" npd_modal_id="catNpdPerformanceModal" npd_view_name="category" %}
 
 <!-- ════════════ ROW 3: Top Products | Underperforming Products | Category Health ════════════ -->
 <div class="biz-row-3-equal">
@@ -132,13 +132,13 @@
                     {% if request.GET.platform == 'Amazon' or request.GET.platform == 'Flipkart' %}
                     <tr>
                         <th>SKU</th>
-                        <th>Cluster</th>
                         <th class="num">Revenue</th>
                         <th class="num">MoM Growth</th>
-                        <th class="num">Units</th>
+                        <th class="num">Page Views</th>
                     </tr>
                     {% else %}
                     <tr>
+                        <th>SKU</th>
                         <th>Amazon SKU</th>
                         <th>Flipkart SKU</th>
                         <th class="num">Amazon Revenue</th>
@@ -153,8 +153,8 @@
                     </tr>
                     {% endif %}
                 </thead>
-                <tbody>
-                    {% include "dashboard/modals/rows/top_products_category_rows.html" with rows=payload.cat_top_products|slice:":5" platform=filters.platform|default:'All' %}
+                <tbody id="cat-top-products-tbody">
+                    <tr><td colspan="12" class="empty" style="text-align:center;padding:20px;color:var(--muted);">Loading data...</td></tr>
                 </tbody>
             </table>
         </div>
@@ -179,6 +179,7 @@
                     </tr>
                     {% else %}
                     <tr>
+                        <th>SKU</th>
                         <th>Amazon SKU</th>
                         <th>Flipkart SKU</th>
                         <th class="num">Amazon MOM Drop %</th>
@@ -193,8 +194,8 @@
                     </tr>
                     {% endif %}
                 </thead>
-                <tbody>
-                    {% include "dashboard/modals/rows/declining_products_rows.html" with rows=payload.cat_under_products|slice:":5" platform=filters.platform|default:'All' %}
+                <tbody id="cat-declining-tbody">
+                    <tr><td colspan="12" class="empty" style="text-align:center;padding:20px;color:var(--muted);">Loading data...</td></tr>
                 </tbody>
             </table>
         </div>
@@ -362,3 +363,30 @@
         </div>
     </div>
 </div>
+
+<script>
+(function(){
+    var tbody = document.getElementById('cat-top-products-tbody');
+    if (!tbody) return;
+    var params = new URLSearchParams(window.location.search || '');
+    params.set('limit', '5');
+    fetch("{% url 'dashboard-product-card-rows' 'category' 'top-products' %}" + '?' + params.toString(), {
+        headers: { 'X-Requested-With': 'XMLHttpRequest' }
+    })
+    .then(function(r){ return r.ok ? r.text() : Promise.reject(r.status); })
+    .then(function(html){ tbody.innerHTML = html || '<tr><td colspan="11" class="empty">No data available</td></tr>'; })
+    .catch(function(){ tbody.innerHTML = '<tr><td colspan="11" class="empty">Failed to load. Please retry.</td></tr>'; });
+})();
+(function(){
+    var tbody = document.getElementById('cat-declining-tbody');
+    if (!tbody) return;
+    var params = new URLSearchParams(window.location.search || '');
+    params.set('limit', '5');
+    fetch("{% url 'dashboard-product-card-rows' 'category' 'declining-products' %}" + '?' + params.toString(), {
+        headers: { 'X-Requested-With': 'XMLHttpRequest' }
+    })
+    .then(function(r){ return r.ok ? r.text() : Promise.reject(r.status); })
+    .then(function(html){ tbody.innerHTML = html || '<tr><td colspan="11" class="empty">No data available</td></tr>'; })
+    .catch(function(){ tbody.innerHTML = '<tr><td colspan="11" class="empty">Failed to load. Please retry.</td></tr>'; });
+})();
+</script>

@@ -333,8 +333,16 @@ function _buildModalDataUrl(modalEl, extraParams) {
             else params.set(k, String(val));
         });
     }
-    var qs = params.toString();
-    return qs ? (lazyUrl + '?' + qs) : lazyUrl;
+
+    var platformSel = document.getElementById('platformSelect');
+    var currentPlatform = (modalEl && modalEl.dataset.modalPlatform) || (platformSel ? platformSel.value : null);
+    if (currentPlatform && currentPlatform !== 'All') {
+        params.set('platform', currentPlatform);
+    } else if (currentPlatform === 'All') {
+        params.delete('platform');
+    }
+
+    return lazyUrl + '?' + params.toString();
 }
 
 function _getModalResponseFromCache(cacheKey) {
@@ -577,7 +585,8 @@ function _initializeDataTable(modalEl) {
 
                 // Add current platform
                 var platformSel = document.getElementById('platformSelect');
-                if (platformSel && platformSel.value) d.platform = platformSel.value;
+                var currentPlatform = modalEl.dataset.modalPlatform || (platformSel ? platformSel.value : null);
+                if (currentPlatform && currentPlatform !== 'All') d.platform = currentPlatform;
             }
         };
         // DataTables injects the pre-rendered <td>…</td> HTML directly via render()
@@ -615,13 +624,20 @@ function _loadModalRowsOnDemand(modalEl, opts) {
 
     // ── Synchronously update the thead BEFORE DataTables initialises ──
     var platformSel = document.getElementById('platformSelect');
-    var currentPlatform = platformSel ? (platformSel.value || 'All') : 'All';
+    var globalPlatform = platformSel ? (platformSel.value || 'All') : 'All';
+    var currentPlatform = modalEl.dataset.modalPlatform || globalPlatform;
     var headerUpdaters = {
         'winningModal':    window._updateWinHeader,
         'bizWinningModal': window._updateBizWinHeader,
         'topProductsModal': window._updateCatTopHeader,
         'decliningModal':  window._updateDecHeader || window._updateCatDecHeader,
         'bizDecliningModal': window._updateBizDecHeader,
+        'npdPerformanceModal': window._updateNpdHeader,
+        'catNpdPerformanceModal': window._updateNpdHeader,
+        'bizNpdPerformanceModal': window._updateNpdHeader,
+        'inventoryHealthModal': window._updateInvHealthHeaderCeo,
+        'catInventoryHealthModal': window._updateInvHealthHeaderCat,
+        'bizInventoryHealthModal': window._updateInvHealthHeaderBiz
     };
     var updater = headerUpdaters[modalId];
     if (typeof updater === 'function') { updater(currentPlatform); }
@@ -725,14 +741,88 @@ function _loadModalRowsOnDemand(modalEl, opts) {
         });
 }
 
+function _ensureModalPlatformToggle(modalEl) {
+    if (modalEl.dataset.platformToggleInit === '1') return;
+
+    var header = modalEl.querySelector('.tbl-overlay-header');
+    if (!header) return;
+
+    // Build the toggle element
+    var toggleGroup = document.createElement('div');
+    toggleGroup.className = 'modal-platform-toggle';
+    toggleGroup.style.display = 'inline-flex';
+    toggleGroup.style.alignItems = 'center';
+    toggleGroup.style.marginLeft = '12px';
+    toggleGroup.style.marginRight = 'auto';
+    toggleGroup.style.gap = '12px';
+    toggleGroup.style.fontSize = '13px';
+    toggleGroup.style.fontWeight = '500';
+
+    var platformSel = document.getElementById('platformSelect');
+    var globalPlatform = platformSel ? (platformSel.value || 'All') : 'All';
+    var currentPlatform = modalEl.dataset.modalPlatform || globalPlatform;
+
+    ['All', 'Amazon', 'Flipkart'].forEach(function(plat) {
+        var label = document.createElement('label');
+        label.style.cursor = 'pointer';
+        label.style.display = 'flex';
+        label.style.alignItems = 'center';
+        label.style.gap = '4px';
+
+        var radio = document.createElement('input');
+        radio.type = 'radio';
+        radio.name = modalEl.id + '_platform';
+        radio.value = plat;
+        radio.checked = (plat === currentPlatform);
+        radio.onchange = function() {
+            if (radio.checked) {
+                modalEl.dataset.modalPlatform = radio.value;
+                if (window.jQuery && $.fn.DataTable && modalEl.querySelector('table')) {
+                    var table = modalEl.querySelector('table');
+                    if ($.fn.DataTable.isDataTable(table)) {
+                        $(table).DataTable().destroy();
+                        var tbody = table.querySelector('tbody');
+                        if (tbody) tbody.innerHTML = '';
+                    }
+                }
+                _loadModalRowsOnDemand(modalEl, { force: true });
+            }
+        };
+
+        label.appendChild(radio);
+        label.appendChild(document.createTextNode(plat));
+        toggleGroup.appendChild(label);
+    });
+
+    var title = header.querySelector('.tbl-overlay-title');
+    if (title) {
+        var targetNode = title;
+        while (targetNode.parentNode && targetNode.parentNode !== header) {
+            targetNode = targetNode.parentNode;
+        }
+        if (targetNode.parentNode === header && targetNode.nextSibling) {
+            header.insertBefore(toggleGroup, targetNode.nextSibling);
+        } else {
+            header.appendChild(toggleGroup);
+        }
+    } else {
+        header.appendChild(toggleGroup);
+    }
+
+    modalEl.dataset.platformToggleInit = '1';
+}
+
 function openModal(id) {
     var el = document.getElementById(id);
     if (el) {
         _ensureModalExportButtons(el);
+        _ensureModalPlatformToggle(el);
         _ensureModalPreviewNotice(el);
         _loadModalRowsOnDemand(el);
         el.classList.add('active');
         document.body.style.overflow = 'hidden';
+        var event = new CustomEvent('modalOpened', { detail: { id: id } });
+        document.dispatchEvent(event);
     }
 }
 function closeModal(id) {
@@ -976,12 +1066,12 @@ function buildSalesTrendSeries(data, period) {
     var datasets = [];
 
     if (platform === 'Amazon') {
-        datasets.push(trendDataset({ label: 'Amazon Revenue', data: processed.current, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.08)', fill: true, tension: 0.4, borderWidth: 2.5 }));
+        datasets.push(trendDataset({ label: 'Amazon Revenue', data: processed.current, borderColor: '#0fafbf', backgroundColor: 'rgba(15,175,191,0.08)', fill: true, tension: 0.4, borderWidth: 2.5 }));
     } else if (platform === 'Flipkart') {
         datasets.push(trendDataset({ label: 'Flipkart Revenue', data: processed.current, borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,0.08)', fill: true, tension: 0.4, borderWidth: 2.5 }));
     } else if (showDualLines) {
         // "All" with both platforms — show two separate lines
-        datasets.push(trendDataset({ label: 'Amazon', data: processed.amazon, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.05)', fill: true, tension: 0.4, borderWidth: 2 }));
+        datasets.push(trendDataset({ label: 'Amazon', data: processed.amazon, borderColor: '#0fafbf', backgroundColor: 'rgba(15,175,191,0.05)', fill: true, tension: 0.4, borderWidth: 2 }));
         datasets.push(trendDataset({ label: 'Flipkart', data: processed.flipkart, borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,0.05)', fill: true, tension: 0.4, borderWidth: 2 }));
     } else {
         // "All" but only one platform has data — single combined line
@@ -994,8 +1084,8 @@ function buildSalesTrendSeries(data, period) {
             cBg     = 'rgba(245,158,11,0.08)';
             cLabel  = 'Flipkart Revenue';
         } else if (hasAmazon && !hasFlipkart) {
-            cBorder = '#3b82f6'; // Amazon Blue
-            cBg     = 'rgba(59,130,246,0.08)';
+            cBorder = '#0fafbf'; // Amazon Blue
+            cBg     = 'rgba(15,175,191,0.08)';
             cLabel  = 'Amazon Revenue';
         }
 
@@ -1071,7 +1161,7 @@ function buildPlatformDonutSeries(data) {
     var total = pVals.reduce(function (sum, value) { return sum + value; }, 0);
     if (total <= 0) return null;
     var colors = pLabels.map(function (name) {
-        return name === 'Amazon' ? '#3b82f6' : (name === 'Flipkart' ? '#f59e0b' : '#10b981');
+        return name === 'Amazon' ? '#0fafbf' : (name === 'Flipkart' ? '#f59e0b' : '#10b981');
     });
     return { labels: pLabels, values: pVals, colors: colors };
 }

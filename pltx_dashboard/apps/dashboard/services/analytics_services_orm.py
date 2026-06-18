@@ -17,19 +17,49 @@ def generate_charts_data_orm(qs, fk_qs, table_data=None, preaggregated_trend=Non
                 "orders": int(values.get("orders", 0) or 0),
             }
 
-    if not preaggregated_trend and qs is not None:
-        qs_trend = (
-            qs.values("date")
-            .annotate(
-                revenue=Sum("revenue"),
-                total_spend=Sum("total_spend"),
-                pageviews=Sum("pageviews"),
-                orders=Sum("orders"),
-            )
-            .order_by("date")
-        )
+    from concurrent.futures import ThreadPoolExecutor
 
-        for r in qs_trend:
+    def fetch_qs_trend():
+        if preaggregated_trend or qs is None: return []
+        return list(qs.values("date").annotate(
+            revenue=Sum("revenue"), total_spend=Sum("total_spend"),
+            pageviews=Sum("pageviews"), orders=Sum("orders")
+        ).order_by("date"))
+
+    def fetch_fk_trend():
+        if preaggregated_trend or fk_qs is None: return []
+        return list(fk_qs.values("date").annotate(
+            revenue=Sum("revenue"), total_spend=Sum("total_spend"),
+            pageviews=Sum("pageviews"), orders=Sum("orders")
+        ).order_by("date"))
+
+    def fetch_qs_port():
+        if table_data is not None or qs is None: return []
+        return list(qs.values("portfolio").annotate(units=Sum("units")))
+
+    def fetch_fk_port():
+        if table_data is not None or fk_qs is None: return []
+        return list(fk_qs.values("portfolio").annotate(units=Sum("units")))
+
+    def fetch_qs_agg():
+        if table_data is not None or qs is None: return {}
+        return qs.aggregate(sp=Sum("spend_sp"), sb=Sum("spend_sb"), sd=Sum("spend_sd"))
+
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        f_qs_trend = executor.submit(fetch_qs_trend)
+        f_fk_trend = executor.submit(fetch_fk_trend)
+        f_qs_port = executor.submit(fetch_qs_port)
+        f_fk_port = executor.submit(fetch_fk_port)
+        f_qs_agg = executor.submit(fetch_qs_agg)
+
+        qs_trend_res = f_qs_trend.result()
+        fk_trend_res = f_fk_trend.result()
+        qs_port_res = f_qs_port.result()
+        fk_port_res = f_fk_port.result()
+        qs_agg_res = f_qs_agg.result()
+
+    if not preaggregated_trend:
+        for r in qs_trend_res:
             dt = str(r["date"])
             rev = float(r["revenue"] or 0)
             amazon_trend[dt] = rev
@@ -40,28 +70,14 @@ def generate_charts_data_orm(qs, fk_qs, table_data=None, preaggregated_trend=Non
                 "orders": int(r["orders"] or 0),
             }
 
-    if not preaggregated_trend and fk_qs is not None:
-        fk_trend = (
-            fk_qs.values("date")
-            .annotate(
-                revenue=Sum("revenue"),
-                total_spend=Sum("total_spend"),
-                pageviews=Sum("pageviews"),
-                orders=Sum("orders"),
-            )
-            .order_by("date")
-        )
-
-        for r in fk_trend:
+        for r in fk_trend_res:
             dt = str(r["date"])
             rev = float(r["revenue"] or 0)
             flipkart_trend[dt] = rev
             if dt not in merged_trend:
                 merged_trend[dt] = {
-                    "revenue": 0.0,
-                    "total_spend": 0.0,
-                    "pageviews": 0,
-                    "orders": 0,
+                    "revenue": 0.0, "total_spend": 0.0,
+                    "pageviews": 0, "orders": 0,
                 }
             merged_trend[dt]["revenue"] += rev
             merged_trend[dt]["total_spend"] += float(r["total_spend"] or 0)
@@ -90,23 +106,18 @@ def generate_charts_data_orm(qs, fk_qs, table_data=None, preaggregated_trend=Non
             sb_sum += float(r.get("spend_sb", 0))
             sd_sum += float(r.get("spend_sd", 0))
     else:
-        if qs is not None:
-            qs_port = qs.values("portfolio").annotate(units=Sum("units"))
-            for r in qs_port:
-                p = r["portfolio"] or "Unmapped"
-                merged_port[p] = merged_port.get(p, 0) + int(r["units"] or 0)
+        for r in qs_port_res:
+            p = r["portfolio"] or "Unmapped"
+            merged_port[p] = merged_port.get(p, 0) + int(r["units"] or 0)
 
-        if fk_qs is not None:
-            fk_port = fk_qs.values("portfolio").annotate(units=Sum("units"))
-            for r in fk_port:
-                p = r["portfolio"] or "Unmapped"
-                merged_port[p] = merged_port.get(p, 0) + int(r["units"] or 0)
-                
-        if qs is not None:
-            agg = qs.aggregate(sp=Sum("spend_sp"), sb=Sum("spend_sb"), sd=Sum("spend_sd"))
-            sp_sum += float(agg["sp"] or 0)
-            sb_sum += float(agg["sb"] or 0)
-            sd_sum += float(agg["sd"] or 0)
+        for r in fk_port_res:
+            p = r["portfolio"] or "Unmapped"
+            merged_port[p] = merged_port.get(p, 0) + int(r["units"] or 0)
+            
+        if qs_agg_res:
+            sp_sum += float(qs_agg_res.get("sp") or 0)
+            sb_sum += float(qs_agg_res.get("sb") or 0)
+            sd_sum += float(qs_agg_res.get("sd") or 0)
 
     sorted_ports = sorted(merged_port.items(), key=lambda x: x[1], reverse=True)[:10]
     port_labels = [k for k, v in sorted_ports]

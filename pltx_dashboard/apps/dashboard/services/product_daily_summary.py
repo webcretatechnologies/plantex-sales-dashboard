@@ -38,6 +38,7 @@ def rebuild_product_daily_summary_for_user(user, *, only_dates=None):
                 `user_id`, `date`, `platform`, `sku`, `asin`, `fsn`,
                 `portfolio`, `category`, `subcategory`,
                 `revenue`, `units_sold`, `page_views`, `orders`, `ad_spend`,
+                `spend_sp`, `spend_sb`, `spend_sd`,
                 `product_clicks`, `sales`
             )
             SELECT
@@ -55,6 +56,9 @@ def rebuild_product_daily_summary_for_user(user, *, only_dates=None):
                 SUM(pageviews),
                 SUM(orders),
                 SUM(total_spend),
+                SUM(spend_sp),
+                SUM(spend_sb),
+                SUM(spend_sd),
                 0,
                 SUM(units)
             FROM `{az_tbl}`
@@ -73,6 +77,7 @@ def rebuild_product_daily_summary_for_user(user, *, only_dates=None):
                 `user_id`, `date`, `platform`, `sku`, `asin`, `fsn`,
                 `portfolio`, `category`, `subcategory`,
                 `revenue`, `units_sold`, `page_views`, `orders`, `ad_spend`,
+                `spend_sp`, `spend_sb`, `spend_sd`,
                 `product_clicks`, `sales`
             )
             SELECT
@@ -90,6 +95,9 @@ def rebuild_product_daily_summary_for_user(user, *, only_dates=None):
                 SUM(p.pageviews),
                 SUM(p.orders),
                 SUM(p.total_spend),
+                SUM(p.spend_sp),
+                SUM(p.spend_sb),
+                SUM(p.spend_sd),
                 COALESCE(MAX(t.product_clicks), 0),
                 COALESCE(MAX(t.sales), SUM(p.units))
             FROM `{fk_tbl}` p

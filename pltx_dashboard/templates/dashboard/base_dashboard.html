@@ -46,646 +46,21 @@
     <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
     <link rel="stylesheet" href="https://cdn.datatables.net/1.13.8/css/jquery.dataTables.min.css">
     <script src="https://cdn.datatables.net/1.13.8/js/jquery.dataTables.min.js"></script>
-    <style>
-        /* DataTables inside modals — light theme */
-        .tbl-overlay .dataTables_wrapper {
-            font-size: 12px;
-            color: var(--text, #0f172a);
-        }
 
-        .tbl-overlay .dataTables_wrapper .dataTables_length,
-        .tbl-overlay .dataTables_wrapper .dataTables_filter,
-        .tbl-overlay .dataTables_wrapper .dataTables_info,
-        .tbl-overlay .dataTables_wrapper .dataTables_paginate {
-            margin-bottom: 8px;
-        }
-
-        .tbl-overlay .dataTables_wrapper .dataTables_filter input,
-        .tbl-overlay .dataTables_wrapper .dataTables_length select {
-            background: #ffffff;
-            color: var(--text, #0f172a);
-            border: 1px solid var(--border, #e2e8f0);
-            border-radius: 6px;
-            padding: 4px 8px;
-        }
-
-        .tbl-overlay .dataTables_wrapper .dataTables_paginate .paginate_button {
-            background: #ffffff;
-            color: var(--text, #0f172a) !important;
-            border: 1px solid var(--border, #e2e8f0);
-            border-radius: 4px;
-            padding: 3px 10px;
-            cursor: pointer;
-            margin: 0 2px;
-        }
-
-        .tbl-overlay .dataTables_wrapper .dataTables_paginate .paginate_button.current,
-        .tbl-overlay .dataTables_wrapper .dataTables_paginate .paginate_button:hover {
-            background: var(--accent, #3b82f6) !important;
-            color: #fff !important;
-            border-color: var(--accent, #3b82f6);
-        }
-
-        .tbl-overlay .dataTables_wrapper .dataTables_paginate .paginate_button.disabled,
-        .tbl-overlay .dataTables_wrapper .dataTables_paginate .paginate_button.disabled:hover {
-            opacity: 0.4;
-            cursor: not-allowed;
-        }
-
-        .tbl-overlay .dt-top {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 8px 0 6px;
-            gap: 12px;
-            flex-wrap: wrap;
-        }
-
-        .tbl-overlay .dt-bottom {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 6px 0 0;
-        }
-
-        .tbl-overlay table.dataTable thead th {
-            background: #f8fafc !important;
-            color: var(--text, #0f172a);
-            cursor: pointer;
-            user-select: none;
-        }
-
-        .drawer-overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(15, 23, 42, 0.5);
-            backdrop-filter: blur(4px);
-            -webkit-backdrop-filter: blur(4px);
-            z-index: 1000;
-            display: none;
-            opacity: 0;
-            pointer-events: none;
-            transition: opacity 0.3s ease;
-        }
-
-        .drawer-overlay:not(.open) {
-            display: none !important;
-            opacity: 0 !important;
-            pointer-events: none !important;
-        }
-
-        .drawer-overlay.open {
-            display: block;
-            opacity: 1;
-            pointer-events: auto;
-        }
-
-        body.filter-drawer-open .secondary-filter-bar {
-            background: transparent !important;
-            border-color: transparent !important;
-            box-shadow: none !important;
-        }
-
-        body.filter-drawer-open .filter-drawer {
-            pointer-events: auto;
-        }
-
-        body.filter-drawer-open .btn-open-drawer {
-            visibility: hidden;
-        }
-
-        .filter-drawer {
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            bottom: 20px;
-            width: 640px;
-            max-height: calc(100vh - 40px);
-            pointer-events: none;
-            max-width: calc(100% - 40px);
-            background: #ffffff;
-            box-shadow: 0 12px 48px rgba(0, 0, 0, 0.2);
-            z-index: 1002;
-            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s;
-            display: flex;
-            flex-direction: column;
-            opacity: 0;
-            transform: translateX(120%);
-            border: 1px solid #e2e8f0;
-            overflow: hidden;
-        }
-
-        .filter-drawer:not(.open) {
-            pointer-events: none !important;
-        }
-
-        .filter-drawer.open {
-            opacity: 1;
-            transform: translateX(0);
-            pointer-events: auto;
-        }
-
-        .apply-filters-btn {
-            flex: 1;
-            padding: 12px 24px;
-            background: #008080;
-            color: #ffffff;
-            border: none;
-            border-radius: 8px;
-            font-size: 14px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-
-        .apply-filters-btn:hover {
-            background: #006666;
-            box-shadow: 0 4px 12px rgba(0, 128, 128, 0.2);
-        }
-
-        .reset-filters-btn {
-            padding: 12px 24px;
-            background: #ffffff;
-            color: #64748b;
-            border: 1px solid #cbd5e1;
-            border-radius: 8px;
-            font-size: 14px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.2s;
-            white-space: nowrap;
-        }
-
-        .reset-filters-btn:hover {
-            background: #f1f5f9;
-            color: #0f172a;
-            border-color: #94a3b8;
-        }
-
-        .filter-drawer-footer {
-            padding: 20px 24px;
-            border-top: 1px solid #e2e8f0;
-            background: #f8fafc;
-            border-bottom-left-radius: 16px;
-            border-bottom-right-radius: 16px;
-            flex-shrink: 0;
-            display: flex;
-            gap: 12px;
-        }
-
-        .filter-drawer-header {
-            padding: 20px 24px;
-            border-bottom: 1px solid #e2e8f0;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            background: #f8fafc;
-            flex-shrink: 0;
-            border-top-left-radius: 16px;
-            border-top-right-radius: 16px;
-        }
-
-        .filter-drawer-header h3 {
-            margin: 0;
-            font-size: 16px;
-            font-weight: 700;
-            color: #0f172a;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .filter-drawer-close {
-            background: none;
-            border: none;
-            cursor: pointer;
-            color: #64748b;
-            padding: 4px;
-            border-radius: 4px;
-            display: flex;
-            transition: all 0.2s;
-        }
-
-        .filter-drawer-close:hover {
-            background: #e2e8f0;
-            color: #0f172a;
-        }
-
-        .filter-drawer-body {
-            flex: 1 1 auto;
-            min-height: 0;
-            /* Ensures child can shrink and trigger overflow scroll */
-            overflow-y: auto !important;
-            overflow-x: hidden;
-            -webkit-overflow-scrolling: touch;
-            overscroll-behavior: contain;
-            padding: 24px;
-            display: flex;
-            flex-direction: column;
-            gap: 20px;
-        }
-
-        .btn-open-drawer {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            padding: 7px 14px;
-            background: #ffffff;
-            border: 1px solid #cbd5e1;
-            border-radius: 6px;
-            font-family: 'Inter', sans-serif;
-            font-size: 13px;
-            font-weight: 600;
-            color: #334155;
-            cursor: pointer;
-            transition: all 0.2s;
-            margin-left: auto;
-            position: relative;
-            z-index: 2;
-            pointer-events: auto;
-        }
-
-        .btn-open-drawer:hover {
-            background: #f1f5f9;
-            border-color: #94a3b8;
-            color: #0f172a;
-        }
-
-        .filter-drawer .topbar-filter-group {
-            min-width: 100%;
-            width: 100%;
-            flex-direction: column;
-            align-items: flex-start;
-            gap: 6px;
-        }
-
-        .filter-drawer .filter-label {
-            margin-right: 0;
-            margin-bottom: 2px;
-        }
-
-
-        .filter-drawer .select2-container {
-            width: 100% !important;
-        }
-
-        .filter-drawer .select2-container .select2-selection--multiple,
-        .filter-drawer .select2-container .select2-selection--single {
-            min-height: 38px !important;
-            height: auto !important;
-            padding: 4px 8px;
-        }
-
-        .filter-drawer .select2-selection__rendered {
-            line-height: normal !important;
-        }
-
-        .filter-drawer .topbar-filter-group {
-            width: 100% !important;
-            min-width: 100% !important;
-        }
-    </style>
 
     <link rel="stylesheet" href="/static/css/dashboard.css?v=4">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css">
-    <style>
-        /* Select2 dropdowns must sit above the fixed filter drawer and scroll internally. */
-        .dashboard-filter-select2-dropdown,
-        .select2-container--open .select2-dropdown {
-            z-index: 10050 !important;
-        }
 
-        .dashboard-filter-select2-dropdown .select2-results__options,
-        .select2-container--open .select2-results__options {
-            max-height: 260px !important;
-            overflow-y: auto !important;
-            -webkit-overflow-scrolling: touch;
-        }
-
-        .filter-drawer .select2-container {
-            width: 100% !important;
-        }
-
-        .filter-drawer .select2-selection--multiple,
-        .filter-drawer .select2-selection--single {
-            min-height: 38px !important;
-            height: auto !important;
-        }
-
-        /* ── Export Calculated Data Section ── */
-        .download-export-section {
-            margin: 40px 0 24px;
-            padding: 0;
-        }
-
-        .export-card {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 24px;
-            background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 40%, #f0fdf4 100%);
-            border: 1px solid #bae6fd;
-            border-radius: 18px;
-            padding: 28px 36px;
-            box-shadow: 0 4px 16px rgba(14, 165, 233, 0.08), 0 1px 4px rgba(0, 0, 0, 0.03);
-            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        }
-
-        .export-card:hover {
-            box-shadow: 0 8px 28px rgba(14, 165, 233, 0.14), 0 2px 6px rgba(0, 0, 0, 0.04);
-            transform: translateY(-2px);
-        }
-
-        .export-card-left {
-            display: flex;
-            align-items: center;
-            gap: 20px;
-            flex: 1;
-        }
-
-        .export-icon-wrap {
-            width: 52px;
-            height: 52px;
-            border-radius: 14px;
-            background: linear-gradient(135deg, #0ea5e9, #06b6d4);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            flex-shrink: 0;
-            box-shadow: 0 4px 12px rgba(14, 165, 233, 0.3);
-        }
-
-        .export-icon-wrap .material-icons-round {
-            font-size: 26px;
-            color: #ffffff;
-        }
-
-        .export-text {
-            flex: 1;
-        }
-
-        .export-title {
-            font-size: 17px;
-            font-weight: 700;
-            color: #0c4a6e;
-            margin-bottom: 4px;
-            letter-spacing: -0.3px;
-        }
-
-        .export-subtitle {
-            font-size: 13px;
-            color: #64748b;
-            line-height: 1.5;
-        }
-
-        .export-card-actions {
-            display: flex;
-            gap: 12px;
-            flex-shrink: 0;
-        }
-
-        .export-btn {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            padding: 12px 24px;
-            border: none;
-            border-radius: 12px;
-            font-family: 'Inter', sans-serif;
-            font-size: 14px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-            white-space: nowrap;
-        }
-
-        .export-btn:hover {
-            transform: translateY(-2px);
-        }
-
-        .csv-btn {
-            background: linear-gradient(135deg, #059669, #10b981);
-            color: #ffffff;
-            box-shadow: 0 4px 14px rgba(5, 150, 105, 0.3);
-        }
-
-        .csv-btn:hover {
-            box-shadow: 0 6px 20px rgba(5, 150, 105, 0.4);
-        }
-
-        .excel-btn {
-            background: linear-gradient(135deg, #2563eb, #3b82f6);
-            color: #ffffff;
-            box-shadow: 0 4px 14px rgba(37, 99, 235, 0.3);
-        }
-
-        .excel-btn:hover {
-            box-shadow: 0 6px 20px rgba(37, 99, 235, 0.4);
-        }
-
-        @media (max-width: 768px) {
-            .export-card {
-                flex-direction: column;
-                align-items: flex-start;
-                padding: 20px 24px;
-            }
-
-            .export-card-actions {
-                width: 100%;
-            }
-
-            .export-btn {
-                flex: 1;
-                justify-content: center;
-            }
-        }
-
-        .filter-drawer .select2-container {
-            width: 100% !important;
-        }
-
-        .filter-drawer .select2-container .select2-selection--multiple,
-        .filter-drawer .select2-container .select2-selection--single {
-            min-height: 38px !important;
-            height: auto !important;
-            padding: 4px 8px;
-        }
-
-        .filter-drawer .select2-selection__rendered {
-            line-height: normal !important;
-        }
-
-        .filter-drawer .topbar-filter-group {
-            width: 100% !important;
-            min-width: 100% !important;
-        }
-    </style>
-    <!-- Page-specific styles (Upload / Management pages inject their CSS here).
-         This tag is cleared by dashboardContentLoaded JS on every HTMX navigation
-         so no non-dashboard CSS can persist and distort the dashboard layout. -->
+    <!-- Page-specific styles (Upload / Management pages inject their CSS here). -->
+    {% block extra_head_css %}{% endblock %}
     <style id="page-specific-styles">
-        {% block extra_head_css %}{% endblock %}
+        {% block extra_head_inline_css %}{% endblock %}
     </style>
     {% block extra_head_scripts %}{% endblock %}
 </head>
 
 <body class="has-sidebar">
-    <script>
-        (function () {
-            function releaseDashboardClickBlockers() {
-                var loadingOverlay = document.getElementById('htmxLoadingOverlay');
-                if (loadingOverlay) {
-                    loadingOverlay.style.pointerEvents = 'none';
-                    if (loadingOverlay.dataset.allowVisible !== '1') {
-                        loadingOverlay.style.display = 'none';
-                    }
-                }
-
-                var drawer = document.getElementById('filterDrawer');
-                var overlay = document.getElementById('filterDrawerOverlay');
-                if (drawer && overlay && !drawer.classList.contains('open')) {
-                    document.body.classList.remove('filter-drawer-open');
-                    overlay.classList.remove('open');
-                    overlay.style.pointerEvents = 'none';
-                    overlay.style.display = 'none';
-                    drawer.style.pointerEvents = 'none';
-                }
-            }
-
-            window.releaseDashboardClickBlockers = releaseDashboardClickBlockers;
-
-            window.toggleFilterDrawer = window.toggleFilterDrawer || function () {
-                var drawer = document.getElementById('filterDrawer');
-                var overlay = document.getElementById('filterDrawerOverlay');
-                if (!drawer || !overlay) return;
-
-                var isOpening = !drawer.classList.contains('open');
-                var topbarContainer = document.getElementById('topbarDefaultFilters');
-                var drawerContainer = document.getElementById('drawerDefaultFilters');
-                var divider = document.getElementById('drawerDefaultFiltersDivider');
-                var secBar = document.getElementById('secondaryFilters');
-
-                if (isOpening) {
-                    if (secBar) {
-                        secBar.style.zIndex = '1001';
-                        secBar.dataset.originalBackdrop = secBar.style.backdropFilter || '';
-                        secBar.style.backdropFilter = 'none';
-                        secBar.style.webkitBackdropFilter = 'none';
-                    }
-                    document.body.style.overflow = 'hidden';
-                    document.body.classList.add('filter-drawer-open');
-                    if (topbarContainer && drawerContainer) {
-                        while (topbarContainer.firstChild) {
-                            drawerContainer.appendChild(topbarContainer.firstChild);
-                        }
-                        if (divider) divider.style.display = 'block';
-                    }
-                    drawer.classList.add('open');
-                    overlay.classList.add('open');
-                    overlay.style.display = 'block';
-                    drawer.style.pointerEvents = 'auto';
-                    setTimeout(function () {
-                        if (typeof window.refreshDashboardFilterSelects === 'function') {
-                            window.refreshDashboardFilterSelects();
-                        }
-                    }, 0);
-                } else {
-                    drawer.classList.remove('open');
-                    overlay.classList.remove('open');
-                    document.body.classList.remove('filter-drawer-open');
-                    overlay.style.pointerEvents = 'none';
-                    overlay.style.display = 'none';
-                    drawer.style.pointerEvents = 'none';
-                    if (topbarContainer && drawerContainer) {
-                        while (drawerContainer.firstChild) {
-                            topbarContainer.appendChild(drawerContainer.firstChild);
-                        }
-                        if (divider) divider.style.display = 'none';
-                    }
-                    setTimeout(function () {
-                        if (secBar) {
-                            secBar.style.zIndex = '';
-                            secBar.style.backdropFilter = secBar.dataset.originalBackdrop || '';
-                            secBar.style.webkitBackdropFilter = secBar.dataset.originalBackdrop || '';
-                        }
-                        document.body.style.overflow = '';
-                        if (typeof window.refreshDashboardFilterSelects === 'function') {
-                            window.refreshDashboardFilterSelects();
-                        }
-                    }, 300);
-                }
-            };
-
-            window.forceDashboardRefresh = window.forceDashboardRefresh || async function (button) {
-                if (button && button.disabled) return;
-                releaseDashboardClickBlockers();
-
-                if (button) {
-                    button.disabled = true;
-                    button.classList.add('is-loading');
-                    var labelNode = button.querySelector('.sidebar-refresh-btn-text');
-                    if (labelNode) labelNode.textContent = 'Refreshing...';
-                }
-
-                var timeout = null;
-                try {
-                    var controller = window.AbortController ? new AbortController() : null;
-                    timeout = setTimeout(function () {
-                        if (controller) controller.abort();
-                    }, 4000);
-                    await fetch(window.DASHBOARD_REFRESH_NOW_URL || '/api/dashboard/refresh-now/', {
-                        credentials: 'same-origin',
-                        cache: 'no-store',
-                        signal: controller ? controller.signal : undefined,
-                        headers: { 'X-Requested-With': 'XMLHttpRequest' }
-                    });
-                } catch (e) {
-                    // reload anyway
-                } finally {
-                    if (timeout) clearTimeout(timeout);
-                }
-
-                var refreshedUrl = new URL(window.location.href);
-                refreshedUrl.searchParams.set('_refresh', String(Date.now()));
-                window.location.replace(refreshedUrl.toString());
-            };
-
-            if (!window.__dashboardClickDelegationBound) {
-                window.__dashboardClickDelegationBound = true;
-                document.addEventListener('click', function (event) {
-                    var refreshButton = event.target.closest && event.target.closest('#sidebarRefreshButton, [data-dashboard-action="refresh"]');
-                    if (refreshButton) {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        window.forceDashboardRefresh(refreshButton);
-                        return;
-                    }
-
-                    var filterButton = event.target.closest && event.target.closest('.btn-open-drawer, [data-dashboard-action="open-filters"]');
-                    if (filterButton) {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        window.releaseDashboardClickBlockers();
-                        window.toggleFilterDrawer();
-                        return;
-                    }
-
-                    var drawer = document.getElementById('filterDrawer');
-                    if (drawer && drawer.classList.contains('open')) {
-                        var clickedSelect2 = event.target.closest && event.target.closest('.select2-container, .select2-dropdown');
-                        if (clickedSelect2) return;
-                        var clickedInsideDrawer = event.target.closest && event.target.closest('#filterDrawer');
-                        if (!clickedInsideDrawer) {
-                            window.toggleFilterDrawer();
-                        }
-                    }
-                }, true);
-            }
-        })();
-    </script>
+    <script src="/static/js/dashboard.js?v=2"></script>
 
     <!-- HTMX Loading Spinner Overlay -->
     <div id="htmxLoadingOverlay" style="
@@ -712,7 +87,7 @@
             <div style="
             width: 40px; height: 40px;
             border: 3px solid rgba(59,130,246,0.2);
-            border-top-color: #3b82f6;
+            border-top-color: #0fafbf;
             border-radius: 50%;
             animation: htmxSpin 0.7s linear infinite;
         "></div>
@@ -720,33 +95,7 @@
             </div>
         </div>
     </div>
-    <style>
-        @keyframes htmxSpin {
-            to {
-                transform: rotate(360deg);
-            }
-        }
 
-        .filter-drawer .select2-container {
-            width: 100% !important;
-        }
-
-        .filter-drawer .select2-container .select2-selection--multiple,
-        .filter-drawer .select2-container .select2-selection--single {
-            min-height: 38px !important;
-            height: auto !important;
-            padding: 4px 8px;
-        }
-
-        .filter-drawer .select2-selection__rendered {
-            line-height: normal !important;
-        }
-
-        .filter-drawer .topbar-filter-group {
-            width: 100% !important;
-            min-width: 100% !important;
-        }
-    </style>
 
     <!-- Django Messages Toast Notifications -->
     {% if messages %}
@@ -779,8 +128,8 @@
             max-width: 640px;
             pointer-events: auto;
             animation: toastSlideIn 0.3s cubic-bezier(0.4,0,0.2,1);
-        ">
-            <span class="material-icons-round" style="font-size:18px;">{% if 'error' in message.tags %}error{% elif
+        <div class="toast-msg toast-{{ message.tags }}">
+            <span class="material-icons-round">{% if 'error' in message.tags %}error{% elif
                 'success' in message.tags %}check_circle{% else %}info{% endif %}</span>
             {{ message }}
         </div>
@@ -1039,7 +388,7 @@
                                 <div style="position: relative; width: 100%; overflow: visible;">
                                     <input type="text" id="flatpickrRange" placeholder="Select Dates..."
                                         style="width: 100%; background: #ffffff; border: 1px solid #cbd5e1; border-radius: 6px; padding: 7px 12px; padding-right: 36px; font-size: 13px; font-family: 'Inter', sans-serif; color: #0f172a; outline: none; cursor: pointer; transition: border-color 0.2s; position: relative; z-index: 1;"
-                                        onfocus="this.style.borderColor='#3b82f6'">
+                                        onfocus="this.style.borderColor='#0fafbf'">
                                     <span class="material-icons-round"
                                         onclick="document.getElementById('flatpickrRange').click()"
                                         style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); cursor: pointer; font-size: 18px; color: #64748b; transition: color 0.2s; z-index: 2; pointer-events: auto;"
@@ -1051,9 +400,9 @@
                                 <input type="hidden" id="customEndDate" name="end_date"
                                     value="{{ request.GET.end_date }}">
                                 <button type="button"
-                                    style="padding: 7px 16px; background: #2563eb; color: #ffffff; border: none; border-radius: 6px; font-family: 'Inter', sans-serif; font-weight: 600; font-size: 12px; cursor: pointer; transition: all 0.2s; box-shadow: 0 2px 4px rgba(37,99,235,0.2);"
-                                    onmouseover="this.style.background='#1d4ed8'; this.style.transform='translateY(-1px)';"
-                                    onmouseout="this.style.background='#2563eb'; this.style.transform='translateY(0)';"
+                                    style="padding: 7px 16px; background: #0fafbf; color: #ffffff; border: none; border-radius: 6px; font-family: 'Inter', sans-serif; font-weight: 600; font-size: 12px; cursor: pointer; transition: all 0.2s; box-shadow: 0 2px 4px rgba(15,175,191,0.2);"
+                                    onmouseover="this.style.background='#098284'; this.style.transform='translateY(-1px)';"
+                                    onmouseout="this.style.background='#0fafbf'; this.style.transform='translateY(0)';"
                                     onclick="submitCustomDate()">Apply</button>
                             </div>
                         </div>
@@ -1112,13 +461,22 @@
 
 
                     </div>
-                    <!-- Actions (Reset) -->
-
+                    <!-- Actions (Reset/Apply/More Filters) -->
                     <div style="flex:1"></div>
-                    <button type="button" class="btn-open-drawer" data-dashboard-action="open-filters" onclick="toggleFilterDrawer()">
-                        <span class="material-icons-round" style="font-size:18px;">filter_list</span>
-                        More Filters
-                    </button>
+                    <div class="top-nav-actions" style="margin-left:auto; display:flex; gap:12px; align-items:center;">
+                        <button type="button" class="btn btn-secondary" style="height: 40px; padding: 0 16px; border-radius: 6px; font-weight: 500; cursor: pointer; border: 1px solid #cbd5e1; background: #ffffff;"
+                                onclick="window.location.href=window.location.pathname" title="Reset all filters">
+                            Reset
+                        </button>
+                        <button type="button" id="topbarApplyFiltersBtn" class="btn btn-primary" style="height: 40px; padding: 0 16px; border-radius: 6px; font-weight: 500; display:flex; align-items:center; gap:8px; cursor: pointer; border: none; background: #0fafbf; color: #ffffff;"
+                                onclick="applyDashboardFilters();">
+                            <span>Apply</span>
+                        </button>
+                        <button type="button" class="btn-open-drawer" data-dashboard-action="open-filters" onclick="toggleFilterDrawer()" style="height: 40px; border-radius: 6px; cursor: pointer;">
+                            <span class="material-icons-round" style="font-size:18px;">filter_list</span>
+                            More Filters
+                        </button>
+                    </div>
                 </div>
 
 
@@ -1401,9 +759,9 @@
 
             box.style.display = 'flex';
             if (status === "processing" || status === "partial") {
-                box.style.background = '#eff6ff';
-                box.style.border = '1px solid #93c5fd';
-                box.style.color = '#1e3a8a';
+                box.style.background = '#e0f7fa';
+                box.style.border = '1px solid #80deea';
+                box.style.color = '#006064';
                 icon.textContent = 'autorenew';
             } else if (status === "paused") {
                 box.style.background = '#fef3c7';
@@ -1731,7 +1089,7 @@
                             dot.title = "Data uploaded — dashboard pending companion files";
                         } else {
                             // Blue dot = fully processed, dashboard ready
-                            dot.style.background = "#3b82f6";
+                            dot.style.background = "#0fafbf";
                             dot.title = "Dashboard data available";
                         }
                         dayElem.style.position = "relative";

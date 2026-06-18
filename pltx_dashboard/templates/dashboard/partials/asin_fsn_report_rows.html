@@ -1,6 +1,7 @@
 {% load dashboard_extras %}
 {% for row in rows %}
 <tr>
+    <td style="white-space: nowrap;">{{ row.date|date:"d M Y"|default:"-" }}</td>
     <td style="font-weight:600;">{{ row.product_id|default:"-" }}</td>
     <td>{{ row.sku|default:"-" }}</td>
     <td>{{ row.platform|default:"-" }}</td>
@@ -11,6 +12,6 @@
 </tr>
 {% empty %}
 <tr>
-    <td colspan="7" class="empty" style="text-align:center;padding:20px;color:var(--muted);">No data available</td>
+    <td colspan="8" class="empty" style="text-align:center;padding:20px;color:var(--muted);">No data available</td>
 </tr>
 {% endfor %}

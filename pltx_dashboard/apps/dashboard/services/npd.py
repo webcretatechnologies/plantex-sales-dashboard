@@ -170,7 +170,7 @@ def _fk_clicks_by_fsn(user, filters, fsns):
 
 
 
-def build_npd_performance(user, filters, qs_f, fk_qs_f, limit=None):
+def build_npd_performance(user, filters, qs_f, fk_qs_f, limit=None, include_trend=True):
     az_metrics = {}
     fk_metrics = {}
     from apps.dashboard.services.analytics_services_orm_pipeline import _get_product_daily_summary_querysets
@@ -338,7 +338,7 @@ def build_npd_performance(user, filters, qs_f, fk_qs_f, limit=None):
     if limit:
         rows = rows[:limit]
 
-    trend = build_npd_trend(user, filters, qs_f, fk_qs_f, set(az_metrics), set(fk_metrics))
+    trend = build_npd_trend(user, filters, qs_f, fk_qs_f, set(az_metrics), set(fk_metrics)) if include_trend else {"labels": [], "pageviews": [], "units": [], "conversion": []}
     return {"rows": rows, "trend": trend}
 
 

@@ -141,6 +141,22 @@ def _apply_in_filter(qs, field_name, values, chunk_size=LARGE_IN_FILTER_CHUNK_SI
     return qs.filter(predicate)
 
 
+def _has_sku_filters(filters):
+    missing_fields = {
+        "brand_name",
+        "ratings",
+        "finish",
+        "category_manager",
+        "series_name",
+        "material",
+        "size",
+        "inventory_health",
+        "parent_asin",
+        "sku",
+    }
+    return any(filters.get(field) for field in missing_fields)
+
+
 def _has_mapping_filters(filters):
     return bool(filters.get("parent_asin") or filters.get("sku") or any(filters.get(field) for field in MAPPING_FILTER_FIELDS))
 
@@ -374,6 +390,125 @@ def apply_dashboard_entity_filters(qs, fk_qs, filters, user=None):
         fk_qs = fk_qs.none()
 
     return qs, fk_qs
+
+
+def get_filtered_mapping_querysets(filters, user):
+    from apps.dashboard.models import CategoryMapping, FlipkartCategoryMap
+
+    az_map = CategoryMapping.objects.filter(user=user)
+    fk_map = FlipkartCategoryMap.objects.filter(user=user)
+
+    platform = filters.get("platform")
+    show_amazon = platform != "Flipkart"
+    show_flipkart = platform != "Amazon"
+
+    az_map = _apply_value_filter(az_map, "category", filters.get("category"))
+    fk_map = _apply_value_filter(fk_map, "category", filters.get("category"))
+
+    asin_filter = filters.get("asin")
+    fsn_filter = filters.get("fsn")
+    az_map = _apply_value_filter(az_map, "asin", asin_filter)
+    fk_map = _apply_value_filter(fk_map, "fsn", fsn_filter)
+
+    if asin_filter and not fsn_filter:
+        fk_map = fk_map.none()
+    elif fsn_filter and not asin_filter:
+        az_map = az_map.none()
+
+    az_map = _apply_value_filter(az_map, "portfolio", filters.get("portfolio"))
+    fk_map = _apply_value_filter(fk_map, "portfolio", filters.get("portfolio"))
+    az_map = _apply_value_filter(az_map, "subcategory", filters.get("subcategory"))
+    fk_map = _apply_value_filter(fk_map, "subcategory", filters.get("subcategory"))
+
+    launch_start, launch_end = _resolve_launch_date_bounds(filters)
+    if launch_start or launch_end:
+        az_map = az_map.exclude(launch_date__isnull=True)
+        fk_map = fk_map.exclude(launch_date__isnull=True)
+        if launch_start:
+            az_map = az_map.filter(launch_date__gte=launch_start)
+            fk_map = fk_map.filter(launch_date__gte=launch_start)
+        if launch_end:
+            az_map = az_map.filter(launch_date__lte=launch_end)
+            fk_map = fk_map.filter(launch_date__lte=launch_end)
+
+    for field in MAPPING_FILTER_FIELDS:
+        if field in {"category", "portfolio", "subcategory"}:
+            continue
+        az_map = _apply_mapping_filter(az_map, field, filters.get(field))
+        fk_map = _apply_mapping_filter(fk_map, field, filters.get(field))
+
+    parent_values = _mapping_values(filters.get("parent_asin"))
+    if parent_values:
+        child_asins = set(
+            CategoryMapping.objects.filter(
+                user=user,
+                parent_asin__in=parent_values,
+            ).values_list("asin", flat=True)
+        )
+        az_map = az_map.filter(asin__in=child_asins)
+        fk_map = fk_map.filter(asin__in=child_asins)
+
+    sku_values = _mapping_values(filters.get("sku"))
+    if sku_values:
+        az_map = az_map.filter(msku__in=sku_values)
+        fk_map = fk_map.filter(sku__in=sku_values)
+
+    inv_health_vals = _mapping_values(filters.get("inventory_health"))
+    if inv_health_vals and user:
+        from apps.dashboard.models import DashboardInventoryHealthSummary
+        from django.db.models import Max
+        max_date = DashboardInventoryHealthSummary.objects.filter(user=user).aggregate(Max('date'))['date__max']
+        if max_date:
+            fk_statuses = []
+            for status in inv_health_vals:
+                if status == "In Stock":
+                    fk_statuses.append("Ideal Stocking")
+                elif status == "Low Stock":
+                    fk_statuses.append("Understock")
+                elif status == "OOS":
+                    fk_statuses.append("OOS")
+                    fk_statuses.append("Nearly OOS")
+                elif status == "Overstock":
+                    fk_statuses.append("Over Stock")
+                    fk_statuses.append("Highly Over Stock")
+                    fk_statuses.append("Not Selling")
+
+            allowed_asins_inv = set(
+                DashboardInventoryHealthSummary.objects.filter(
+                    user=user,
+                    date=max_date,
+                    platform__in=["Amazon", "Combined"],
+                    status__in=inv_health_vals,
+                )
+                .exclude(asin__isnull=True)
+                .exclude(asin="")
+                .values_list("asin", flat=True)
+            )
+            allowed_fsns_inv = set(
+                DashboardInventoryHealthSummary.objects.filter(
+                    user=user,
+                    date=max_date,
+                    platform__in=["Flipkart", "Combined"],
+                    fk_status__in=fk_statuses,
+                )
+                .exclude(fsn__isnull=True)
+                .exclude(fsn="")
+                .values_list("fsn", flat=True)
+            )
+
+            az_map = _apply_in_filter(az_map, "asin", allowed_asins_inv) if allowed_asins_inv else az_map.none()
+            fk_map = _apply_in_filter(fk_map, "fsn", allowed_fsns_inv) if allowed_fsns_inv else fk_map.none()
+        else:
+            az_map = az_map.none()
+            fk_map = fk_map.none()
+
+    if not show_amazon:
+        az_map = az_map.none()
+    if not show_flipkart:
+        fk_map = fk_map.none()
+
+    return az_map, fk_map
+
 
 
 def normalize_payload_filters(filters):

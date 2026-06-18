@@ -1,0 +1,1002 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Plantex KPI Calculation and Source Report</title>
+  <style>
+    :root {
+      --bg: #f4f0e7;
+      --panel: #fffdf8;
+      --panel-strong: #f8f4ea;
+      --ink: #182321;
+      --muted: #5d6b67;
+      --line: #d9d2c3;
+      --brand: #134e5d;
+      --brand-dark: #0d3742;
+      --brand-soft: #ddecef;
+      --accent: #a86b2d;
+      --accent-soft: #f8ebdb;
+      --good: #216946;
+      --good-soft: #e0f3e7;
+      --warn: #9d6216;
+      --warn-soft: #fff2df;
+      --danger: #9e3434;
+      --danger-soft: #fde5e3;
+      --info: #234f8b;
+      --info-soft: #dfeafe;
+      --shadow: 0 18px 38px rgba(32, 33, 29, 0.10);
+      --radius: 22px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Avenir Next", "Segoe UI", "Trebuchet MS", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(19, 78, 93, 0.10), transparent 28%),
+        radial-gradient(circle at top right, rgba(168, 107, 45, 0.12), transparent 30%),
+        linear-gradient(180deg, #f7f4ed 0%, #f1ece3 100%);
+      line-height: 1.55;
+    }
+
+    code {
+      font-family: "SFMono-Regular", "Menlo", "Consolas", monospace;
+      background: rgba(19, 78, 93, 0.08);
+      padding: 2px 6px;
+      border-radius: 6px;
+      font-size: 0.92em;
+    }
+
+    .shell {
+      max-width: 1460px;
+      margin: 0 auto;
+      padding: 30px 22px 64px;
+    }
+
+    .hero {
+      position: relative;
+      overflow: hidden;
+      border-radius: 32px;
+      padding: 34px;
+      color: #fff;
+      background: linear-gradient(135deg, rgba(19, 78, 93, 0.98), rgba(17, 43, 51, 0.98));
+      box-shadow: var(--shadow);
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      right: -60px;
+      bottom: -100px;
+      width: 280px;
+      height: 280px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(255,255,255,0.20), rgba(255,255,255,0.03) 60%, transparent 72%);
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 14px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.12);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    h1 {
+      margin: 18px 0 12px;
+      font-size: clamp(34px, 4vw, 56px);
+      line-height: 1.04;
+      letter-spacing: -0.03em;
+    }
+
+    .lede {
+      max-width: 980px;
+      margin: 0;
+      font-size: 18px;
+      color: rgba(255,255,255,0.86);
+    }
+
+    .meta {
+      margin-top: 18px;
+      color: rgba(255,255,255,0.74);
+      font-size: 14px;
+    }
+
+    .action-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 24px;
+    }
+
+    .action {
+      border: 0;
+      border-radius: 999px;
+      padding: 13px 20px;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+      color: #173030;
+      background: #f7f0dd;
+      box-shadow: 0 10px 26px rgba(0, 0, 0, 0.15);
+      transition: transform 0.18s ease;
+    }
+
+    .action.alt {
+      color: #fff;
+      background: rgba(255,255,255,0.12);
+      border: 1px solid rgba(255,255,255,0.18);
+      box-shadow: none;
+    }
+
+    .action:hover {
+      transform: translateY(-1px);
+    }
+
+    .section {
+      margin-top: 28px;
+    }
+
+    .section-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: end;
+      gap: 16px;
+      margin-bottom: 14px;
+    }
+
+    h2 {
+      margin: 0;
+      font-size: 30px;
+      letter-spacing: -0.03em;
+    }
+
+    .section-copy {
+      margin: 0;
+      max-width: 950px;
+      color: var(--muted);
+    }
+
+    .grid-4,
+    .grid-3,
+    .grid-2 {
+      display: grid;
+      gap: 16px;
+    }
+
+    .grid-4 {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .grid-3 {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .grid-2 {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid rgba(0,0,0,0.03);
+      border-radius: var(--radius);
+      padding: 24px;
+      box-shadow: var(--shadow);
+    }
+
+    .card.strong {
+      background: var(--panel-strong);
+    }
+
+    .summary-label {
+      color: var(--muted);
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 10px;
+    }
+
+    .summary-value {
+      font-size: clamp(26px, 2.4vw, 40px);
+      font-weight: 800;
+      letter-spacing: -0.04em;
+      margin-bottom: 8px;
+    }
+
+    .summary-note {
+      font-size: 14px;
+      color: var(--muted);
+    }
+
+    .flow-card {
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      padding: 20px;
+      background: linear-gradient(180deg, #fffdf9 0%, #fff9f1 100%);
+    }
+
+    .step {
+      display: inline-flex;
+      width: 36px;
+      height: 36px;
+      align-items: center;
+      justify-content: center;
+      border-radius: 50%;
+      background: var(--brand);
+      color: #fff;
+      font-weight: 800;
+      margin-bottom: 14px;
+    }
+
+    .flow-card h3,
+    .example-card h3,
+    .note-card h3 {
+      margin: 0 0 8px;
+      font-size: 20px;
+      letter-spacing: -0.02em;
+    }
+
+    .flow-card p,
+    .example-card p,
+    .note-card p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .badge.good {
+      color: var(--good);
+      background: var(--good-soft);
+    }
+
+    .badge.warn {
+      color: var(--warn);
+      background: var(--warn-soft);
+    }
+
+    .badge.danger {
+      color: var(--danger);
+      background: var(--danger-soft);
+    }
+
+    .badge.info {
+      color: var(--info);
+      background: var(--info-soft);
+    }
+
+    .pill-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .list {
+      margin: 12px 0 0;
+      padding-left: 18px;
+      color: var(--muted);
+    }
+
+    .list li + li {
+      margin-top: 8px;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+      background: var(--panel);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      border: 1px solid rgba(0,0,0,0.03);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    thead th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      padding: 16px 18px;
+      text-align: left;
+      background: #efe7da;
+      border-bottom: 1px solid var(--line);
+      color: #33433d;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      vertical-align: top;
+      white-space: nowrap;
+    }
+
+    tbody td {
+      padding: 18px;
+      border-bottom: 1px solid #ebe3d5;
+      vertical-align: top;
+      font-size: 14px;
+    }
+
+    tbody tr:hover {
+      background: #fffaf1;
+    }
+
+    .table-title {
+      margin-bottom: 5px;
+      font-weight: 800;
+      font-size: 16px;
+    }
+
+    .table-subtitle {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .example-card {
+      background: linear-gradient(180deg, #fffdfa 0%, #fff7ec 100%);
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      padding: 22px;
+    }
+
+    .math {
+      margin-top: 12px;
+      padding: 14px 16px;
+      border-radius: 16px;
+      background: rgba(19, 78, 93, 0.05);
+      font-family: "SFMono-Regular", "Menlo", "Consolas", monospace;
+      font-size: 13px;
+      color: #244148;
+      overflow-x: auto;
+    }
+
+    .callout {
+      border-radius: 22px;
+      padding: 22px;
+      background: linear-gradient(180deg, #fff8eb 0%, #fffdf8 100%);
+      border: 1px solid #ead9ba;
+      box-shadow: var(--shadow);
+    }
+
+    .callout h3 {
+      margin: 0 0 8px;
+      font-size: 22px;
+      letter-spacing: -0.02em;
+    }
+
+    .callout p {
+      margin: 0;
+      color: var(--muted);
+    }
+
+    .note-card {
+      border-radius: 20px;
+      padding: 20px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+    }
+
+    .footer {
+      margin-top: 30px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    @media (max-width: 1180px) {
+      .grid-4,
+      .grid-3 {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 760px) {
+      .shell {
+        padding: 18px 14px 42px;
+      }
+
+      .hero {
+        padding: 24px;
+      }
+
+      .grid-4,
+      .grid-3,
+      .grid-2 {
+        grid-template-columns: 1fr;
+      }
+
+      h2 {
+        font-size: 24px;
+      }
+    }
+
+    @media print {
+      body {
+        background: #fff;
+      }
+
+      .shell {
+        padding: 0;
+      }
+
+      .hero,
+      .card,
+      .table-wrap,
+      .callout,
+      .example-card {
+        box-shadow: none;
+      }
+
+      .action-row {
+        display: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <section class="hero">
+      <div class="eyebrow">Plantex Business-Friendly KPI Report</div>
+      <h1>How each KPI is calculated and which files are used</h1>
+      <p class="lede">
+        This report is written in simple language for business users. It explains which raw files feed each KPI,
+        what columns are picked from those files, which backend code performs the calculation, and where important
+        business assumptions can change the final number.
+      </p>
+      <div class="action-row">
+        <button class="action" type="button" onclick="downloadReport()">Download HTML Report</button>
+        <button class="action alt" type="button" onclick="window.print()">Print or Save as PDF</button>
+      </div>
+      <div class="meta">
+        Report file: <code>reports/plantex_kpi_source_report.html</code><br>
+        Reviewed against the current workspace sources in <code>Amazon files/</code>, <code>Flipkart files/</code>,
+        and the KPI logic inside the dashboard services.
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="grid-4">
+        <article class="card strong">
+          <div class="summary-label">Raw Source Types</div>
+          <div class="summary-value">7</div>
+          <div class="summary-note">Amazon sales, Amazon spend, Flipkart search traffic, Flipkart PLA, Flipkart category map, Flipkart inventory, and Flipkart FBA stock.</div>
+        </article>
+        <article class="card strong">
+          <div class="summary-label">Processing Layers</div>
+          <div class="summary-value">4</div>
+          <div class="summary-note">Raw file -> cleaned upload table -> processed dashboard table -> final KPI card.</div>
+        </article>
+        <article class="card strong">
+          <div class="summary-label">Main KPI Topics</div>
+          <div class="summary-value">14</div>
+          <div class="summary-note">Revenue, orders, units, traffic, spend, ROAS, TACOS, CVR, growth, SKU health, status, and inventory health.</div>
+        </article>
+        <article class="card strong">
+          <div class="summary-label">Important Cautions</div>
+          <div class="summary-value">6</div>
+          <div class="summary-note">Including Flipkart orders, 70% revenue adjustment, click-as-page-view logic, history dependency, inventory date alignment, and Amazon stock dependency.</div>
+        </article>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <div>
+          <h2>KPI calculation journey</h2>
+          <p class="section-copy">This is the easiest way to understand the dashboard flow. First the system reads raw files, then it cleans them, then it merges them, and finally it shows one KPI card to the user.</p>
+        </div>
+      </div>
+      <div class="grid-4">
+        <article class="flow-card">
+          <div class="step">1</div>
+          <h3>Raw business files are uploaded</h3>
+          <p>Excel and CSV files from Amazon and Flipkart are uploaded exactly as business teams receive them.</p>
+          <div class="pill-row">
+            <span class="badge info">Sales</span>
+            <span class="badge info">Spend</span>
+            <span class="badge info">Inventory</span>
+          </div>
+        </article>
+        <article class="flow-card">
+          <div class="step">2</div>
+          <h3>Upload parsers clean the data</h3>
+          <p>The upload layer reads the needed columns, converts numbers, standardizes dates, and saves each raw source into database tables.</p>
+          <div class="pill-row">
+            <span class="badge good"><code>apps/upload/amazon.py</code></span>
+            <span class="badge good"><code>apps/upload/flipkart.py</code></span>
+          </div>
+        </article>
+        <article class="flow-card">
+          <div class="step">3</div>
+          <h3>Processed daily rows are built</h3>
+          <p>Sales, spend, category, and price are merged into one daily row per product so dashboard queries become much faster.</p>
+          <div class="pill-row">
+            <span class="badge good"><code>apps/upload/dashboard_builders.py</code></span>
+            <span class="badge good"><code>apps/dashboard/services/daily_summary.py</code></span>
+          </div>
+        </article>
+        <article class="flow-card">
+          <div class="step">4</div>
+          <h3>Final KPI cards are calculated</h3>
+          <p>The KPI service sums revenue, spend, units, page views, and growth for the chosen filters and time period.</p>
+          <div class="pill-row">
+            <span class="badge good"><code>apps/dashboard/services/metrics.py</code></span>
+            <span class="badge good"><code>apps/dashboard/services/analytics_services_orm_pipeline.py</code></span>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <div>
+          <h2>All raw files used in KPI calculations</h2>
+          <p class="section-copy">This section answers the practical question: "Which actual files affect the KPI numbers?" The first rows below are direct KPI sources. The last rows are support or missing sources.</p>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Source File</th>
+              <th>Used For</th>
+              <th>Main Columns Read</th>
+              <th>Plain-Language Meaning</th>
+              <th>Status / Note</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>
+                <div class="table-title">Amazon daily sales files</div>
+                <div class="table-subtitle"><code>Amazon files/01-08-2025.csv</code><br><code>Amazon files/21-05-2026.csv</code></div>
+              </td>
+              <td>Total Revenue, Orders, Units Sold, Traffic / Page Views, CVR, Growth, Selling SKUs, 0-Sales SKUs</td>
+              <td><code>(Child) ASIN</code><br><code>Page Views - Total</code><br><code>Units Ordered</code><br><code>Ordered Product Sales</code><br><code>Total Order Items</code></td>
+              <td>This is the main Amazon business file. It tells the system how much was sold, how many units moved, how many orders happened, and how much traffic came to each ASIN.</td>
+              <td><span class="badge good">Direct KPI source</span><br>The file itself has no date column, so the upload date is used as the business date.</td>
+            </tr>
+            <tr>
+              <td>
+                <div class="table-title">Amazon ads spend file</div>
+                <div class="table-subtitle"><code>Amazon files/1-8-2025.xlsx</code></div>
+              </td>
+              <td>Ad Spend, ROAS, TACOS, Ad Spend SKUs</td>
+              <td><code>Date</code><br><code>Ad Account</code><br><code>Ad Type</code><br><code>ASIN</code><br><code>Spend</code></td>
+              <td>This file gives advertising cost. The system also splits spend by ad type: SP, SB, and SD.</td>
+              <td><span class="badge good">Direct KPI source</span></td>
+            </tr>
+            <tr>
+              <td>
+                <div class="table-title">Flipkart search traffic files</div>
+                <div class="table-subtitle"><code>Flipkart files/Search traffic/1-4-2026.xlsx</code> to <code>5-4-2026.xlsx</code></div>
+              </td>
+              <td>Total Revenue, Units Sold, Traffic / Page Views, CVR, Growth, Selling SKUs, 0-Sales SKUs, Inventory revenue linking</td>
+              <td><code>Listing Id</code><br><code>Impression Date</code><br><code>Product Clicks</code><br><code>Sales</code><br><code>Revenue</code></td>
+              <td>This is the main Flipkart commercial file. In the current logic, <code>Product Clicks</code> acts like page views and <code>Sales</code> acts like units sold.</td>
+              <td><span class="badge good">Direct KPI source</span><br>FSN is derived from <code>Listing Id</code>.</td>
+            </tr>
+            <tr>
+              <td>
+                <div class="table-title">Flipkart PLA files</div>
+                <div class="table-subtitle"><code>Flipkart files/PLA Files/1-4.csv</code> to <code>5-4.csv</code></div>
+              </td>
+              <td>Ad Spend, ROAS, TACOS, Ad Spend SKUs</td>
+              <td><code>Campaign ID</code><br><code>Advertised FSN ID</code><br><code>Ad Spend</code></td>
+              <td>This is the Flipkart ad spend file. It tells the dashboard how much marketing money was spent on each FSN.</td>
+              <td><span class="badge good">Direct KPI source</span></td>
+            </tr>
+            <tr>
+              <td>
+                <div class="table-title">Flipkart category mapping</div>
+                <div class="table-subtitle"><code>Flipkart files/Category Dashboard fk.xlsx</code></div>
+              </td>
+              <td>Category filters, Portfolio filters, Continued / Discontinued revenue, Continued / Discontinued SKU count</td>
+              <td><code>FSN ID</code><br><code>SKU</code><br><code>Portfolio</code><br><code>Category</code><br><code>Sub Category</code><br><code>Product Status</code></td>
+              <td>This file does not create revenue by itself, but it tells the system how to group each Flipkart product and whether the product is continued or discontinued.</td>
+              <td><span class="badge good">Direct KPI support</span></td>
+            </tr>
+            <tr>
+              <td>
+                <div class="table-title">Flipkart inventory workbook</div>
+                <div class="table-subtitle"><code>Flipkart files/FK.xlsx</code></div>
+              </td>
+              <td>Inventory Health, DOC, Inventory Position, OOS logic</td>
+              <td><code>PRODUCTS STATUS</code><br><code>PRODUCTS TYPE</code><br><code>SKU</code><br><code>FSN</code><br><code>Qty</code><br><code>Date</code></td>
+              <td>This file gives warehouse quantity for each Flipkart product. It is one half of the inventory calculation.</td>
+              <td><span class="badge good">Direct KPI source</span><br>Inventory results are only trustworthy when dates match the sales dates.</td>
+            </tr>
+            <tr>
+              <td>
+                <div class="table-title">Flipkart FBA stock file</div>
+                <div class="table-subtitle"><code>Flipkart files/Flipkart_FBa.csv</code></div>
+              </td>
+              <td>Inventory Health, DOC, Inventory Position, OOS logic</td>
+              <td><code>Date</code><br><code>FSN</code><br><code>Live on Website</code></td>
+              <td>This file gives live stock visible on Flipkart. It is the second half of the inventory calculation.</td>
+              <td><span class="badge good">Direct KPI source</span></td>
+            </tr>
+            <tr>
+              <td>
+                <div class="table-title">Flipkart price file</div>
+                <div class="table-subtitle"><code>Flipkart files/fk_price.csv</code></div>
+              </td>
+              <td>Price enrichment only</td>
+              <td><code>Flipkart Serial Number</code><br><code>Deal</code></td>
+              <td>This file helps attach price to products, but it is not a main driver of the KPI cards listed in this report.</td>
+              <td><span class="badge info">Support source</span></td>
+            </tr>
+            <tr>
+              <td>
+                <div class="table-title">Amazon inventory stock files</div>
+                <div class="table-subtitle">Expected by code but not clearly provided in the reviewed KPI source set</div>
+              </td>
+              <td>Amazon Inventory Health, DOC, OOS logic</td>
+              <td><code>Date</code><br><code>ASIN</code><br><code>Ending Warehouse Balance</code><br><code>Qty</code></td>
+              <td>The backend has logic for Amazon inventory health, but those KPIs need Amazon stock files for the same dates as Amazon sales.</td>
+              <td><span class="badge danger">Missing / incomplete for current review</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <div>
+          <h2>Worked example with simple sample data</h2>
+          <p class="section-copy">These examples are intentionally simple. They are not real business results. They are here so a non-technical user can understand how one final KPI card is built from multiple files.</p>
+        </div>
+      </div>
+      <div class="grid-3">
+        <article class="example-card">
+          <h3>Example input: Amazon</h3>
+          <p>From the Amazon daily sales file and Amazon spend file:</p>
+          <div class="math">
+            Revenue = 10,000<br>
+            Orders = 120<br>
+            Units = 150<br>
+            Page Views = 3,000<br>
+            Ad Spend = 2,000
+          </div>
+        </article>
+        <article class="example-card">
+          <h3>Example input: Flipkart</h3>
+          <p>From the Flipkart search traffic file and PLA file:</p>
+          <div class="math">
+            Revenue = 6,000<br>
+            Units = 40<br>
+            Product Clicks = 2,000<br>
+            Ad Spend = 1,000<br>
+            Product Status = Continued
+          </div>
+        </article>
+        <article class="example-card">
+          <h3>Example result: Combined KPI</h3>
+          <p>What the dashboard can show after both sources are merged:</p>
+          <div class="math">
+            Total Revenue = 10,000 + 6,000 = 16,000<br>
+            Orders = 120 + 0 = 120<br>
+            Units Sold = 150 + 40 = 190<br>
+            Traffic = 3,000 + 2,000 = 5,000<br>
+            Ad Spend = 2,000 + 1,000 = 3,000
+          </div>
+        </article>
+      </div>
+      <div class="callout" style="margin-top:16px;">
+        <h3>Example for ROAS, TACOS, and DOC</h3>
+        <p>The current code adjusts revenue by 70% before ROAS and TACOS. Inventory DOC is calculated with stock and daily run rate.</p>
+        <div class="math">
+          Adjusted Revenue = 16,000 x 0.7 = 11,200<br>
+          ROAS = 11,200 / 3,000 = 3.73x<br>
+          TACOS = 3,000 / 11,200 x 100 = 26.8%<br><br>
+          If stock = 300 units and average daily run rate = 10 units,<br>
+          DOC = 300 / 10 = 30 days
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <div>
+          <h2>KPI-by-KPI explanation</h2>
+          <p class="section-copy">This table is the core of the report. Each row explains one KPI in layman language, gives the simplified business formula, and lists the files that influence that KPI.</p>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>KPI</th>
+              <th>Simple Meaning</th>
+              <th>How It Is Calculated</th>
+              <th>Files Included</th>
+              <th>Example</th>
+              <th>Important Note</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><div class="table-title">Total Revenue</div></td>
+              <td>Total sales value from Amazon and Flipkart together.</td>
+              <td>Amazon <code>Ordered Product Sales</code> + Flipkart <code>Revenue</code></td>
+              <td><code>Amazon files/*.csv</code><br><code>Flipkart files/Search traffic/*.xlsx</code></td>
+              <td>10,000 + 6,000 = 16,000</td>
+              <td>One of the cleanest KPIs because both platforms supply revenue directly.</td>
+            </tr>
+            <tr>
+              <td><div class="table-title">Orders</div></td>
+              <td>How many orders were placed.</td>
+              <td>Amazon <code>Total Order Items</code>. Flipkart currently contributes <code>0</code> to orders in the processed KPI logic.</td>
+              <td><code>Amazon files/*.csv</code></td>
+              <td>120 + 0 = 120</td>
+              <td>This is an important business caution. Flipkart search traffic maps sales to units, not orders.</td>
+            </tr>
+            <tr>
+              <td><div class="table-title">Units Sold</div></td>
+              <td>How many units were sold across both platforms.</td>
+              <td>Amazon <code>Units Ordered</code> + Flipkart <code>Sales</code></td>
+              <td><code>Amazon files/*.csv</code><br><code>Flipkart files/Search traffic/*.xlsx</code></td>
+              <td>150 + 40 = 190</td>
+              <td>In the Flipkart traffic file, the <code>Sales</code> column becomes dashboard units.</td>
+            </tr>
+            <tr>
+              <td><div class="table-title">Traffic / Page Views</div></td>
+              <td>How many product views or clicks happened.</td>
+              <td>Amazon <code>Page Views - Total</code> + Flipkart <code>Product Clicks</code></td>
+              <td><code>Amazon files/*.csv</code><br><code>Flipkart files/Search traffic/*.xlsx</code></td>
+              <td>3,000 + 2,000 = 5,000</td>
+              <td>Flipkart does not provide a raw "page views" column here, so clicks are used as the closest equivalent.</td>
+            </tr>
+            <tr>
+              <td><div class="table-title">Ad Spend</div></td>
+              <td>Total advertising cost.</td>
+              <td>Amazon <code>Spend</code> + Flipkart <code>Ad Spend</code></td>
+              <td><code>Amazon files/1-8-2025.xlsx</code><br><code>Flipkart files/PLA Files/*.csv</code></td>
+              <td>2,000 + 1,000 = 3,000</td>
+              <td>Amazon ad types are split into SP, SB, and SD before totals are shown.</td>
+            </tr>
+            <tr>
+              <td><div class="table-title">ROAS</div></td>
+              <td>Return earned for each 1 rupee of ad spend.</td>
+              <td><code>(Revenue x 0.7) / Ad Spend</code></td>
+              <td>Revenue files + spend files from both platforms</td>
+              <td>(16,000 x 0.7) / 3,000 = 3.73x</td>
+              <td>The current code uses 70% of revenue before the ROAS calculation.</td>
+            </tr>
+            <tr>
+              <td><div class="table-title">TACOS</div></td>
+              <td>Ad spend as a percentage of adjusted revenue.</td>
+              <td><code>Ad Spend / (Revenue x 0.7) x 100</code></td>
+              <td>Revenue files + spend files from both platforms</td>
+              <td>3,000 / 11,200 x 100 = 26.8%</td>
+              <td>Because adjusted revenue is used, TACOS may differ from a manual Excel check on gross revenue.</td>
+            </tr>
+            <tr>
+              <td><div class="table-title">CVR</div></td>
+              <td>How well traffic converts into sales.</td>
+              <td>Amazon: <code>Orders / Page Views x 100</code><br>Flipkart: <code>Units / Product Clicks x 100</code></td>
+              <td><code>Amazon files/*.csv</code><br><code>Flipkart files/Search traffic/*.xlsx</code></td>
+              <td>Amazon: 120 / 3,000 = 4.0%<br>Flipkart: 40 / 2,000 = 2.0%</td>
+              <td>The formula changes by platform because the available raw columns are different.</td>
+            </tr>
+            <tr>
+              <td><div class="table-title">MOM Growth</div></td>
+              <td>How much revenue changed versus the previous month window.</td>
+              <td><code>(Current Revenue - Previous Revenue) / Previous Revenue x 100</code></td>
+              <td>Revenue files plus previously loaded historical data</td>
+              <td>(16,000 - 14,000) / 14,000 = 14.3%</td>
+              <td>This KPI is only meaningful if earlier months are already loaded in the database.</td>
+            </tr>
+            <tr>
+              <td><div class="table-title">YOY Growth</div></td>
+              <td>How much revenue changed versus the same period last year.</td>
+              <td><code>(Current Revenue - Last Year Revenue) / Last Year Revenue x 100</code></td>
+              <td>Revenue files plus last-year data</td>
+              <td>(16,000 - 12,000) / 12,000 = 33.3%</td>
+              <td>If the same period from last year is not loaded, this KPI cannot be trusted.</td>
+            </tr>
+            <tr>
+              <td><div class="table-title">Ad Spend SKUs</div></td>
+              <td>How many ad-related product records appear after filters.</td>
+              <td>Count spend-bearing rows in Amazon spend and Flipkart PLA sources</td>
+              <td><code>Amazon files/1-8-2025.xlsx</code><br><code>Flipkart files/PLA Files/*.csv</code></td>
+              <td>3 matching ad rows = 3</td>
+              <td>This is row-count based in the current logic, not a perfectly de-duplicated SKU count.</td>
+            </tr>
+            <tr>
+              <td><div class="table-title">Selling SKUs</div></td>
+              <td>How many SKUs sold at least one unit.</td>
+              <td>Count products where processed <code>units &gt; 0</code></td>
+              <td>Amazon sales files + Flipkart search traffic files</td>
+              <td>SKU A, SKU B, SKU C sold something = 3</td>
+              <td>Amazon uses ASIN; Flipkart uses FSN.</td>
+            </tr>
+            <tr>
+              <td><div class="table-title">0-Sales SKU Count</div></td>
+              <td>Products that had visibility but no unit sales.</td>
+              <td>Count products where <code>units = 0</code> but page views, revenue, or order activity exists</td>
+              <td>Amazon sales files + Flipkart search traffic files</td>
+              <td>2 SKUs got traffic but sold nothing = 2</td>
+              <td>This helps business teams find listings that are visible but not converting.</td>
+            </tr>
+            <tr>
+              <td><div class="table-title">0-Sales Page Views</div></td>
+              <td>Total traffic on products that sold zero units.</td>
+              <td>Add page views / clicks of all 0-sales SKUs</td>
+              <td>Amazon sales files + Flipkart search traffic files</td>
+              <td>SKU A 700 + SKU B 500 = 1,200</td>
+              <td>This is useful for identifying wasted visibility.</td>
+            </tr>
+            <tr>
+              <td><div class="table-title">Continued / Discontinued Revenue</div></td>
+              <td>Revenue split by active product status.</td>
+              <td>Take Flipkart revenue and bucket each FSN using <code>Product Status</code></td>
+              <td><code>Flipkart files/Category Dashboard fk.xlsx</code><br><code>Flipkart files/Search traffic/*.xlsx</code></td>
+              <td>Continued 9,000, Discontinued 2,000</td>
+              <td>This is Flipkart-led because product status comes from the Flipkart category mapping file.</td>
+            </tr>
+            <tr>
+              <td><div class="table-title">Inventory Health / DOC / OOS</div></td>
+              <td>Whether stock is healthy, too low, too high, or out of stock.</td>
+              <td>Join stock files with sales files by product and date, then calculate stock days from stock and run rate</td>
+              <td><code>Flipkart files/FK.xlsx</code><br><code>Flipkart files/Flipkart_FBa.csv</code><br><code>Flipkart files/Search traffic/*.xlsx</code><br>Amazon stock files for Amazon inventory</td>
+              <td>Stock 300 / DRR 10 = 30 DOC</td>
+              <td>Inventory KPIs are very sensitive to date mismatch. Same-date stock and sales are required.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <div>
+          <h2>Which code files perform the KPI calculations</h2>
+          <p class="section-copy">Business users usually ask for "which files were included." In practice there are two answers: raw source files and code files. The table below lists the main code files that actually transform the data into KPI numbers.</p>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Code File</th>
+              <th>Main Role</th>
+              <th>Plain-Language Explanation</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>pltx_dashboard/apps/upload/amazon.py</code></td>
+              <td>Amazon file ingestion</td>
+              <td>Reads Amazon sales, spend, and stock files and saves cleaned rows into database tables.</td>
+            </tr>
+            <tr>
+              <td><code>pltx_dashboard/apps/upload/flipkart.py</code></td>
+              <td>Flipkart file ingestion</td>
+              <td>Reads Flipkart traffic, PLA, category, price, and stock files and standardizes them for the dashboard.</td>
+            </tr>
+            <tr>
+              <td><code>pltx_dashboard/apps/upload/dashboard_builders.py</code></td>
+              <td>Data merging layer</td>
+              <td>Merges sales, spend, category, and price into processed daily tables that are easier to report from.</td>
+            </tr>
+            <tr>
+              <td><code>pltx_dashboard/apps/dashboard/services/daily_summary.py</code></td>
+              <td>Fast daily totals</td>
+              <td>Creates daily summary rows so dashboard cards can load quickly without recalculating everything each time.</td>
+            </tr>
+            <tr>
+              <td><code>pltx_dashboard/apps/dashboard/services/metrics.py</code></td>
+              <td>Formula helpers</td>
+              <td>Contains reusable formulas for ROAS, TACOS, growth, and CVR.</td>
+            </tr>
+            <tr>
+              <td><code>pltx_dashboard/apps/dashboard/services/analytics_services_orm_pipeline.py</code></td>
+              <td>Main KPI engine</td>
+              <td>Builds the final KPI payload used by business, category, and CEO dashboards.</td>
+            </tr>
+            <tr>
+              <td><code>pltx_dashboard/apps/dashboard/services/inventory_summary.py</code></td>
+              <td>Inventory KPI engine</td>
+              <td>Calculates DOC, inventory health status, stock quantity, revenue by stock bucket, and out-of-stock logic.</td>
+            </tr>
+            <tr>
+              <td><code>pltx_dashboard/apps/dashboard/services/asin_monthly_summary.py</code></td>
+              <td>Long-range summary support</td>
+              <td>Helps faster reporting for longer time windows such as last 3 months, 6 months, and 1 year.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <div>
+          <h2>Business cautions before using the numbers</h2>
+          <p class="section-copy">These points matter because a KPI can be technically correct according to code but still be misunderstood by a business reader.</p>
+        </div>
+      </div>
+      <div class="grid-2">
+        <article class="note-card">
+          <h3>1. Flipkart orders are not fully loaded into the Orders KPI</h3>
+          <p>The current pipeline maps Flipkart traffic <code>Sales</code> to units, not orders. So the Orders card is mostly Amazon-backed today.</p>
+        </article>
+        <article class="note-card">
+          <h3>2. ROAS and TACOS use 70% of revenue</h3>
+          <p>The current formula uses <code>Revenue x 0.7</code> before ROAS and TACOS. This is an intentional business rule in the code.</p>
+        </article>
+        <article class="note-card">
+          <h3>3. Flipkart clicks are treated like page views</h3>
+          <p>The raw Flipkart search traffic file gives <code>Product Clicks</code>, and the KPI logic uses that as traffic / page views.</p>
+        </article>
+        <article class="note-card">
+          <h3>4. Growth KPIs need history</h3>
+          <p>MOM and YOY only make sense when previous periods are already loaded. If history is missing, those percentages can mislead users.</p>
+        </article>
+        <article class="note-card">
+          <h3>5. Inventory KPIs need date alignment</h3>
+          <p>Stock and sales must belong to the same reporting dates. If inventory is from one date and sales are from another, DOC and stock health can look wrong.</p>
+        </article>
+        <article class="note-card">
+          <h3>6. Amazon inventory health needs matching stock files</h3>
+          <p>The backend can calculate Amazon inventory health, but only if the right Amazon stock files are uploaded for the same dates as sales.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="callout">
+        <h3>If a business user asks "why is this KPI different from my Excel?"</h3>
+        <ul class="list">
+          <li>First check whether the dashboard is mixing Amazon and Flipkart together.</li>
+          <li>Then confirm which raw files were uploaded for that date range.</li>
+          <li>Then verify whether the KPI uses gross revenue or adjusted revenue.</li>
+          <li>Finally check whether the metric is using orders, units, clicks, or page views, because these are not the same thing.</li>
+        </ul>
+      </div>
+    </section>
+
+    <div class="footer">
+      Prepared as a plain-language KPI source report for non-technical review.<br>
+      This report focuses on the current logic implemented in the existing Plantex dashboard codebase.
+    </div>
+  </div>
+
+  <script>
+    function downloadReport() {
+      const html = document.documentElement.outerHTML;
+      const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = 'plantex-kpi-source-report.html';
+      anchor.click();
+      setTimeout(function () {
+        URL.revokeObjectURL(url);
+      }, 1000);
+    }
+  </script>
+</body>
+</html>
