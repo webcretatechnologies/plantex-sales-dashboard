@@ -951,8 +951,15 @@
                         // ignore malformed progress message
                     }
                 };
-                socket.onclose = function () {
+                socket.onclose = function (event) {
                     socket = null;
+                    // Code 4403 means the server rejected the connection because
+                    // the user is not authenticated. Retrying endlessly is pointless
+                    // and floods the logs — stop here. A page reload after login
+                    // will naturally reconnect.
+                    if (event.code === 4403) {
+                        return;
+                    }
                     scheduleReconnect();
                 };
                 socket.onerror = function () {
