@@ -1870,9 +1870,9 @@ def dashboard_modal_rows_view(request, view_name, modal_key):
                     r.get("fk_pageviews", 0), r.get("fk_units", 0)
                 ] for r in rows]
             else:
-                headers = ["Amazon SKU", "Flipkart SKU", "Amazon Revenue", "Flipkart Revenue", "Total Revenue", "Amazon MOM Growth", "Flipkart MOM Growth", "Amazon Contribution", "Flipkart Contribution", "Amazon Page Views", "Flipkart Page Views"]
+                headers = ["SKU", "ASIN", "FSN", "AMZ Revenue", "FK Revenue", "Total", "AMZ MOM Growth", "FK MOM Growth", "AMZ Contribution", "FK Contribution", "AMZ Page Views", "FK Page Views"]
                 table_rows = [[
-                    r.get("az_sku", ""), r.get("fk_sku", ""),
+                    r.get("msku", ""), r.get("az_sku", ""), r.get("fk_sku", ""),
                     r.get("az_revenue", 0), r.get("fk_revenue", 0), r.get("revenue", 0),
                     r.get("az_mom_growth", 0), r.get("fk_mom_growth", 0),
                     r.get("az_contribution", 0), r.get("fk_contribution", 0),
@@ -1893,9 +1893,9 @@ def dashboard_modal_rows_view(request, view_name, modal_key):
                     r.get("fk_drop", 0), r.get("fk_impact", 0), r.get("fk_pageviews", 0)
                 ] for r in rows]
             else:
-                headers = ["Amazon SKU", "Flipkart SKU", "Amazon MOM Drop %", "Flipkart MOM Drop %", "Total MOM Drop %", "Amazon Impact", "Flipkart Impact", "Total Impact", "Amazon Page Views", "Flipkart Page Views", "Total Page Views"]
+                headers = ["SKU", "ASIN", "FSN", "AMZ MOM Drop %", "FK MOM Drop %", "Total MOM Drop %", "AMZ Impact", "FK Impact", "Total Impact", "AMZ Page Views", "FK Page Views", "Total Page Views"]
                 table_rows = [[
-                    r.get("az_sku", ""), r.get("fk_sku", ""),
+                    r.get("msku", ""), r.get("az_sku", ""), r.get("fk_sku", ""),
                     r.get("az_drop", 0), r.get("fk_drop", 0), r.get("total_drop", 0),
                     r.get("az_impact", 0), r.get("fk_impact", 0), r.get("total_impact", 0),
                     r.get("az_pageviews", 0), r.get("fk_pageviews", 0), r.get("pageviews", 0)

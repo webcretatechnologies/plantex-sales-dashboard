@@ -70,21 +70,21 @@ def _npd_export_table(rows, platform):
         return headers, table_rows
 
     headers = [
-        "Amazon SKU", "ASIN", "Flipkart SKU", "FSN",
-        "Amazon Page Views", "Flipkart Page Views",
-        "Amazon Launch Date", "Flipkart Launch Date",
-        "Amazon Ad Spend", "Flipkart Ad Spend",
-        "Amazon FC Stock", "Flipkart FC Stock",
-        "Amazon Flex Stock", "Flipkart Flex Stock",
-        "Amazon FCs with Stock > 0", "Flipkart FCs with Stock > 0",
-        "Amazon Revenue", "Flipkart Revenue",
-        "Amazon Units Sold", "Flipkart Units Sold",
+        "SKU", "ASIN", "FSN",
+        "AMZ Page Views", "FK Page Views",
+        "AMZ Launch Date", "FK Launch Date",
+        "AMZ Ad Spend", "FK Ad Spend",
+        "AMZ FC Stock", "FK FC Stock",
+        "AMZ Flex Stock", "FK Flex Stock",
+        "AMZ FCs with Stock > 0", "FK FCs with Stock > 0",
+        "AMZ Revenue", "FK Revenue",
+        "AMZ Units Sold", "FK Units Sold",
         "Category", "Portfolio", "CM Name",
-        "Amazon DOC", "Flipkart DOC",
-        "Amazon Conversion %", "Flipkart Conversion %",
+        "AMZ DOC", "FK DOC",
+        "AMZ Conversion %", "FK Conversion %",
     ]
     table_rows = [[
-        r.get("amazon_sku", ""), r.get("asin", ""), r.get("flipkart_sku", ""),
+        r.get("amazon_sku", "") or r.get("flipkart_sku", ""), r.get("asin", ""),
         r.get("fsn", ""), r.get("az_pageviews", 0), r.get("fk_pageviews", 0),
         r.get("az_launch_date_display", ""), r.get("fk_launch_date_display", ""),
         r.get("az_ad_spend", 0), r.get("fk_ad_spend", 0),
