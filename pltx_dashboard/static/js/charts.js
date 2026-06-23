@@ -310,6 +310,363 @@ function drawFallbackDonutChart(canvas, labels, values, colors) {
     ctx.fill();
 }
 
+function _isNpdModal(modalEl) {
+    var id = modalEl && modalEl.id;
+    return ['npdPerformanceModal', 'catNpdPerformanceModal', 'bizNpdPerformanceModal'].indexOf(id) !== -1;
+}
+
+function _parseIsoDateLocal(value) {
+    var parts = String(value || '').split('-').map(Number);
+    if (parts.length !== 3 || !parts[0] || !parts[1] || !parts[2]) return null;
+    return new Date(parts[0], parts[1] - 1, parts[2]);
+}
+
+function _formatIsoDateLocal(date) {
+    if (!(date instanceof Date) || Number.isNaN(date.getTime())) return '';
+    var month = String(date.getMonth() + 1).padStart(2, '0');
+    var day = String(date.getDate()).padStart(2, '0');
+    return date.getFullYear() + '-' + month + '-' + day;
+}
+
+function _formatLaunchDateLabel(value) {
+    var date = _parseIsoDateLocal(value);
+    if (!date) return '';
+    return date.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+function _positionNpdLaunchCalendar(modalEl) {
+    var root = modalEl.querySelector('[data-npd-launch-filter]');
+    var calendar = modalEl.querySelector('[data-npd-calendar]');
+    if (!root || !calendar || calendar.hidden) return;
+
+    var activeRole = modalEl.dataset.npdActiveLaunchRole || 'start';
+    var activeControl = root.querySelector('[data-npd-date-role="' + activeRole + '"]');
+    if (!activeControl) return;
+
+    var rootRect = root.getBoundingClientRect();
+    var controlRect = activeControl.getBoundingClientRect();
+    var left = Math.max(0, controlRect.left - rootRect.left);
+    var maxLeft = Math.max(0, root.clientWidth - calendar.offsetWidth - 18);
+    calendar.style.left = Math.min(left, maxLeft) + 'px';
+}
+
+function _getNpdLaunchParams(modalEl) {
+    if (!_isNpdModal(modalEl)) return {};
+    var mode = modalEl.dataset.npdLaunchMode || 'single';
+    var start = modalEl.dataset.npdLaunchStart || '';
+    var end = modalEl.dataset.npdLaunchEnd || '';
+    if (mode === 'single' && start) end = start;
+    if (!start && !end) return {};
+    return {
+        npd_launch_date_range: 'custom',
+        npd_launch_mode: mode,
+        npd_launch_start_date: start || end,
+        npd_launch_end_date: end || start
+    };
+}
+
+function _setNpdLaunchMarks(modalEl, marks) {
+    if (!_isNpdModal(modalEl)) return;
+    window._NPD_LAUNCH_DATE_MARKS = window._NPD_LAUNCH_DATE_MARKS || {};
+    window._NPD_LAUNCH_DATE_MARKS[modalEl.id] = {
+        amazon: (marks && Array.isArray(marks.amazon)) ? marks.amazon : [],
+        flipkart: (marks && Array.isArray(marks.flipkart)) ? marks.flipkart : []
+    };
+    if (!modalEl.dataset.npdLaunchStart && modalEl.dataset.npdCalendarTouched !== '1') {
+        modalEl.dataset.npdCalendarMonth = _availableNpdLaunchMonth(modalEl);
+    }
+    _renderNpdLaunchCalendar(modalEl);
+}
+
+function _setNpdModalTrend(modalEl, trend) {
+    if (!_isNpdModal(modalEl) || !trend) return;
+    window._NPD_MODAL_TRENDS = window._NPD_MODAL_TRENDS || {};
+    window._NPD_MODAL_TRENDS[modalEl.id] = trend;
+    document.dispatchEvent(new CustomEvent('npdLaunchDataUpdated', { detail: { id: modalEl.id } }));
+}
+
+function _reloadNpdModalRows(modalEl) {
+    if (!modalEl) return;
+    var table = modalEl.querySelector('table');
+    if (window.jQuery && $.fn.DataTable && table && $.fn.DataTable.isDataTable(table)) {
+        $(table).DataTable().ajax.reload(null, true);
+    } else {
+        modalEl.dataset.lazyLoaded = '0';
+        _loadModalRowsOnDemand(modalEl, { force: true });
+    }
+}
+
+function _updateNpdLaunchControls(modalEl) {
+    var mode = modalEl.dataset.npdLaunchMode || 'single';
+    var start = modalEl.dataset.npdLaunchStart || '';
+    var end = modalEl.dataset.npdLaunchEnd || '';
+    var root = modalEl.querySelector('[data-npd-launch-filter]');
+    if (!root) return;
+
+    root.querySelectorAll('[data-npd-mode]').forEach(function (btn) {
+        btn.classList.toggle('active', btn.getAttribute('data-npd-mode') === mode);
+    });
+
+    var startLabel = root.querySelector('[data-npd-start-label]');
+    if (startLabel) startLabel.textContent = mode === 'single' ? 'Launch Date' : 'Start Launch Date';
+    var startInput = root.querySelector('[data-npd-date-input="start"]');
+    if (startInput) startInput.value = _formatLaunchDateLabel(start);
+    var endInput = root.querySelector('[data-npd-date-input="end"]');
+    if (endInput) endInput.value = _formatLaunchDateLabel(end);
+
+    var endField = root.querySelector('.npd-launch-end-field');
+    if (endField) endField.hidden = mode !== 'range';
+    root.querySelectorAll('[data-npd-date-role]').forEach(function (btn) {
+        btn.classList.toggle('active', btn.getAttribute('data-npd-date-role') === (modalEl.dataset.npdActiveLaunchRole || 'start'));
+    });
+    _positionNpdLaunchCalendar(modalEl);
+}
+
+function _availableNpdLaunchMonth(modalEl) {
+    var marks = (window._NPD_LAUNCH_DATE_MARKS && window._NPD_LAUNCH_DATE_MARKS[modalEl.id]) || {};
+    var dates = [].concat(marks.amazon || [], marks.flipkart || []).sort();
+    return dates[0] || _formatIsoDateLocal(new Date());
+}
+
+function _renderNpdLaunchCalendar(modalEl) {
+    if (!_isNpdModal(modalEl)) return;
+    var calendar = modalEl.querySelector('[data-npd-calendar]');
+    if (!calendar) return;
+
+    var monthSeed = modalEl.dataset.npdCalendarMonth || modalEl.dataset.npdLaunchStart || _availableNpdLaunchMonth(modalEl);
+    var monthDate = _parseIsoDateLocal(monthSeed) || new Date();
+    monthDate = new Date(monthDate.getFullYear(), monthDate.getMonth(), 1);
+    modalEl.dataset.npdCalendarMonth = _formatIsoDateLocal(monthDate);
+
+    var marks = (window._NPD_LAUNCH_DATE_MARKS && window._NPD_LAUNCH_DATE_MARKS[modalEl.id]) || {};
+    var amazonDates = new Set(marks.amazon || []);
+    var flipkartDates = new Set(marks.flipkart || []);
+    var selectedStart = modalEl.dataset.npdLaunchStart || '';
+    var selectedEnd = modalEl.dataset.npdLaunchEnd || '';
+    var mode = modalEl.dataset.npdLaunchMode || 'single';
+
+    var header = document.createElement('div');
+    header.className = 'npd-calendar-header';
+    var prev = document.createElement('button');
+    prev.type = 'button';
+    prev.textContent = '<';
+    prev.setAttribute('aria-label', 'Previous month');
+    var pickerGroup = document.createElement('div');
+    pickerGroup.className = 'npd-calendar-picker-group';
+    var monthSelect = document.createElement('select');
+    monthSelect.setAttribute('aria-label', 'Select month');
+    [
+        'January', 'February', 'March', 'April', 'May', 'June',
+        'July', 'August', 'September', 'October', 'November', 'December'
+    ].forEach(function (monthName, idx) {
+        var option = document.createElement('option');
+        option.value = String(idx);
+        option.textContent = monthName;
+        option.selected = idx === monthDate.getMonth();
+        monthSelect.appendChild(option);
+    });
+    var yearSelect = document.createElement('select');
+    yearSelect.setAttribute('aria-label', 'Select year');
+    var marks = (window._NPD_LAUNCH_DATE_MARKS && window._NPD_LAUNCH_DATE_MARKS[modalEl.id]) || {};
+    var markYears = [].concat(marks.amazon || [], marks.flipkart || [])
+        .map(function (value) {
+            var date = _parseIsoDateLocal(value);
+            return date ? date.getFullYear() : null;
+        })
+        .filter(function (value, index, arr) {
+            return value && arr.indexOf(value) === index;
+        })
+        .sort(function (a, b) { return a - b; });
+    var baseYear = monthDate.getFullYear();
+    var minYear = markYears.length ? Math.min(markYears[0], baseYear) : baseYear - 5;
+    var maxYear = markYears.length ? Math.max(markYears[markYears.length - 1], baseYear) : baseYear + 5;
+    for (var year = minYear; year <= maxYear; year++) {
+        var yearOption = document.createElement('option');
+        yearOption.value = String(year);
+        yearOption.textContent = String(year);
+        yearOption.selected = year === baseYear;
+        yearSelect.appendChild(yearOption);
+    }
+    pickerGroup.appendChild(monthSelect);
+    pickerGroup.appendChild(yearSelect);
+    var next = document.createElement('button');
+    next.type = 'button';
+    next.textContent = '>';
+    next.setAttribute('aria-label', 'Next month');
+    header.appendChild(prev);
+    header.appendChild(pickerGroup);
+    header.appendChild(next);
+
+    var grid = document.createElement('div');
+    grid.className = 'npd-calendar-grid';
+    ['S', 'M', 'T', 'W', 'T', 'F', 'S'].forEach(function (day) {
+        var label = document.createElement('span');
+        label.className = 'npd-calendar-weekday';
+        label.textContent = day;
+        grid.appendChild(label);
+    });
+
+    var firstDay = monthDate.getDay();
+    for (var blank = 0; blank < firstDay; blank++) {
+        var spacer = document.createElement('span');
+        spacer.className = 'npd-calendar-empty';
+        grid.appendChild(spacer);
+    }
+
+    var daysInMonth = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0).getDate();
+    for (var dayNum = 1; dayNum <= daysInMonth; dayNum++) {
+        var dayDate = new Date(monthDate.getFullYear(), monthDate.getMonth(), dayNum);
+        var iso = _formatIsoDateLocal(dayDate);
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'npd-calendar-day';
+        btn.textContent = String(dayNum);
+        btn.dataset.date = iso;
+        var hasAmazon = amazonDates.has(iso);
+        var hasFlipkart = flipkartDates.has(iso);
+        if (hasAmazon) btn.classList.add('has-amazon');
+        if (hasFlipkart) btn.classList.add('has-flipkart');
+        if (hasAmazon && hasFlipkart) btn.classList.add('has-both');
+        if (iso === selectedStart || iso === selectedEnd) btn.classList.add('selected');
+        if (mode === 'range' && selectedStart && selectedEnd && iso > selectedStart && iso < selectedEnd) {
+            btn.classList.add('in-range');
+        }
+        btn.onclick = function () {
+            _selectNpdLaunchDate(modalEl, this.dataset.date);
+        };
+        grid.appendChild(btn);
+    }
+
+    prev.onclick = function () {
+        var prevMonth = new Date(monthDate.getFullYear(), monthDate.getMonth() - 1, 1);
+        modalEl.dataset.npdCalendarTouched = '1';
+        modalEl.dataset.npdCalendarMonth = _formatIsoDateLocal(prevMonth);
+        _renderNpdLaunchCalendar(modalEl);
+    };
+    next.onclick = function () {
+        var nextMonth = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 1);
+        modalEl.dataset.npdCalendarTouched = '1';
+        modalEl.dataset.npdCalendarMonth = _formatIsoDateLocal(nextMonth);
+        _renderNpdLaunchCalendar(modalEl);
+    };
+    monthSelect.onchange = function () {
+        var selectedMonth = Number(monthSelect.value);
+        var selectedYear = Number(yearSelect.value);
+        modalEl.dataset.npdCalendarTouched = '1';
+        modalEl.dataset.npdCalendarMonth = _formatIsoDateLocal(new Date(selectedYear, selectedMonth, 1));
+        _renderNpdLaunchCalendar(modalEl);
+    };
+    yearSelect.onchange = function () {
+        var selectedMonth = Number(monthSelect.value);
+        var selectedYear = Number(yearSelect.value);
+        modalEl.dataset.npdCalendarTouched = '1';
+        modalEl.dataset.npdCalendarMonth = _formatIsoDateLocal(new Date(selectedYear, selectedMonth, 1));
+        _renderNpdLaunchCalendar(modalEl);
+    };
+
+    calendar.innerHTML = '';
+    calendar.appendChild(header);
+    calendar.appendChild(grid);
+    _positionNpdLaunchCalendar(modalEl);
+}
+
+function _selectNpdLaunchDate(modalEl, iso) {
+    modalEl.dataset.npdCalendarTouched = '1';
+    var mode = modalEl.dataset.npdLaunchMode || 'single';
+    if (mode === 'single') {
+        modalEl.dataset.npdLaunchStart = iso;
+        modalEl.dataset.npdLaunchEnd = iso;
+    } else {
+        var role = modalEl.dataset.npdActiveLaunchRole || 'start';
+        if (role === 'end') {
+            modalEl.dataset.npdLaunchEnd = iso;
+            if (modalEl.dataset.npdLaunchStart && modalEl.dataset.npdLaunchEnd < modalEl.dataset.npdLaunchStart) {
+                var oldStart = modalEl.dataset.npdLaunchStart;
+                modalEl.dataset.npdLaunchStart = modalEl.dataset.npdLaunchEnd;
+                modalEl.dataset.npdLaunchEnd = oldStart;
+            }
+        } else {
+            modalEl.dataset.npdLaunchStart = iso;
+            if (modalEl.dataset.npdLaunchEnd && modalEl.dataset.npdLaunchEnd < iso) {
+                modalEl.dataset.npdLaunchEnd = '';
+            }
+            modalEl.dataset.npdActiveLaunchRole = 'end';
+        }
+    }
+    _updateNpdLaunchControls(modalEl);
+    _renderNpdLaunchCalendar(modalEl);
+}
+
+function _ensureNpdLaunchFilter(modalEl) {
+    if (!_isNpdModal(modalEl) || modalEl.dataset.npdLaunchInit === '1') return;
+    var root = modalEl.querySelector('[data-npd-launch-filter]');
+    if (!root) return;
+
+    modalEl.dataset.npdLaunchMode = modalEl.dataset.npdLaunchMode || 'single';
+    modalEl.dataset.npdActiveLaunchRole = modalEl.dataset.npdActiveLaunchRole || 'start';
+
+    root.querySelectorAll('[data-npd-mode]').forEach(function (btn) {
+        btn.onclick = function () {
+            modalEl.dataset.npdLaunchMode = btn.getAttribute('data-npd-mode') || 'single';
+            modalEl.dataset.npdActiveLaunchRole = 'start';
+            if (modalEl.dataset.npdLaunchMode === 'single' && modalEl.dataset.npdLaunchStart) {
+                modalEl.dataset.npdLaunchEnd = modalEl.dataset.npdLaunchStart;
+            }
+            _updateNpdLaunchControls(modalEl);
+            _renderNpdLaunchCalendar(modalEl);
+        };
+    });
+
+    root.querySelectorAll('[data-npd-date-role]').forEach(function (btn) {
+        btn.onclick = function () {
+            modalEl.dataset.npdActiveLaunchRole = btn.getAttribute('data-npd-date-role') || 'start';
+            _updateNpdLaunchControls(modalEl);
+            var calendar = root.querySelector('[data-npd-calendar]');
+            if (calendar) {
+                calendar.hidden = false;
+                _renderNpdLaunchCalendar(modalEl);
+                _positionNpdLaunchCalendar(modalEl);
+            }
+        };
+    });
+
+    var applyBtn = root.querySelector('[data-npd-apply]');
+    if (applyBtn) {
+        applyBtn.onclick = function () {
+            var calendar = root.querySelector('[data-npd-calendar]');
+            if (calendar) calendar.hidden = true;
+            _reloadNpdModalRows(modalEl);
+        };
+    }
+
+    var clearBtn = root.querySelector('[data-npd-clear]');
+    if (clearBtn) {
+        clearBtn.onclick = function () {
+            delete modalEl.dataset.npdLaunchStart;
+            delete modalEl.dataset.npdLaunchEnd;
+            delete modalEl.dataset.npdCalendarTouched;
+            delete modalEl.dataset.npdCalendarMonth;
+            modalEl.dataset.npdActiveLaunchRole = 'start';
+            var calendar = root.querySelector('[data-npd-calendar]');
+            if (calendar) calendar.hidden = true;
+            _updateNpdLaunchControls(modalEl);
+            _renderNpdLaunchCalendar(modalEl);
+            _reloadNpdModalRows(modalEl);
+        };
+    }
+
+    document.addEventListener('click', function (e) {
+        if (!root.contains(e.target)) {
+            var calendar = root.querySelector('[data-npd-calendar]');
+            if (calendar) calendar.hidden = true;
+        }
+    });
+
+    _updateNpdLaunchControls(modalEl);
+    _renderNpdLaunchCalendar(modalEl);
+    modalEl.dataset.npdLaunchInit = '1';
+}
+
 function renderChartsWithoutChartJs() {
     var data = window.DASHBOARD_PAYLOAD;
     if (!data) return;
@@ -340,6 +697,16 @@ function _buildModalDataUrl(modalEl, extraParams) {
         params.set('platform', currentPlatform);
     } else if (currentPlatform === 'All') {
         params.delete('platform');
+    }
+
+    if (_isNpdModal(modalEl)) {
+        ['npd_launch_date_range', 'npd_launch_mode', 'npd_launch_start_date', 'npd_launch_end_date'].forEach(function (key) {
+            params.delete(key);
+        });
+        var npdLaunchParams = _getNpdLaunchParams(modalEl);
+        Object.keys(npdLaunchParams).forEach(function (key) {
+            params.set(key, npdLaunchParams[key]);
+        });
     }
 
     return lazyUrl + '?' + params.toString();
@@ -587,6 +954,18 @@ function _initializeDataTable(modalEl) {
                 var platformSel = document.getElementById('platformSelect');
                 var currentPlatform = modalEl.dataset.modalPlatform || (platformSel ? platformSel.value : null);
                 if (currentPlatform && currentPlatform !== 'All') d.platform = currentPlatform;
+
+                var npdLaunchParams = _getNpdLaunchParams(modalEl);
+                Object.keys(npdLaunchParams).forEach(function(key) {
+                    d[key] = npdLaunchParams[key];
+                });
+            },
+            dataSrc: function(json) {
+                if (_isNpdModal(modalEl) && json) {
+                    _setNpdLaunchMarks(modalEl, json.npd_launch_dates || {});
+                    _setNpdModalTrend(modalEl, json.npd_trend || null);
+                }
+                return (json && json.data) || [];
             }
         };
         // DataTables injects the pre-rendered <td>…</td> HTML directly via render()
@@ -817,6 +1196,7 @@ function openModal(id) {
     if (el) {
         _ensureModalExportButtons(el);
         _ensureModalPlatformToggle(el);
+        _ensureNpdLaunchFilter(el);
         _ensureModalPreviewNotice(el);
         _loadModalRowsOnDemand(el);
         el.classList.add('active');
