@@ -39,8 +39,8 @@ from apps.dashboard.services.filters import (
     apply_dashboard_entity_filters,
     build_filters_from_querydict,
     cache_filter_string,
-    launch_date_allow_lists,
     normalize_payload_filters,
+    resolve_product_entity_allow_lists,
     selected_filter_payload,
 )
 from apps.dashboard.services.materialized_cache import (
@@ -402,11 +402,10 @@ def _get_asin_fsn_report_product_daily_rows(data_owner, filters, report_date_ran
     qs = _list_or_scalar_filter(qs, "portfolio", filters.get("portfolio"))
     qs = _list_or_scalar_filter(qs, "subcategory", filters.get("subcategory"))
 
-    asin_filter = filters.get("asin")
-    fsn_filter = filters.get("fsn")
     platform = filters.get("platform") or "All"
-    show_amazon = platform != "Flipkart" and not (fsn_filter and not asin_filter)
-    show_flipkart = platform != "Amazon" and not (asin_filter and not fsn_filter)
+    show_amazon = platform != "Flipkart"
+    show_flipkart = platform != "Amazon"
+    entity_asins, entity_fsns = resolve_product_entity_allow_lists(data_owner, filters)
 
     asin_rows = []
     fsn_rows = []
@@ -417,7 +416,10 @@ def _get_asin_fsn_report_product_daily_rows(data_owner, filters, report_date_ran
     def fetch_az_totals():
         if show_amazon:
             az_qs = qs.filter(platform="Amazon")
-            az_qs = _list_or_scalar_filter(az_qs, "asin", asin_filter)
+            if entity_asins is not None:
+                if not entity_asins:
+                    return []
+                az_qs = _list_or_scalar_filter(az_qs, "asin", entity_asins)
             return list(
                 az_qs.exclude(sku__isnull=True)
                 .exclude(sku="")
@@ -430,7 +432,10 @@ def _get_asin_fsn_report_product_daily_rows(data_owner, filters, report_date_ran
     def fetch_fk_totals():
         if show_flipkart:
             fk_qs = qs.filter(platform="Flipkart")
-            fk_qs = _list_or_scalar_filter(fk_qs, "fsn", fsn_filter)
+            if entity_fsns is not None:
+                if not entity_fsns:
+                    return []
+                fk_qs = _list_or_scalar_filter(fk_qs, "fsn", entity_fsns)
             return list(
                 fk_qs.exclude(sku__isnull=True)
                 .exclude(sku="")
@@ -461,7 +466,10 @@ def _get_asin_fsn_report_product_daily_rows(data_owner, filters, report_date_ran
         if not top_az_skus:
             return [], {}
         az_qs = qs.filter(platform="Amazon")
-        az_qs = _list_or_scalar_filter(az_qs, "asin", asin_filter)
+        if entity_asins is not None:
+            if not entity_asins:
+                return [], {}
+            az_qs = _list_or_scalar_filter(az_qs, "asin", entity_asins)
         rows = list(
             az_qs.filter(sku__in=top_az_skus)
             .values("sku", "date")
@@ -486,7 +494,10 @@ def _get_asin_fsn_report_product_daily_rows(data_owner, filters, report_date_ran
         if not top_fk_skus:
             return [], {}
         fk_qs = qs.filter(platform="Flipkart")
-        fk_qs = _list_or_scalar_filter(fk_qs, "fsn", fsn_filter)
+        if entity_fsns is not None:
+            if not entity_fsns:
+                return [], {}
+            fk_qs = _list_or_scalar_filter(fk_qs, "fsn", entity_fsns)
         rows = list(
             fk_qs.filter(sku__in=top_fk_skus)
             .values("sku", "date")
@@ -742,6 +753,7 @@ def _get_top_product_modal_rows(data_owner, filters):
         _build_top_product_rows,
         _get_product_daily_summary_querysets,
         get_prev_period_qs,
+        product_insights_need_exact_dates,
     )
 
     qs, fk_qs = _get_filtered_processed_querysets(data_owner, filters)
@@ -772,16 +784,17 @@ def _get_top_product_modal_rows(data_owner, filters):
     try:
         from apps.dashboard.services.asin_monthly_summary import build_top_products_from_monthly
 
-        monthly_rows = build_top_products_from_monthly(
-            data_owner,
-            filters,
-            asin_meta=asin_meta,
-            fsn_meta=fsn_meta,
-            limit=200,
-            include_full_payload=True,
-        )
-        if monthly_rows is not None:
-            return monthly_rows
+        if not product_insights_need_exact_dates(filters):
+            monthly_rows = build_top_products_from_monthly(
+                data_owner,
+                filters,
+                asin_meta=asin_meta,
+                fsn_meta=fsn_meta,
+                limit=200,
+                include_full_payload=True,
+            )
+            if monthly_rows is not None:
+                return monthly_rows
     except Exception:
         pass
 
@@ -804,6 +817,7 @@ def _get_declining_product_modal_rows(data_owner, filters):
     from apps.dashboard.services.analytics_services_orm_pipeline import (
         _build_declining_product_rows,
         _get_product_daily_summary_querysets,
+        product_insights_need_exact_dates,
         resolve_growth_period,
         safe_shift_month,
     )
@@ -842,19 +856,20 @@ def _get_declining_product_modal_rows(data_owner, filters):
     try:
         from apps.dashboard.services.asin_monthly_summary import build_declining_products_from_monthly
 
-        monthly_rows = build_declining_products_from_monthly(
-            data_owner,
-            filters,
-            cm_start,
-            cm_end,
-            pm_start,
-            pm_end,
-            include_full_payload=True,
-            asin_meta=asin_meta,
-            fsn_meta=fsn_meta,
-        )
-        if monthly_rows is not None:
-            return monthly_rows
+        if not product_insights_need_exact_dates(filters):
+            monthly_rows = build_declining_products_from_monthly(
+                data_owner,
+                filters,
+                cm_start,
+                cm_end,
+                pm_start,
+                pm_end,
+                include_full_payload=True,
+                asin_meta=asin_meta,
+                fsn_meta=fsn_meta,
+            )
+            if monthly_rows is not None:
+                return monthly_rows
     except Exception:
         pass
 
@@ -878,35 +893,15 @@ def _get_declining_product_modal_rows(data_owner, filters):
 
 def _get_inventory_modal_queryset(data_owner, filters, query):
     from apps.dashboard.services.analytics_services_orm_pipeline import (
-        apply_global_filters_orm,
+        apply_inventory_summary_filters,
     )
 
     qs = DashboardInventoryHealthSummary.objects.filter(
         user=data_owner,
         platform="Combined",
     )
-    qs = apply_global_filters_orm(qs, filters)
-    qs = _list_or_scalar_filter(qs, "category", filters.get("category"))
-    qs = _list_or_scalar_filter(qs, "portfolio", filters.get("portfolio"))
-    qs = _list_or_scalar_filter(qs, "subcategory", filters.get("subcategory"))
-
     platform_filter = filters.get("platform")
-    if platform_filter == "Amazon":
-        qs = qs.exclude(Q(asin="") | Q(asin__isnull=True))
-    elif platform_filter == "Flipkart":
-        qs = qs.exclude(Q(fsn="") | Q(fsn__isnull=True))
-
-
-    sku_filter = filters.get("fsn") or filters.get("asin")
-    if sku_filter:
-        if isinstance(sku_filter, (list, tuple)):
-            qs = qs.filter(Q(asin__in=sku_filter) | Q(fsn__in=sku_filter))
-        else:
-            qs = qs.filter(Q(asin=sku_filter) | Q(fsn=sku_filter))
-
-    launch_asins, launch_fsns = launch_date_allow_lists(data_owner, filters)
-    if launch_asins is not None or launch_fsns is not None:
-        qs = qs.filter(Q(asin__in=launch_asins or []) | Q(fsn__in=launch_fsns or []))
+    qs = apply_inventory_summary_filters(qs, data_owner, filters, platform_filter)
 
     if query:
         needle = str(query).strip()
@@ -940,6 +935,26 @@ def _inventory_summary_row_dict(row, msku_map=None):
     _asin = row.asin or ""
     _fsn = row.fsn or ""
     _msku = _msku_map.get(_asin) or _msku_map.get(_fsn) or ""
+    amz_fba = int(row.fba_qty or 0)
+    amz_flex = int(row.flex_qty or 0)
+    total_amz_stock = int(row.stock_qty or 0)
+    fk_fbf = int(row.fk_fba_qty or 0)
+    fk_flex = int(row.fk_flex_qty or 0)
+    total_fk_stock = int(row.fk_stock_qty or 0)
+    total_stock = total_amz_stock + total_fk_stock
+    amz_sales = int(row.sale_qty or 0)
+    fk_sales = int(row.fk_sale_qty or 0)
+    total_sales = amz_sales + fk_sales
+    total_doc = round(total_stock / float(total_sales), 2) if total_sales > 0 else (999.0 if total_stock > 0 else 0.0)
+    total_reason = (
+        f"DOC = ∞ (Total Stock: {total_stock}, No sales)"
+        if total_stock > 0 and total_sales <= 0
+        else (
+            f"Total Stock = 0 (AMZ: {total_amz_stock}, FK: {total_fk_stock})"
+            if total_stock <= 0
+            else f"DOC = {total_doc} days (Total Stock: {total_stock} / Total Same-Day Sales: {total_sales})"
+        )
+    )
     return {
         "date": row.date,
         "sku": row.sku,
@@ -947,38 +962,51 @@ def _inventory_summary_row_dict(row, msku_map=None):
         "asin": _asin,
         "fsn": _fsn,
         "category": row.category or "Unknown",
+        "portfolio": row.portfolio or "",
         
         # Amazon Metrics
-        "amz_stock": int(row.stock_qty or 0),
-        "amz_sales": int(row.sale_qty or 0),
+        "amz_fba": amz_fba,
+        "amz_flex": amz_flex,
+        "amz_stock": total_amz_stock,
+        "total_amz_stock": total_amz_stock,
+        "amz_sales": amz_sales,
         "amz_doc": float(row.doc or 0),
         "amz_revenue": round(float(row.revenue or 0), 2),
         "amz_status": row.status or "",
         "amz_status_class": row.status_class or "",
         
         # Flipkart Metrics
-        "fk_stock": int(row.fk_stock_qty or 0),
-        "fk_sales": int(row.fk_sale_qty or 0),
+        "fk_fbf": fk_fbf,
+        "fk_flex": fk_flex,
+        "fk_stock": total_fk_stock,
+        "total_fk_stock": total_fk_stock,
+        "fk_sales": fk_sales,
         "fk_doc": float(row.fk_doc or 0),
         "fk_revenue": round(float(row.fk_revenue or 0), 2),
         "fk_status": row.fk_status or "",
         "fk_status_class": row.fk_status_class or "",
+
+        # Combined stock/DOC metrics
+        "total_stock": total_stock,
+        "total_sales": total_sales,
+        "total_doc": total_doc,
+        "total_reason": total_reason,
         
         # Calculate fk_reason dynamically since only amz_reason is stored in DB
         "fk_reason": (
-            f"Stock Qty = 0 (Website: {int(row.fk_fba_qty or 0)}, Inventory: {int(row.fk_flex_qty or 0)})"
-            if int(row.fk_stock_qty or 0) <= 0
+            f"Stock Qty = 0 (FBF: {fk_fbf}, Flex: {fk_flex})"
+            if total_fk_stock <= 0
             else (
-                f"DOC = ∞ (Stock: {int(row.fk_stock_qty or 0)}, No sales)"
-                if int(row.fk_sale_qty or 0) <= 0
-                else f"DOC = {round(float(row.fk_doc or 0), 2)} days (Stock: {int(row.fk_stock_qty or 0)} / Same-Day Sales: {int(row.fk_sale_qty or 0)})"
+                f"DOC = ∞ (Stock: {total_fk_stock}, No sales)"
+                if fk_sales <= 0
+                else f"DOC = {round(float(row.fk_doc or 0), 2)} days (Stock: {total_fk_stock} / Same-Day Sales: {fk_sales})"
             )
         ),
         
         # Combined / Legacy (for sorting/fallback)
         "revenue": round(float(row.revenue or 0) + float(row.fk_revenue or 0), 2),
-        "stock_qty": int(row.stock_qty or 0),
-        "sale_qty": int(row.sale_qty or 0),
+        "stock_qty": total_stock,
+        "sale_qty": total_sales,
         "reason": row.reason,
     }
 
@@ -1692,7 +1720,7 @@ def dashboard_modal_rows_view(request, view_name, modal_key):
     filter_hash = hashlib.md5(cache_filter_string(filters).encode("utf-8")).hexdigest()
 
     modal_rows_cache_key = (
-        "dashboard_modal_rows_v5_"
+        "dashboard_modal_rows_v6_"
         f"{data_owner.id}_{view_name}_{modal_key}_{data_version}_{filter_hash}_"
         f"{hashlib.md5(query.encode('utf-8')).hexdigest()}_{page}_{page_size}"
     )
@@ -1712,7 +1740,7 @@ def dashboard_modal_rows_view(request, view_name, modal_key):
 
     # All-rows cache: keyed without page/page_size so page 2+ hits this and paginates in Python.
     all_rows_cache_key = (
-        "dashboard_modal_all_rows_v6_"
+        "dashboard_modal_all_rows_v7_"
         f"{data_owner.id}_{view_name}_{modal_key}_{data_version}_{filter_hash}_"
         f"{hashlib.md5(query.encode('utf-8')).hexdigest()}"
     )
@@ -1802,13 +1830,15 @@ def dashboard_modal_rows_view(request, view_name, modal_key):
         if modal_key == "inventory-health":
             _platform = filters.get("platform") or "All"
             if _platform == "Amazon":
-                headers = ["Date", "ASIN", "Category", "Portfolio", "Stock", "Sales", "DOC", "Revenue", "Status", "Calculation"]
+                headers = ["Date", "ASIN", "Category", "Portfolio", "AMZ FBA", "AMZ Flex", "Total AMZ Stock", "AMZ Sales", "AMZ DOC", "Revenue", "Status", "Calculation"]
                 table_rows = [[
                     str(r.get("date", "")),
                     r.get("asin", ""),
                     r.get("category", ""),
                     r.get("portfolio", ""),
-                    r.get("amz_stock", 0),
+                    r.get("amz_fba", 0),
+                    r.get("amz_flex", 0),
+                    r.get("total_amz_stock", 0),
                     r.get("amz_sales", 0),
                     r.get("amz_doc", 0),
                     r.get("amz_revenue", 0),
@@ -1816,13 +1846,15 @@ def dashboard_modal_rows_view(request, view_name, modal_key):
                     r.get("reason", ""),
                 ] for r in rows]
             elif _platform == "Flipkart":
-                headers = ["Date", "FSN", "Category", "Portfolio", "Stock", "Sales", "DOC", "Revenue", "Status", "Calculation"]
+                headers = ["Date", "FSN", "Category", "Portfolio", "FK FBF", "FK Flex", "Total FK Stock", "FK Sales", "FK DOC", "Revenue", "Status", "Calculation"]
                 table_rows = [[
                     str(r.get("date", "")),
                     r.get("fsn", ""),
                     r.get("category", ""),
                     r.get("portfolio", ""),
-                    r.get("fk_stock", 0),
+                    r.get("fk_fbf", 0),
+                    r.get("fk_flex", 0),
+                    r.get("total_fk_stock", 0),
                     r.get("fk_sales", 0),
                     r.get("fk_doc", 0),
                     r.get("fk_revenue", 0),
@@ -1830,24 +1862,27 @@ def dashboard_modal_rows_view(request, view_name, modal_key):
                     r.get("fk_reason", ""),
                 ] for r in rows]
             else:  # All platforms
-                headers = ["Date", "ASIN", "FSN", "Category", "Portfolio", "Amz Stock", "Amz Sales", "Amz DOC", "Amz Revenue", "Amz Status", "FK Stock", "FK Sales", "FK DOC", "FK Revenue", "FK Status", "Calculation"]
+                headers = ["Date", "ASIN", "FSN", "Category", "Portfolio", "AMZ FBA", "AMZ Flex", "Total AMZ Stock", "FK FBF", "FK Flex", "Total FK Stock", "Total Stock (AMZ+FK)", "Total Sales", "DOC", "AMZ Revenue", "FK Revenue", "AMZ Status", "FK Status", "Calculation"]
                 table_rows = [[
                     str(r.get("date", "")),
                     r.get("asin", ""),
                     r.get("fsn", ""),
                     r.get("category", ""),
                     r.get("portfolio", ""),
-                    r.get("amz_stock", 0),
-                    r.get("amz_sales", 0),
-                    r.get("amz_doc", 0),
+                    r.get("amz_fba", 0),
+                    r.get("amz_flex", 0),
+                    r.get("total_amz_stock", 0),
+                    r.get("fk_fbf", 0),
+                    r.get("fk_flex", 0),
+                    r.get("total_fk_stock", 0),
+                    r.get("total_stock", 0),
+                    r.get("total_sales", 0),
+                    r.get("total_doc", 0),
                     r.get("amz_revenue", 0),
-                    r.get("amz_status", ""),
-                    r.get("fk_stock", 0),
-                    r.get("fk_sales", 0),
-                    r.get("fk_doc", 0),
                     r.get("fk_revenue", 0),
+                    r.get("amz_status", ""),
                     r.get("fk_status", ""),
-                    r.get("reason", ""),
+                    r.get("total_reason", ""),
                 ] for r in rows]
         elif modal_key == "npd-performance":
             headers, table_rows = _npd_export_table(rows, filters.get("platform") or "All")
@@ -1884,20 +1919,20 @@ def dashboard_modal_rows_view(request, view_name, modal_key):
                 headers = ["MSKU", "ASIN", "MOM Drop %", "Impact", "Page Views"]
                 table_rows = [[
                     r.get("msku", ""), r.get("az_sku", ""),
-                    r.get("az_drop", 0), r.get("az_impact", 0), r.get("az_pageviews", 0)
+                    r.get("az_drop_pct", 0), r.get("az_impact", 0), r.get("az_pageviews", 0)
                 ] for r in rows]
             elif _platform == "Flipkart":
                 headers = ["MSKU", "FSN", "MOM Drop %", "Impact", "Page Views"]
                 table_rows = [[
                     r.get("msku", ""), r.get("fk_sku", ""),
-                    r.get("fk_drop", 0), r.get("fk_impact", 0), r.get("fk_pageviews", 0)
+                    r.get("fk_drop_pct", 0), r.get("fk_impact", 0), r.get("fk_pageviews", 0)
                 ] for r in rows]
             else:
                 headers = ["SKU", "ASIN", "FSN", "AMZ MOM Drop %", "FK MOM Drop %", "Total MOM Drop %", "AMZ Impact", "FK Impact", "Total Impact", "AMZ Page Views", "FK Page Views", "Total Page Views"]
                 table_rows = [[
                     r.get("msku", ""), r.get("az_sku", ""), r.get("fk_sku", ""),
-                    r.get("az_drop", 0), r.get("fk_drop", 0), r.get("total_drop", 0),
-                    r.get("az_impact", 0), r.get("fk_impact", 0), r.get("total_impact", 0),
+                    r.get("az_drop_pct", 0), r.get("fk_drop_pct", 0), r.get("drop_pct", 0),
+                    r.get("az_impact", 0), r.get("fk_impact", 0), r.get("impact", 0),
                     r.get("az_pageviews", 0), r.get("fk_pageviews", 0), r.get("pageviews", 0)
                 ] for r in rows]
         else:
@@ -2043,7 +2078,7 @@ def dashboard_product_card_rows_view(request, view_name, card_key):
     filters = _strip_non_dashboard_filters(build_filters_from_querydict(request.GET))
     filter_hash = hashlib.md5(cache_filter_string(filters).encode("utf-8")).hexdigest()
     cache_key = (
-        "dashboard_product_card_rows_v2_"
+        "dashboard_product_card_rows_v3_"
         f"{data_owner.id}_{view_name}_{card_key}_{data_version}_{filter_hash}"
     )
 
@@ -2974,3 +3009,30 @@ def download_calculated_data(request, file_format):
         return JsonResponse(
             {"error": "Invalid format. Use 'csv' or 'excel'."}, status=400
         )
+
+
+@require_GET
+def download_fsn_status_revenue(request):
+    """Download the FSN status revenue detail rows behind the KPI card."""
+    from apps.dashboard.services.export_services import export_fsn_status_revenue_csv
+    from datetime import datetime
+
+    user = get_logged_in_user(request)
+    if not user:
+        return redirect("account-login")
+
+    status_key = (request.GET.get("status") or "").strip().lower()
+    filters = build_filters_from_querydict(request.GET)
+
+    try:
+        buf = export_fsn_status_revenue_csv(user, filters, status_key)
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_status = status_key if status_key in {"continued", "discontinued", "unmapped"} else "fsn"
+    response = FileResponse(buf, content_type="text/csv")
+    response["Content-Disposition"] = (
+        f'attachment; filename="FSN_Status_Revenue_{safe_status}_{timestamp}.csv"'
+    )
+    return response

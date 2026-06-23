@@ -227,8 +227,8 @@
 })();
 </script>
 
-<!-- ════════════ ROW 4: Inventory Health | OOS Impact ════════════ -->
-<div class="biz-row-4" style="grid-template-columns: 1fr 1fr;">
+<!-- ════════════ ROW 4: Inventory Health | OOS Impact | Inventory Position ════════════ -->
+<div class="biz-row-4">
     <!-- Inventory Health (CEO-style) -->
     <div class="ceo-card" id="biz-card-inventory">
         <div class="ceo-card-header" style="display: flex; justify-content: space-between; align-items: center;">
@@ -325,6 +325,8 @@
             </div>
         </div>
     </div>
+
+    {% include "dashboard/partials/inventory_position_card.html" with inventory_position_card_id="biz-card-inv-pos" %}
 
 </div>
 

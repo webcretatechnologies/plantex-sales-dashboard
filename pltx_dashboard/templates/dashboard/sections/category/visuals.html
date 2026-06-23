@@ -287,35 +287,7 @@
         </div>
     </div>
 
-    <!-- Inventory Position -->
-    <div class="ceo-card" id="cat-card-inv-pos">
-        <div class="ceo-card-header">
-            <div>
-                <span class="ceo-card-title">Inventory Position</span>
-                <div style="font-size:11px;color:var(--muted);margin-top:2px;">Stock status by days of cover</div>
-            </div>
-        </div>
-        <div class="ceo-card-body">
-            <div class="cat-inv-buckets">
-                {% for bucket in payload.inventory_position %}
-                <div class="cat-inv-bucket {{ bucket.color }}">
-                    <span class="cat-inv-bucket-label">{{ bucket.label }}</span>
-                    <strong>{{ bucket.revenue|fmt_rupee }}</strong>
-                    <div class="cat-inv-bucket-bar">
-                        <div class="cat-inv-bucket-fill {{ bucket.color }}" style="width: {{ bucket.pct }}%;"></div>
-                    </div>
-                    <span class="cat-inv-bucket-pct">{{ bucket.pct }}%</span>
-                    {% if not request.GET.platform or request.GET.platform == 'All' %}
-                    <div style="font-size: 10px; color: var(--muted); margin-top: 6px; display: flex; justify-content: space-between; padding: 0 4px; width: 100%;">
-                        <span style="display:inline-flex;align-items:center;"><img src="{% static 'logo/amazon_logo.png' %}" alt="Amz" style="width:14px;height:14px;margin-right:4px;"> <strong style="color:var(--text-color);">{{ bucket.az_revenue|fmt_rupee }}</strong></span>
-                        <span style="display:inline-flex;align-items:center;"><img src="{% static 'logo/flipkart_logo.png' %}" alt="FK" style="width:14px;height:14px;margin-right:4px;"> <strong style="color:var(--text-color);">{{ bucket.fk_revenue|fmt_rupee }}</strong></span>
-                    </div>
-                    {% endif %}
-                </div>
-                {% endfor %}
-            </div>
-        </div>
-    </div>
+    {% include "dashboard/partials/inventory_position_card.html" with inventory_position_card_id="cat-card-inv-pos" %}
 
     <!-- Growth Opportunities -->
     <div class="ceo-card" id="cat-card-growth">

@@ -1,5 +1,7 @@
 import logging
 
+import pandas as pd
+
 from apps.dashboard.models import (
     CategoryMapping,
     FBAStockData,
@@ -32,8 +34,10 @@ def _clean_optional_text(value):
 
 
 def _clean_optional_date(value):
+    if value is None or pd.isna(value):
+        return None
     text = str(value or "").strip()
-    if not text or text.lower() == "nan" or text in {"0", "0.0"}:
+    if not text or text.lower() in {"nan", "nat", "none", "null"} or text in {"0", "0.0"}:
         return None
     try:
         return parse_report_date(value, prefer_dayfirst=True)

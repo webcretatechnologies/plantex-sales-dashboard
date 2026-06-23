@@ -170,6 +170,84 @@ def _mapping_values(value):
     return [item] if item else []
 
 
+def _clean_distinct_values(values):
+    return {str(value).strip() for value in values if str(value or "").strip()}
+
+
+def _intersect_allow_list(current, values):
+    values = _clean_distinct_values(values)
+    if current is None:
+        return values
+    return current & values
+
+
+def resolve_product_entity_allow_lists(user, filters):
+    """
+    Resolve direct product filters across Amazon/FK mapping tables.
+
+    ASIN, FSN, SKU, and parent-ASIN are alternate identities for the same product
+    family. Selecting one should constrain both platform datasets to its mapped
+    counterpart instead of dropping the other platform.
+    """
+    if not user:
+        return None, None
+
+    asin_values = _mapping_values(filters.get("asin"))
+    fsn_values = _mapping_values(filters.get("fsn"))
+    sku_values = _mapping_values(filters.get("sku"))
+    parent_values = _mapping_values(filters.get("parent_asin"))
+    if not (asin_values or fsn_values or sku_values or parent_values):
+        return None, None
+
+    from apps.dashboard.models import CategoryMapping, FlipkartCategoryMap
+
+    allowed_asins = None
+    allowed_fsns = None
+
+    if asin_values:
+        mapped_fsns = FlipkartCategoryMap.objects.filter(
+            user=user,
+            asin__in=asin_values,
+        ).values_list("fsn", flat=True)
+        allowed_asins = _intersect_allow_list(allowed_asins, asin_values)
+        allowed_fsns = _intersect_allow_list(allowed_fsns, mapped_fsns)
+
+    if fsn_values:
+        mapped_asins = FlipkartCategoryMap.objects.filter(
+            user=user,
+            fsn__in=fsn_values,
+        ).values_list("asin", flat=True)
+        allowed_asins = _intersect_allow_list(allowed_asins, mapped_asins)
+        allowed_fsns = _intersect_allow_list(allowed_fsns, fsn_values)
+
+    if sku_values:
+        mapped_asins = CategoryMapping.objects.filter(
+            user=user,
+            msku__in=sku_values,
+        ).values_list("asin", flat=True)
+        mapped_fsns = FlipkartCategoryMap.objects.filter(
+            user=user,
+            sku__in=sku_values,
+        ).values_list("fsn", flat=True)
+        allowed_asins = _intersect_allow_list(allowed_asins, mapped_asins)
+        allowed_fsns = _intersect_allow_list(allowed_fsns, mapped_fsns)
+
+    if parent_values:
+        child_asins = CategoryMapping.objects.filter(
+            user=user,
+            parent_asin__in=parent_values,
+        ).values_list("asin", flat=True)
+        child_asins = _clean_distinct_values(child_asins)
+        mapped_fsns = FlipkartCategoryMap.objects.filter(
+            user=user,
+            asin__in=child_asins,
+        ).values_list("fsn", flat=True)
+        allowed_asins = _intersect_allow_list(allowed_asins, child_asins)
+        allowed_fsns = _intersect_allow_list(allowed_fsns, mapped_fsns)
+
+    return sorted(allowed_asins or []), sorted(allowed_fsns or [])
+
+
 def _apply_mapping_filter(qs, field_name, value):
     values = _mapping_values(value)
     if not values:
@@ -312,15 +390,11 @@ def apply_dashboard_entity_filters(qs, fk_qs, filters, user=None):
     qs = _apply_value_filter(qs, "category", filters.get("category"))
     fk_qs = _apply_value_filter(fk_qs, "category", filters.get("category"))
 
-    asin_filter = filters.get("asin")
-    fsn_filter = filters.get("fsn")
-    qs = _apply_value_filter(qs, "asin", asin_filter)
-    fk_qs = _apply_value_filter(fk_qs, "fsn", fsn_filter)
-
-    if asin_filter and not fsn_filter:
-        fk_qs = fk_qs.none()
-    elif fsn_filter and not asin_filter:
-        qs = qs.none()
+    entity_asins, entity_fsns = resolve_product_entity_allow_lists(user, filters)
+    if entity_asins is not None:
+        qs = _apply_in_filter(qs, "asin", entity_asins) if entity_asins else qs.none()
+    if entity_fsns is not None:
+        fk_qs = _apply_in_filter(fk_qs, "fsn", entity_fsns) if entity_fsns else fk_qs.none()
 
     qs = _apply_value_filter(qs, "portfolio", filters.get("portfolio"))
     fk_qs = _apply_value_filter(fk_qs, "portfolio", filters.get("portfolio"))
@@ -405,15 +479,11 @@ def get_filtered_mapping_querysets(filters, user):
     az_map = _apply_value_filter(az_map, "category", filters.get("category"))
     fk_map = _apply_value_filter(fk_map, "category", filters.get("category"))
 
-    asin_filter = filters.get("asin")
-    fsn_filter = filters.get("fsn")
-    az_map = _apply_value_filter(az_map, "asin", asin_filter)
-    fk_map = _apply_value_filter(fk_map, "fsn", fsn_filter)
-
-    if asin_filter and not fsn_filter:
-        fk_map = fk_map.none()
-    elif fsn_filter and not asin_filter:
-        az_map = az_map.none()
+    entity_asins, entity_fsns = resolve_product_entity_allow_lists(user, filters)
+    if entity_asins is not None:
+        az_map = _apply_in_filter(az_map, "asin", entity_asins) if entity_asins else az_map.none()
+    if entity_fsns is not None:
+        fk_map = _apply_in_filter(fk_map, "fsn", entity_fsns) if entity_fsns else fk_map.none()
 
     az_map = _apply_value_filter(az_map, "portfolio", filters.get("portfolio"))
     fk_map = _apply_value_filter(fk_map, "portfolio", filters.get("portfolio"))

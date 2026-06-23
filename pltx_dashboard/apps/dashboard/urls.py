@@ -8,6 +8,7 @@ from .views import (
     category_dashboard_view,
     download_calculated_data,
     download_demo_template,
+    download_fsn_status_revenue,
     dashboard_section_view,
     dashboard_modal_rows_view,
     dashboard_product_card_rows_view,
@@ -73,6 +74,11 @@ urlpatterns = [
         "dashboard/download/<str:file_format>/",
         download_calculated_data,
         name="dashboard-download",
+    ),
+    path(
+        "dashboard/fsn-status-revenue/download/",
+        download_fsn_status_revenue,
+        name="dashboard-fsn-status-revenue-download",
     ),
     path("api/demo-template/", download_demo_template, name="dashboard-demo-template"),
 ]

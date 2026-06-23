@@ -1,0 +1,54 @@
+{% load dashboard_extras static %}
+<div class="ceo-card inventory-position-card" id="{{ inventory_position_card_id|default:'inventory-position-card' }}">
+    <div class="ceo-card-header">
+        <div>
+            <span class="ceo-card-title">Inventory Position</span>
+            <div class="ceo-card-subtitle">Revenue grouped by days of cover</div>
+        </div>
+    </div>
+    <div class="ceo-card-body">
+        <div class="inv-position-summary">
+            <div>
+                <span class="inv-position-kicker">Stock Coverage Mix</span>
+                <strong>{{ payload.inventory.details_total|fmt_num }} inventory rows</strong>
+            </div>
+            <span class="inv-position-pill">{{ payload.oos_impact.selected_platform|default:"All" }}</span>
+        </div>
+        <div class="cat-inv-buckets">
+            {% for bucket in payload.inventory_position %}
+            <div class="cat-inv-bucket {{ bucket.color }}">
+                <div class="cat-inv-bucket-top">
+                    <span class="cat-inv-bucket-label">{{ bucket.label }}</span>
+                    <span class="cat-inv-bucket-pct">{{ bucket.pct }}%</span>
+                </div>
+                <div class="cat-inv-bucket-value">
+                    <strong>{{ bucket.revenue|fmt_rupee }}</strong>
+                    <div class="cat-inv-bucket-bar">
+                        <div class="cat-inv-bucket-fill {{ bucket.color }}" style="width: {{ bucket.pct }}%;"></div>
+                    </div>
+                </div>
+                {% if not request.GET.platform or request.GET.platform == 'All' %}
+                <div class="inv-platform-split">
+                    <div class="inv-platform-row">
+                        <span class="inv-platform-name">
+                            <img src="{% static 'logo/amazon_logo.png' %}" alt="Amazon">
+                            Amazon
+                        </span>
+                        <strong>{{ bucket.az_revenue|default:0|fmt_rupee }}</strong>
+                    </div>
+                    <div class="inv-platform-row">
+                        <span class="inv-platform-name">
+                            <img src="{% static 'logo/flipkart_logo.png' %}" alt="Flipkart">
+                            Flipkart
+                        </span>
+                        <strong>{{ bucket.fk_revenue|default:0|fmt_rupee }}</strong>
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+            {% empty %}
+            <div class="empty">No inventory position data available</div>
+            {% endfor %}
+        </div>
+    </div>
+</div>

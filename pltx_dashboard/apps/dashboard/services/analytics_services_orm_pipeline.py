@@ -16,7 +16,11 @@ from apps.dashboard.services.metrics import (
     safe_growth as calculate_growth,
     tacos as calculate_tacos,
 )
-from apps.dashboard.services.filters import apply_dashboard_entity_filters, has_launch_date_filter
+from apps.dashboard.services.filters import (
+    apply_dashboard_entity_filters,
+    get_filtered_mapping_querysets,
+    has_launch_date_filter,
+)
 from django.core.cache import cache
 from django.db.models import Sum, Max, Case, When, F, Value, Count, Q
 from django.utils import timezone
@@ -45,6 +49,165 @@ def _parse_ymd_date(value):
         return None
 
 
+def _filter_values(value):
+    if not value:
+        return []
+    if isinstance(value, (list, tuple, set)):
+        return [str(item).strip() for item in value if str(item).strip()]
+    item = str(value).strip()
+    return [item] if item else []
+
+
+def _apply_inventory_value_filter(qs, field_name, value):
+    values = _filter_values(value)
+    if not values:
+        return qs
+    return qs.filter(**{f"{field_name}__in": values})
+
+
+def _inventory_mapping_filters_active(filters):
+    mapping_fields = {
+        "asin",
+        "fsn",
+        "sku",
+        "parent_asin",
+        "category_manager",
+        "series_name",
+        "material",
+        "size",
+        "brand_name",
+        "ratings",
+        "finish",
+        "launch_date_range",
+        "launch_start_date",
+        "launch_end_date",
+    }
+    return any(filters.get(field) for field in mapping_fields)
+
+
+def _inventory_health_status_q(status, platform_filter):
+    if status == "In Stock":
+        az_q = Q(status="In Stock")
+        fk_q = Q(fk_status="Ideal Stocking")
+    elif status == "Low Stock":
+        az_q = Q(status="Low Stock")
+        fk_q = Q(fk_status="Understock")
+    elif status == "OOS":
+        az_q = Q(status="OOS")
+        fk_q = Q(fk_status__in=["OOS", "Nearly OOS"])
+    elif status == "Overstock":
+        az_q = Q(status="Overstock")
+        fk_q = Q(fk_status__in=["Over Stock", "Highly Over Stock", "Not Selling"])
+    else:
+        return Q()
+
+    if platform_filter == "Amazon":
+        return az_q
+    if platform_filter == "Flipkart":
+        return fk_q
+    return az_q | fk_q
+
+
+def apply_inventory_summary_filters(inv_sum_qs, user, filters, platform_filter=None, *, apply_date_filter=True):
+    if apply_date_filter:
+        inv_sum_qs = apply_global_filters_orm(inv_sum_qs, filters)
+
+    if platform_filter == "Amazon":
+        inv_sum_qs = inv_sum_qs.exclude(Q(asin="") | Q(asin__isnull=True))
+    elif platform_filter == "Flipkart":
+        inv_sum_qs = inv_sum_qs.exclude(Q(fsn="") | Q(fsn__isnull=True))
+
+    inv_sum_qs = _apply_inventory_value_filter(inv_sum_qs, "category", filters.get("category"))
+    inv_sum_qs = _apply_inventory_value_filter(inv_sum_qs, "portfolio", filters.get("portfolio"))
+    inv_sum_qs = _apply_inventory_value_filter(inv_sum_qs, "subcategory", filters.get("subcategory"))
+
+    if _inventory_mapping_filters_active(filters):
+        mapping_filters = dict(filters)
+        mapping_filters.pop("inventory_health", None)
+        az_map_qs, fk_map_qs = get_filtered_mapping_querysets(mapping_filters, user=user)
+        allowed_asins = [
+            str(value).strip()
+            for value in az_map_qs.values_list("asin", flat=True).distinct()
+            if str(value or "").strip()
+        ]
+        allowed_fsns = [
+            str(value).strip()
+            for value in fk_map_qs.values_list("fsn", flat=True).distinct()
+            if str(value or "").strip()
+        ]
+
+        if platform_filter == "Amazon":
+            inv_sum_qs = inv_sum_qs.filter(asin__in=allowed_asins) if allowed_asins else inv_sum_qs.none()
+        elif platform_filter == "Flipkart":
+            inv_sum_qs = inv_sum_qs.filter(fsn__in=allowed_fsns) if allowed_fsns else inv_sum_qs.none()
+        else:
+            inv_sum_qs = inv_sum_qs.filter(Q(asin__in=allowed_asins) | Q(fsn__in=allowed_fsns))
+
+    status_values = _filter_values(filters.get("inventory_health"))
+    if status_values:
+        status_q = Q()
+        for status in status_values:
+            status_q |= _inventory_health_status_q(status, platform_filter)
+        inv_sum_qs = inv_sum_qs.filter(status_q) if status_q else inv_sum_qs.none()
+
+    return inv_sum_qs
+
+
+def _average_order_value_from_qs(qs):
+    if qs is None:
+        return 0.0
+    agg = qs.aggregate(
+        revenue=Sum("revenue"),
+        orders=Sum("orders"),
+        units=Sum("units"),
+    )
+    revenue = float(agg.get("revenue") or 0.0)
+    orders = int(agg.get("orders") or 0)
+    units = int(agg.get("units") or 0)
+    denominator = orders if orders > 0 else units
+    return revenue / denominator if revenue > 0 and denominator > 0 else 0.0
+
+
+def _estimate_oos_orders_lost(
+    *,
+    az_lost_sales,
+    fk_lost_sales,
+    platform_filter=None,
+    qs=None,
+    fk_qs=None,
+    user=None,
+    filters=None,
+):
+    filters = filters or {}
+    if (qs is None or fk_qs is None) and user is not None:
+        from apps.dashboard.models import ProcessedDashboardData, FlipkartProcessedDashboardData
+
+        base_qs = ProcessedDashboardData.objects.filter(user=user)
+        base_fk_qs = FlipkartProcessedDashboardData.objects.filter(user=user)
+        qs, fk_qs = apply_dashboard_entity_filters(base_qs, base_fk_qs, filters, user=user)
+        qs = apply_global_filters_orm(qs, filters)
+        fk_qs = apply_global_filters_orm(fk_qs, filters)
+
+    az_aov = 0.0 if platform_filter == "Flipkart" else _average_order_value_from_qs(qs)
+    fk_aov = 0.0 if platform_filter == "Amazon" else _average_order_value_from_qs(fk_qs)
+
+    az_orders_lost = round(float(az_lost_sales or 0.0) / az_aov) if az_aov > 0 else 0
+    fk_orders_lost = round(float(fk_lost_sales or 0.0) / fk_aov) if fk_aov > 0 else 0
+
+    return {
+        "orders_lost": int(az_orders_lost + fk_orders_lost),
+        "az_orders_lost": int(az_orders_lost),
+        "fk_orders_lost": int(fk_orders_lost),
+        "az_aov": round(az_aov, 2),
+        "fk_aov": round(fk_aov, 2),
+        "orders_rule": (
+            "Orders Lost = Amazon lost sales / Amazon average order value "
+            "+ Flipkart lost sales / Flipkart average order value. "
+            "When order count is unavailable, units are used as the order-equivalent denominator."
+        ),
+    }
+
+
 def _to_float(value, default=0.0):
     if value is None:
         return default
@@ -56,6 +219,58 @@ def _to_float(value, default=0.0):
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _clean_dimension_label(value):
+    text = str(value or "").strip()
+    if not text or text.lower() in {"nan", "none", "null", "unknown", "unmapped", "-"}:
+        return ""
+    return text
+
+
+def _fsn_status_bucket(value):
+    status = str(value or "").strip().lower()
+    if not status or status in {"nan", "none", "null", "-"}:
+        return ""
+    if "discontinu" in status:
+        return "Discontinued"
+    if "continu" in status:
+        return "Continued"
+    return ""
+
+
+def _continue_discontinue_metrics_from_summary(fk_summary_qs, fsn_meta):
+    counts = {"Continued": 0, "Discontinued": 0, "Unmapped": 0}
+    revenue = {"Continued": 0.0, "Discontinued": 0.0, "Unmapped": 0.0}
+    if fk_summary_qs is None:
+        return counts, revenue
+    fsn_meta = fsn_meta or {}
+
+    for row in fk_summary_qs.values("fsn").annotate(revenue=Sum("revenue")):
+        fsn = str(row.get("fsn") or "").strip()
+        if not fsn:
+            continue
+        status = _fsn_status_bucket((fsn_meta.get(fsn) or {}).get("product_status"))
+        if not status:
+            status = "Unmapped"
+        counts[status] += 1
+        revenue[status] += _to_float(row.get("revenue"))
+    return counts, revenue
+
+
+def _merge_portfolio_revenue_from_summary(store, summary_qs, sku_field, meta_by_sku):
+    if summary_qs is None:
+        return
+
+    for row in summary_qs.values(sku_field, "portfolio").annotate(revenue=Sum("revenue")):
+        sku = str(row.get(sku_field) or "").strip()
+        portfolio = (
+            _clean_dimension_label(row.get("portfolio"))
+            or _clean_dimension_label((meta_by_sku.get(sku) or {}).get("portfolio"))
+        )
+        if not portfolio:
+            continue
+        store[portfolio] = store.get(portfolio, 0.0) + _to_float(row.get("revenue"))
 
 
 def resolve_growth_period(filters, reference_date):
@@ -232,6 +447,17 @@ def _get_product_daily_summary_querysets(user, filters, *, apply_date_filter=Tru
         az_qs = apply_global_filters_orm(az_qs, filters)
         fk_qs = apply_global_filters_orm(fk_qs, filters)
     return az_qs, fk_qs
+
+
+def product_insights_need_exact_dates(filters):
+    """Use daily product summaries whenever the UI date filter must be exact."""
+    return bool(
+        filters.get("date_range")
+        or filters.get("start_date")
+        or filters.get("end_date")
+        or filters.get("compare_start_date")
+        or filters.get("compare_end_date")
+    )
 
 
 def _summary_metrics_by_platform(summary_qs):
@@ -619,8 +845,10 @@ def _empty_activity_metrics():
         "fk_zero_sales_pageviews": 0,
         "continue_sales_revenue": 0.0,
         "discontinue_sales_revenue": 0.0,
+        "unmapped_fsn_revenue": 0.0,
         "continue_sku_count": 0,
         "discontinued_sku_count": 0,
+        "unmapped_fsn_count": 0,
     }
 
 
@@ -645,14 +873,10 @@ def _extract_kpi_metrics_from_grouped_data(table_data, _fsn_meta=None):
     fk_zero_pv = 0
     continue_sales_revenue = 0.0
     discontinue_sales_revenue = 0.0
+    unmapped_fsn_revenue = 0.0
 
-    status_counts = {"Continued": 0, "Discontinued": 0}
-    for fsn, meta in _fsn_meta.items():
-        raw_status = str(meta.get("product_status") or "").strip().lower()
-        if raw_status in ("continued", "continue", "continued/pack of not sales"):
-            status_counts["Continued"] += 1
-        elif raw_status in ("discontinued", "discontinue"):
-            status_counts["Discontinued"] += 1
+    status_counts = {"Continued": 0, "Discontinued": 0, "Unmapped": 0}
+    counted_status_fsns = set()
 
     for row in table_data:
         sku = str(row.get("asin", "")).strip()
@@ -682,14 +906,28 @@ def _extract_kpi_metrics_from_grouped_data(table_data, _fsn_meta=None):
         elif fk_rev > 0 or fk_pv > 0 or row.get("fk_orders", 0) > 0:
             fk_zero_sales += 1
             fk_zero_pv += fk_pv
-            
-        if fk_rev > 0:
-            fk_meta = _fsn_meta.get(sku, {})
-            status = str(fk_meta.get("product_status") or "").strip().lower()
-            if status in ("continued", "continue", "continued/pack of not sales"):
+
+        has_fk_activity = (
+            fk_rev > 0
+            or fk_units > 0
+            or fk_pv > 0
+            or row.get("fk_orders", 0) > 0
+            or float(row.get("fk_spend") or 0.0) > 0
+        )
+        if has_fk_activity:
+            fk_sku = str(row.get("fk_sku") or row.get("fsn") or sku).strip()
+            fk_meta = _fsn_meta.get(fk_sku, {})
+            status = _fsn_status_bucket(fk_meta.get("product_status"))
+            if status == "Continued":
                 continue_sales_revenue += fk_rev
-            elif status in ("discontinued", "discontinue"):
+            elif status == "Discontinued":
                 discontinue_sales_revenue += fk_rev
+            else:
+                status = "Unmapped"
+                unmapped_fsn_revenue += fk_rev
+            if status and fk_sku and fk_sku not in counted_status_fsns:
+                status_counts[status] += 1
+                counted_status_fsns.add(fk_sku)
                 
     activity_metrics = _normalize_activity_metrics({
         "active_asins": len(table_data),
@@ -704,8 +942,10 @@ def _extract_kpi_metrics_from_grouped_data(table_data, _fsn_meta=None):
         "fk_zero_sales_pageviews": fk_zero_pv,
         "continue_sales_revenue": round(continue_sales_revenue, 2),
         "discontinue_sales_revenue": round(discontinue_sales_revenue, 2),
+        "unmapped_fsn_revenue": round(unmapped_fsn_revenue, 2),
         "continue_sku_count": status_counts["Continued"],
         "discontinued_sku_count": status_counts["Discontinued"],
+        "unmapped_fsn_count": status_counts["Unmapped"],
     })
     
     return activity_metrics, az_asins_with_spend, fk_fsns_with_spend
@@ -1284,48 +1524,24 @@ def run_kpi_only_computation(
     def fetch_fk_activity():
         return _compute_sku_activity_combined_from_summary(fk_qs_prod, "fsn")
 
-    def fetch_fk_revenue():
-        if not include_activity_metrics or not fsn_meta:
-            return []
-        return list(fk_qs_prod.values("fsn").annotate(revenue=Sum("revenue")))
-
     with ThreadPoolExecutor(max_workers=3) as executor:
         future_az_act = executor.submit(fetch_az_activity)
         future_fk_act = executor.submit(fetch_fk_activity)
-        future_fk_rev = executor.submit(fetch_fk_revenue)
+        future_fk_status = executor.submit(
+            _continue_discontinue_metrics_from_summary,
+            fk_qs_f,
+            fsn_meta if include_activity_metrics else None,
+        )
 
         az_active, az_selling, az_zero, az_zero_pv, _, az_asins = future_az_act.result()
         fk_active, fk_selling, fk_zero, fk_zero_pv, _, fk_fsns = future_fk_act.result()
-        fk_rev_list = future_fk_rev.result()
+        _status_counts, _status_revenue = future_fk_status.result()
 
     unique_counts = _compute_unique_ad_spend_sku_counts(
         qs_f, fk_qs_f, user, asin_meta=asin_meta, filters=filters,
         az_asins=az_asins, fk_fsns=fk_fsns
     )
     
-    # Compute continue/discontinue FSN status metrics using fsn_meta and fk_qs_prod
-    _status_counts = {"Continued": 0, "Discontinued": 0}
-    _status_revenue = {"Continued": 0.0, "Discontinued": 0.0}
-    if include_activity_metrics and fsn_meta:
-        _fsn_to_status = {}
-        for _fsn, _meta in fsn_meta.items():
-            _raw_status = str(_meta.get("product_status") or "").strip().lower()
-            if _raw_status in ("continued", "continue", "continued/pack of not sales"):
-                _fsn_to_status[_fsn] = "Continued"
-            elif _raw_status in ("discontinued", "discontinue"):
-                _fsn_to_status[_fsn] = "Discontinued"
-        for _status in _fsn_to_status.values():
-            if _status in _status_counts:
-                _status_counts[_status] += 1
-        for _row in fk_rev_list:
-            _fsn = _row.get("fsn")
-            if not _fsn:
-                continue
-            _status = _fsn_to_status.get(str(_fsn).strip())
-            if _status in _status_revenue:
-                _status_revenue[_status] += float(_row.get("revenue") or 0.0)
-
-
     activity_metrics_extracted = _normalize_activity_metrics({
         "active_asins": az_active + fk_active,
         "selling_sku_count": az_selling + fk_selling,
@@ -1339,8 +1555,10 @@ def run_kpi_only_computation(
         "fk_zero_sales_pageviews": fk_zero_pv,
         "continue_sales_revenue": round(_status_revenue["Continued"], 2),
         "discontinue_sales_revenue": round(_status_revenue["Discontinued"], 2),
+        "unmapped_fsn_revenue": round(_status_revenue["Unmapped"], 2),
         "continue_sku_count": _status_counts["Continued"],
         "discontinued_sku_count": _status_counts["Discontinued"],
+        "unmapped_fsn_count": _status_counts["Unmapped"],
     })
     activity_metrics = activity_metrics_extracted if include_activity_metrics else _empty_activity_metrics()
 
@@ -1393,8 +1611,16 @@ def run_kpi_only_computation(
         "zero_sales_pageviews": activity_metrics["zero_sales_pageviews"],
         "continue_sales_revenue": activity_metrics["continue_sales_revenue"],
         "discontinue_sales_revenue": activity_metrics["discontinue_sales_revenue"],
+        "unmapped_fsn_revenue": activity_metrics["unmapped_fsn_revenue"],
         "continue_sku_count": activity_metrics["continue_sku_count"],
         "discontinued_sku_count": activity_metrics["discontinued_sku_count"],
+        "unmapped_fsn_count": activity_metrics["unmapped_fsn_count"],
+        "mapped_fsn_count": activity_metrics["continue_sku_count"] + activity_metrics["discontinued_sku_count"],
+        "active_fsn_count": (
+            activity_metrics["continue_sku_count"]
+            + activity_metrics["discontinued_sku_count"]
+            + activity_metrics["unmapped_fsn_count"]
+        ),
     }
 
     # Previous-period KPI changes.
@@ -1555,8 +1781,16 @@ def run_kpi_only_computation(
             "zero_sales_pageviews": activity_metrics["zero_sales_pageviews"],
             "continue_sales_revenue": activity_metrics["continue_sales_revenue"],
             "discontinue_sales_revenue": activity_metrics["discontinue_sales_revenue"],
+            "unmapped_fsn_revenue": activity_metrics["unmapped_fsn_revenue"],
             "continue_sku_count": activity_metrics["continue_sku_count"],
             "discontinued_sku_count": activity_metrics["discontinued_sku_count"],
+            "unmapped_fsn_count": activity_metrics["unmapped_fsn_count"],
+            "mapped_fsn_count": activity_metrics["continue_sku_count"] + activity_metrics["discontinued_sku_count"],
+            "active_fsn_count": (
+                activity_metrics["continue_sku_count"]
+                + activity_metrics["discontinued_sku_count"]
+                + activity_metrics["unmapped_fsn_count"]
+            ),
         }
     )
 
@@ -1712,44 +1946,28 @@ def _compute_inventory_summary(user, filters, platform_filter):
     
     oos_impact = {
         "lost_sales": 0.0, "skus_affected": 0, "orders_lost": 0,
+        "az_lost_sales": 0.0, "fk_lost_sales": 0.0,
+        "az_skus_affected": 0, "fk_skus_affected": 0,
+        "az_orders_lost": 0, "fk_orders_lost": 0,
+        "az_aov": 0.0, "fk_aov": 0.0,
         "selected_platform": platform_filter or "All",
         "lost_sales_rule": "", "sku_rule": "", "orders_rule": "",
+        "formula": "Lost Sales = Amazon OOS revenue + Flipkart OOS revenue + Flipkart Nearly OOS revenue",
+        "row_basis": "Rows come from the latest inventory-health summary after dashboard filters are applied.",
+        "amazon_status_basis": "Amazon includes rows where status is OOS.",
+        "flipkart_status_basis": "Flipkart includes rows where status is OOS or Nearly OOS.",
     }
-    
-    sku_filter = filters.get("fsn") if platform_filter == "Flipkart" else filters.get("asin")
     
     try:
         inv_sum_qs = DashboardInventoryHealthSummary.objects.filter(
             user=user, platform="Combined"
         )
-        if platform_filter == "Amazon":
-            inv_sum_qs = inv_sum_qs.exclude(Q(asin="") | Q(asin__isnull=True))
-        elif platform_filter == "Flipkart":
-            inv_sum_qs = inv_sum_qs.exclude(Q(fsn="") | Q(fsn__isnull=True))
-
-        cat_filter = filters.get("category")
-        if cat_filter:
-            inv_sum_qs = inv_sum_qs.filter(category__in=cat_filter) if isinstance(cat_filter, (list, tuple)) else inv_sum_qs.filter(category=cat_filter)
-        port_filter = filters.get("portfolio")
-        if port_filter:
-            inv_sum_qs = inv_sum_qs.filter(portfolio__in=port_filter) if isinstance(port_filter, (list, tuple)) else inv_sum_qs.filter(portfolio=port_filter)
-        sub_filter = filters.get("subcategory")
-        if sub_filter:
-            inv_sum_qs = inv_sum_qs.filter(subcategory__in=sub_filter) if isinstance(sub_filter, (list, tuple)) else inv_sum_qs.filter(subcategory=sub_filter)
-
-        if sku_filter:
-            inv_sum_qs = inv_sum_qs.filter(Q(asin__in=sku_filter) | Q(fsn__in=sku_filter)) if isinstance(sku_filter, (list, tuple)) else inv_sum_qs.filter(Q(asin=sku_filter) | Q(fsn=sku_filter))
-
-        try:
-            from apps.dashboard.services.filters import launch_date_allow_lists
-
-            launch_asins, launch_fsns = launch_date_allow_lists(user, filters)
-            if launch_asins is not None or launch_fsns is not None:
-                inv_sum_qs = inv_sum_qs.filter(
-                    Q(asin__in=launch_asins or []) | Q(fsn__in=launch_fsns or [])
-                )
-        except Exception:
-            pass
+        inv_sum_qs = apply_inventory_summary_filters(
+            inv_sum_qs,
+            user,
+            filters,
+            platform_filter,
+        )
 
         _inv_agg = inv_sum_qs.aggregate(
             total=Count("id"),
@@ -1759,12 +1977,16 @@ def _compute_inventory_summary(user, filters, platform_filter):
         _inv_num_sale_days = max(_inv_agg["n_dates"] or 1, 1)
         
         if summary_total_rows > 0:
-            amz_status_rows = inv_sum_qs.values("status").annotate(
-                cnt=Count("id"), rev=Sum("revenue")
-            )
-            fk_status_rows = inv_sum_qs.values("fk_status").annotate(
-                cnt=Count("id"), rev=Sum("fk_revenue")
-            )
+            amz_status_rows = []
+            fk_status_rows = []
+            if platform_filter != "Flipkart":
+                amz_status_rows = inv_sum_qs.values("status").annotate(
+                    cnt=Count("id"), rev=Sum("revenue")
+                )
+            if platform_filter != "Amazon":
+                fk_status_rows = inv_sum_qs.values("fk_status").annotate(
+                    cnt=Count("id"), rev=Sum("fk_revenue")
+                )
             
             amz_status_count = {str(r["status"]): int(r["cnt"] or 0) for r in amz_status_rows if r["status"]}
             fk_status_count = {str(r["fk_status"]): int(r["cnt"] or 0) for r in fk_status_rows if r["fk_status"]}
@@ -1792,6 +2014,15 @@ def _compute_inventory_summary(user, filters, platform_filter):
                 + fk_status_rev.get("OOS", 0.0)
                 + fk_status_rev.get("Nearly OOS", 0.0)
             )
+            az_lost_sales = float(amz_status_rev.get("OOS", 0.0))
+            fk_lost_sales = float(fk_status_rev.get("OOS", 0.0) + fk_status_rev.get("Nearly OOS", 0.0))
+            orders_estimate = _estimate_oos_orders_lost(
+                az_lost_sales=az_lost_sales,
+                fk_lost_sales=fk_lost_sales,
+                platform_filter=platform_filter,
+                user=user,
+                filters=filters,
+            )
 
             inventory.update({
                 "in_stock": int(amz_in_stock + fk_in_stock),
@@ -1814,10 +2045,18 @@ def _compute_inventory_summary(user, filters, platform_filter):
             oos_impact.update({
                 "lost_sales": float(total_lost_sales),
                 "skus_affected": inventory["oos"],
-                "az_lost_sales": float(amz_status_rev.get("OOS", 0.0)),
-                "fk_lost_sales": float(fk_status_rev.get("OOS", 0.0) + fk_status_rev.get("Nearly OOS", 0.0)),
+                "az_lost_sales": az_lost_sales,
+                "fk_lost_sales": fk_lost_sales,
                 "az_skus_affected": int(amz_oos),
                 "fk_skus_affected": int(fk_oos),
+                "orders_lost": orders_estimate["orders_lost"],
+                "az_orders_lost": orders_estimate["az_orders_lost"],
+                "fk_orders_lost": orders_estimate["fk_orders_lost"],
+                "az_aov": orders_estimate["az_aov"],
+                "fk_aov": orders_estimate["fk_aov"],
+                "lost_sales_rule": "Amazon OOS revenue + Flipkart OOS revenue + Flipkart Nearly OOS revenue.",
+                "sku_rule": "SKUs Affected = Amazon OOS rows + Flipkart OOS/Nearly OOS rows after dashboard filters.",
+                "orders_rule": orders_estimate["orders_rule"],
             })
             
             
@@ -2025,6 +2264,22 @@ def run_orm_computation(
             "total_spend": _prev_total_spend,
         }
 
+    prev_portfolio_revenue = {}
+    _merge_portfolio_revenue_from_summary(
+        prev_portfolio_revenue,
+        get_prev_period_qs(product_summary_az_base, filters),
+        "asin",
+        _asin_meta,
+    )
+    _merge_portfolio_revenue_from_summary(
+        prev_portfolio_revenue,
+        get_prev_period_qs(product_summary_fk_base, filters),
+        "fsn",
+        _fsn_meta,
+    )
+    if prev_portfolio_revenue:
+        prev_rev_by_port = prev_portfolio_revenue
+
     if use_summary_rollups:
         # Reuse kpis already computed inside run_kpi_only_computation — avoids
         # re-issuing _summary_metrics_by_platform(summary_qs_f) (one DB round-trip).
@@ -2095,6 +2350,20 @@ def run_orm_computation(
                     fk_fsns_with_spend.add(sku)
             current_activity_metrics = _empty_activity_metrics()
 
+        if include_activity_metrics:
+            _status_counts, _status_revenue = _continue_discontinue_metrics_from_summary(
+                fk_qs_f,
+                _fsn_meta,
+            )
+            current_activity_metrics.update({
+                "continue_sales_revenue": round(_status_revenue["Continued"], 2),
+                "discontinue_sales_revenue": round(_status_revenue["Discontinued"], 2),
+                "unmapped_fsn_revenue": round(_status_revenue["Unmapped"], 2),
+                "continue_sku_count": _status_counts["Continued"],
+                "discontinued_sku_count": _status_counts["Discontinued"],
+                "unmapped_fsn_count": _status_counts["Unmapped"],
+            })
+
         current_unique_counts = _compute_unique_ad_spend_sku_counts(
             qs_f, fk_qs_f, user, asin_meta=_asin_meta, filters=filters,
             az_asins=az_asins_with_spend, fk_fsns=fk_fsns_with_spend
@@ -2125,8 +2394,16 @@ def run_orm_computation(
             "zero_sales_pageviews": current_activity_metrics.get("zero_sales_pageviews", 0),
             "continue_sales_revenue": current_activity_metrics["continue_sales_revenue"],
             "discontinue_sales_revenue": current_activity_metrics["discontinue_sales_revenue"],
+            "unmapped_fsn_revenue": current_activity_metrics["unmapped_fsn_revenue"],
             "continue_sku_count": current_activity_metrics["continue_sku_count"],
             "discontinued_sku_count": current_activity_metrics["discontinued_sku_count"],
+            "unmapped_fsn_count": current_activity_metrics["unmapped_fsn_count"],
+            "mapped_fsn_count": current_activity_metrics["continue_sku_count"] + current_activity_metrics["discontinued_sku_count"],
+            "active_fsn_count": (
+                current_activity_metrics["continue_sku_count"]
+                + current_activity_metrics["discontinued_sku_count"]
+                + current_activity_metrics["unmapped_fsn_count"]
+            ),
         })
     else:
         # these will be overwritten below by summary_kpi_payload anyway
@@ -2495,12 +2772,24 @@ def run_orm_computation(
     total_lost_sales = 0.0
     oos_impact = {
         "lost_sales": 0.0,
+        "az_lost_sales": 0.0,
+        "fk_lost_sales": 0.0,
         "skus_affected": 0,
+        "az_skus_affected": 0,
+        "fk_skus_affected": 0,
         "orders_lost": 0,
+        "az_orders_lost": 0,
+        "fk_orders_lost": 0,
+        "az_aov": 0.0,
+        "fk_aov": 0.0,
         "selected_platform": "",
         "lost_sales_rule": "",
         "sku_rule": "",
         "orders_rule": "",
+        "formula": "Lost Sales = Amazon OOS revenue + Flipkart OOS revenue + Flipkart Nearly OOS revenue",
+        "row_basis": "Rows come from the latest inventory-health summary after dashboard filters are applied.",
+        "amazon_status_basis": "Amazon includes rows where status is OOS.",
+        "flipkart_status_basis": "Flipkart includes rows where status is OOS or Nearly OOS.",
     }
     inventory_position = []
     inventory = {
@@ -2517,10 +2806,6 @@ def run_orm_computation(
     }
     # ── DOC-only Inventory Health (SKU + Date level) ──
     from apps.dashboard.models import DashboardInventoryHealthSummary
-
-    # Build SKU allow-list for category/portfolio/subcategory filters
-    is_flipkart_only = platform_filter == "Flipkart"
-    sku_filter = filters.get("fsn") if is_flipkart_only else filters.get("asin")
 
     def _queue_inventory_summary_refresh(summary_platform):
         warmup_key = f"dashboard_inventory_summary_warmup_{user.id}_{summary_platform}"
@@ -2539,35 +2824,12 @@ def run_orm_computation(
         inv_sum_qs = DashboardInventoryHealthSummary.objects.filter(
             user=user, platform=summary_platform
         )
-        if platform_filter == "Amazon":
-            inv_sum_qs = inv_sum_qs.exclude(Q(asin="") | Q(asin__isnull=True))
-        elif platform_filter == "Flipkart":
-            inv_sum_qs = inv_sum_qs.exclude(Q(fsn="") | Q(fsn__isnull=True))
-
-        cat_filter = filters.get("category")
-        if cat_filter:
-            inv_sum_qs = inv_sum_qs.filter(category__in=cat_filter) if isinstance(cat_filter, (list, tuple)) else inv_sum_qs.filter(category=cat_filter)
-        port_filter = filters.get("portfolio")
-        if port_filter:
-            inv_sum_qs = inv_sum_qs.filter(portfolio__in=port_filter) if isinstance(port_filter, (list, tuple)) else inv_sum_qs.filter(portfolio=port_filter)
-        sub_filter = filters.get("subcategory")
-        if sub_filter:
-            inv_sum_qs = inv_sum_qs.filter(subcategory__in=sub_filter) if isinstance(sub_filter, (list, tuple)) else inv_sum_qs.filter(subcategory=sub_filter)
-
-        if sku_filter:
-            # sku_filter can match either asin or fsn
-            inv_sum_qs = inv_sum_qs.filter(Q(asin__in=sku_filter) | Q(fsn__in=sku_filter)) if isinstance(sku_filter, (list, tuple)) else inv_sum_qs.filter(Q(asin=sku_filter) | Q(fsn=sku_filter))
-
-        try:
-            from apps.dashboard.services.filters import launch_date_allow_lists
-
-            launch_asins, launch_fsns = launch_date_allow_lists(user, filters)
-            if launch_asins is not None or launch_fsns is not None:
-                inv_sum_qs = inv_sum_qs.filter(
-                    Q(asin__in=launch_asins or []) | Q(fsn__in=launch_fsns or [])
-                )
-        except Exception:
-            pass
+        inv_sum_qs = apply_inventory_summary_filters(
+            inv_sum_qs,
+            user,
+            filters,
+            platform_filter,
+        )
 
         # Single aggregate replaces: count() + two distinct date count() calls.
         _inv_agg = inv_sum_qs.aggregate(
@@ -2577,12 +2839,16 @@ def run_orm_computation(
         summary_total_rows = _inv_agg["total"] or 0
         _inv_num_sale_days = max(_inv_agg["n_dates"] or 1, 1)
         if summary_total_rows > 0:
-            amz_status_rows = inv_sum_qs.values("status").annotate(
-                cnt=Count("id"), rev=Sum("revenue")
-            )
-            fk_status_rows = inv_sum_qs.values("fk_status").annotate(
-                cnt=Count("id"), rev=Sum("fk_revenue")
-            )
+            amz_status_rows = []
+            fk_status_rows = []
+            if platform_filter != "Flipkart":
+                amz_status_rows = inv_sum_qs.values("status").annotate(
+                    cnt=Count("id"), rev=Sum("revenue")
+                )
+            if platform_filter != "Amazon":
+                fk_status_rows = inv_sum_qs.values("fk_status").annotate(
+                    cnt=Count("id"), rev=Sum("fk_revenue")
+                )
             
             amz_status_count = {str(r["status"]): int(r["cnt"] or 0) for r in amz_status_rows if r["status"]}
             fk_status_count = {str(r["fk_status"]): int(r["cnt"] or 0) for r in fk_status_rows if r["fk_status"]}
@@ -2610,6 +2876,16 @@ def run_orm_computation(
                 amz_status_rev.get("OOS", 0.0)
                 + fk_status_rev.get("OOS", 0.0)
                 + fk_status_rev.get("Nearly OOS", 0.0)
+            )
+            az_lost_sales = float(amz_status_rev.get("OOS", 0.0))
+            fk_lost_sales = float(fk_status_rev.get("OOS", 0.0) + fk_status_rev.get("Nearly OOS", 0.0))
+            orders_estimate = _estimate_oos_orders_lost(
+                az_lost_sales=az_lost_sales,
+                fk_lost_sales=fk_lost_sales,
+                platform_filter=platform_filter,
+                qs=qs_f,
+                fk_qs=fk_qs_f,
+                filters=filters,
             )
 
             inventory = {
@@ -2651,18 +2927,25 @@ def run_orm_computation(
             )
 
             bucket_defs = [
-                ("In Stock (15–60D)", rev_in_stock, "green"),
-                ("Low Stock (<=15D)", rev_low_stock, "amber"),
-                ("Overstock (>60D)", rev_overstock, "orange"),
-                ("Out of Stock", rev_oos, "red"),
+                ("In Stock (15-60D)", rev_in_stock, "green", amz_status_rev.get("In Stock", 0.0), fk_status_rev.get("Ideal Stocking", 0.0)),
+                ("Low Stock (<=15D)", rev_low_stock, "amber", amz_status_rev.get("Low Stock", 0.0), fk_status_rev.get("Understock", 0.0)),
+                ("Overstock (>60D)", rev_overstock, "orange", amz_status_rev.get("Overstock", 0.0), fk_status_rev.get("Over Stock", 0.0) + fk_status_rev.get("Highly Over Stock", 0.0) + fk_status_rev.get("Not Selling", 0.0)),
+                ("Out of Stock", rev_oos, "red", amz_status_rev.get("OOS", 0.0), fk_status_rev.get("OOS", 0.0) + fk_status_rev.get("Nearly OOS", 0.0)),
             ]
             
             tracked_rev = rev_in_stock + rev_low_stock + rev_overstock + rev_oos
             pct_den = tracked_rev if tracked_rev > 0 else total_revenue
             inventory_position = []
-            for label, rev_val, color in bucket_defs:
+            for label, rev_val, color, az_val, fk_val in bucket_defs:
                 pct = round(rev_val / pct_den * 100, 1) if pct_den > 0 else 0
-                inventory_position.append({"label": label, "revenue": rev_val, "pct": pct, "color": color})
+                inventory_position.append({
+                    "label": label,
+                    "revenue": round(rev_val, 2),
+                    "az_revenue": round(az_val, 2),
+                    "fk_revenue": round(fk_val, 2),
+                    "pct": pct,
+                    "color": color,
+                })
 
             if include_full_payload:
                 details = []
@@ -2692,12 +2975,24 @@ def run_orm_computation(
 
             oos_impact = {
                 "lost_sales": round(total_lost_sales, 2),
+                "az_lost_sales": round(az_lost_sales, 2),
+                "fk_lost_sales": round(fk_lost_sales, 2),
                 "skus_affected": int(inventory["oos"]),
-                "orders_lost": 0,
+                "az_skus_affected": int(amz_oos),
+                "fk_skus_affected": int(fk_oos),
+                "orders_lost": orders_estimate["orders_lost"],
+                "az_orders_lost": orders_estimate["az_orders_lost"],
+                "fk_orders_lost": orders_estimate["fk_orders_lost"],
+                "az_aov": orders_estimate["az_aov"],
+                "fk_aov": orders_estimate["fk_aov"],
                 "selected_platform": "Combined",
-                "lost_sales_rule": "Lost Sales is the revenue attached to inventory rows marked as OOS on either Amazon or Flipkart.",
-                "sku_rule": "SKUs Affected counts inventory rows marked as OOS on either Amazon or Flipkart.",
-                "orders_rule": "Orders Lost is currently fixed at 0 in the dashboard logic.",
+                "lost_sales_rule": "Amazon OOS revenue + Flipkart OOS revenue + Flipkart Nearly OOS revenue.",
+                "sku_rule": "SKUs Affected = Amazon OOS rows + Flipkart OOS/Nearly OOS rows after dashboard filters.",
+                "orders_rule": orders_estimate["orders_rule"],
+                "formula": "Lost Sales = Amazon OOS revenue + Flipkart OOS revenue + Flipkart Nearly OOS revenue",
+                "row_basis": "Rows come from the latest inventory-health summary after dashboard filters are applied.",
+                "amazon_status_basis": "Amazon includes rows where status is OOS.",
+                "flipkart_status_basis": "Flipkart includes rows where status is OOS or Nearly OOS.",
             }
         else:
             _queue_inventory_summary_refresh(summary_platform)
@@ -2797,31 +3092,32 @@ def run_orm_computation(
     npd_trend = {"labels": [], "pageviews": [], "units": [], "conversion": []}
 
     if not skip_product_tables:
-        try:
-            from apps.dashboard.services.asin_monthly_summary import (
-                build_top_products_from_monthly,
-                build_declining_products_from_monthly,
-            )
-            top_prods = build_top_products_from_monthly(
-                user,
-                filters,
-                asin_meta=_asin_meta,
-                fsn_meta=_fsn_meta,
-                limit=10,
-                include_full_payload=include_full_payload,
-            )
-            under_prods = build_declining_products_from_monthly(
-                user,
-                filters,
-                cm_start,
-                cm_end,
-                pm_start,
-                pm_end,
-                include_full_payload=include_full_payload,
-            )
-        except Exception:
-            top_prods = None
-            under_prods = None
+        if not product_insights_need_exact_dates(filters):
+            try:
+                from apps.dashboard.services.asin_monthly_summary import (
+                    build_top_products_from_monthly,
+                    build_declining_products_from_monthly,
+                )
+                top_prods = build_top_products_from_monthly(
+                    user,
+                    filters,
+                    asin_meta=_asin_meta,
+                    fsn_meta=_fsn_meta,
+                    limit=10,
+                    include_full_payload=include_full_payload,
+                )
+                under_prods = build_declining_products_from_monthly(
+                    user,
+                    filters,
+                    cm_start,
+                    cm_end,
+                    pm_start,
+                    pm_end,
+                    include_full_payload=include_full_payload,
+                )
+            except Exception:
+                top_prods = None
+                under_prods = None
 
         if top_prods is None or under_prods is None:
             product_summary_az_base, product_summary_fk_base = _get_product_daily_summary_querysets(
@@ -2871,25 +3167,40 @@ def run_orm_computation(
             "conversion": [],
         }
 
-    if use_summary_rollups:
+    portfolio_revenue = {}
+    _merge_portfolio_revenue_from_summary(
+        portfolio_revenue,
+        product_summary_az_f,
+        "asin",
+        _asin_meta,
+    )
+    _merge_portfolio_revenue_from_summary(
+        portfolio_revenue,
+        product_summary_fk_f,
+        "fsn",
+        _fsn_meta,
+    )
+    if portfolio_revenue:
         port_perf_dict = {
             portfolio: {"cluster": portfolio, "revenue": revenue}
-            for portfolio, revenue in _summary_revenue_by_dimension(
-                summary_qs_f, "portfolio"
-            ).items()
+            for portfolio, revenue in portfolio_revenue.items()
         }
     elif table_data is None:
         port_perf_dict = {}
         if qs_f is not None:
             for _row in qs_f.values("portfolio").annotate(rev=Sum("revenue")):
-                port = str(_row.get("portfolio") or "Unknown")
+                port = _clean_dimension_label(_row.get("portfolio"))
+                if not port:
+                    continue
                 revenue = float(_row.get("rev") or 0.0)
                 if port not in port_perf_dict:
                     port_perf_dict[port] = {"cluster": port, "revenue": 0.0}
                 port_perf_dict[port]["revenue"] += revenue
         if fk_qs_f is not None:
             for _row in fk_qs_f.values("portfolio").annotate(rev=Sum("revenue")):
-                port = str(_row.get("portfolio") or "Unknown")
+                port = _clean_dimension_label(_row.get("portfolio"))
+                if not port:
+                    continue
                 revenue = float(_row.get("rev") or 0.0)
                 if port not in port_perf_dict:
                     port_perf_dict[port] = {"cluster": port, "revenue": 0.0}
@@ -2897,7 +3208,9 @@ def run_orm_computation(
     else:
         port_perf_dict = {}
         for r in table_data:
-            port = r.get("portfolio") or "Unknown"
+            port = _clean_dimension_label(r.get("portfolio"))
+            if not port:
+                continue
             if port not in port_perf_dict:
                 port_perf_dict[port] = {"cluster": port, "revenue": 0.0}
             port_perf_dict[port]["revenue"] += r["revenue"]
