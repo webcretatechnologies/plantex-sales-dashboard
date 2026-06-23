@@ -8,7 +8,7 @@
             <div>
                 <span class="tbl-overlay-title">Inventory Health Breakdown (DOC)</span>
                 <div style="font-size: 11px; color: var(--muted); margin-top: 4px;">
-                    DOC = Stock Qty / Same-Day Sales.
+                    DOC = Total Stock (AMZ+FK) / Total Same-Day Sales.
                     OOS: Stock=0. Low Stock: DOC≤15. In Stock: 15&lt;DOC≤60. Overstock: DOC&gt;60.
                 </div>
                 {% if payload.inventory.details_truncated %}
@@ -26,37 +26,40 @@
             <button class="tbl-overlay-close" onclick="closeModal('inventoryHealthModal')">✕ Close</button>
         </div>
         <div class="tbl-overlay-scroll">
-            <table class="ceo-table inv-health-table" style="min-width: 800px;" id="invHealthTableCeo">
+            <table class="ceo-table inv-health-table" style="min-width: 1500px;" id="invHealthTableCeo">
                 <thead id="invHealthHeaderCeo">
                     <tr>
                         <th>Date</th>
                         <th>Amazon SKU / Flipkart SKU</th>
                         <th>Category</th>
-                        <th class="num">Amz Stock</th>
-                        <th class="num">Amz Sales</th>
-                        <th class="num">Amz DOC</th>
-                        <th class="num">Amz Revenue</th>
-                        <th>Amz Status</th>
-                        <th class="num">FK Stock</th>
-                        <th class="num">FK Sales</th>
-                        <th class="num">FK DOC</th>
+                        <th class="num">AMZ FBA</th>
+                        <th class="num">AMZ Flex</th>
+                        <th class="num">Total AMZ Stock</th>
+                        <th class="num">FK FBF</th>
+                        <th class="num">FK Flex</th>
+                        <th class="num">Total FK Stock</th>
+                        <th class="num">Total Stock</th>
+                        <th class="num">Total Sales</th>
+                        <th class="num">DOC</th>
+                        <th class="num">AMZ Revenue</th>
                         <th class="num">FK Revenue</th>
+                        <th>AMZ Status</th>
                         <th>FK Status</th>
                         <th>Calculation</th>
                     </tr>
                 </thead>
                 <tbody data-modal-lazy="1" id="invHealthBodyCeo">
                     <tr>
-                        <td colspan="15" class="empty">Loading data...</td>
+                        <td colspan="17" class="empty">Loading data...</td>
                     </tr>
                 </tbody>
             </table>
             <script>
                 (function () {
                     var HEADERS = {
-                        'All': '<tr><th data-field="date">Date</th><th data-field="sku">Amazon SKU / Flipkart SKU</th><th data-field="category">Category</th><th class="num" data-field="amz_stock">Amz Stock</th><th class="num" data-field="amz_sales">Amz Sales</th><th class="num" data-field="amz_doc">Amz DOC</th><th class="num" data-field="amz_revenue">Amz Revenue</th><th data-field="amz_status">Amz Status</th><th class="num" data-field="fk_stock">FK Stock</th><th class="num" data-field="fk_sales">FK Sales</th><th class="num" data-field="fk_doc">FK DOC</th><th class="num" data-field="fk_revenue">FK Revenue</th><th data-field="fk_status">FK Status</th><th data-field="reason">Calculation</th></tr>',
-                        'Amazon': '<tr><th data-field="date">Date</th><th data-field="az_sku">SKU</th><th data-field="category">Category</th><th class="num" data-field="amz_stock">Stock</th><th class="num" data-field="amz_sales">Sales</th><th class="num" data-field="amz_doc">DOC</th><th class="num" data-field="amz_revenue">Revenue</th><th data-field="amz_status">Status</th><th data-field="reason">Calculation</th></tr>',
-                        'Flipkart': '<tr><th data-field="date">Date</th><th data-field="fk_sku">SKU</th><th data-field="category">Category</th><th class="num" data-field="fk_stock">Stock</th><th class="num" data-field="fk_sales">Sales</th><th class="num" data-field="fk_doc">DOC</th><th class="num" data-field="fk_revenue">Revenue</th><th data-field="fk_status">Status</th><th data-field="fk_reason">Calculation</th></tr>',
+                        'All': '<tr><th data-field="date">Date</th><th data-field="sku">Amazon SKU / Flipkart SKU</th><th data-field="category">Category</th><th class="num" data-field="amz_fba">AMZ FBA</th><th class="num" data-field="amz_flex">AMZ Flex</th><th class="num" data-field="total_amz_stock">Total AMZ Stock</th><th class="num" data-field="fk_fbf">FK FBF</th><th class="num" data-field="fk_flex">FK Flex</th><th class="num" data-field="total_fk_stock">Total FK Stock</th><th class="num" data-field="total_stock">Total Stock</th><th class="num" data-field="total_sales">Total Sales</th><th class="num" data-field="total_doc">DOC</th><th class="num" data-field="amz_revenue">AMZ Revenue</th><th class="num" data-field="fk_revenue">FK Revenue</th><th data-field="amz_status">AMZ Status</th><th data-field="fk_status">FK Status</th><th data-field="total_reason">Calculation</th></tr>',
+                        'Amazon': '<tr><th data-field="date">Date</th><th data-field="az_sku">SKU</th><th data-field="category">Category</th><th class="num" data-field="amz_fba">AMZ FBA</th><th class="num" data-field="amz_flex">AMZ Flex</th><th class="num" data-field="total_amz_stock">Total AMZ Stock</th><th class="num" data-field="amz_sales">Sales</th><th class="num" data-field="amz_doc">DOC</th><th class="num" data-field="amz_revenue">Revenue</th><th data-field="amz_status">Status</th><th data-field="reason">Calculation</th></tr>',
+                        'Flipkart': '<tr><th data-field="date">Date</th><th data-field="fk_sku">SKU</th><th data-field="category">Category</th><th class="num" data-field="fk_fbf">FK FBF</th><th class="num" data-field="fk_flex">FK Flex</th><th class="num" data-field="total_fk_stock">Total FK Stock</th><th class="num" data-field="fk_sales">Sales</th><th class="num" data-field="fk_doc">DOC</th><th class="num" data-field="fk_revenue">Revenue</th><th data-field="fk_status">Status</th><th data-field="fk_reason">Calculation</th></tr>',
                     };
                     function updateInvHealthHeader(platform) {
                         var hdr = document.getElementById('invHealthHeaderCeo');

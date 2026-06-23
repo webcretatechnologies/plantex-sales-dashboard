@@ -52,6 +52,7 @@ def generate_bi_data_orm(qs, fk_qs, user=None, asin_meta=None, fsn_meta=None):
             meta = asin_meta.get(a, {"category": "", "portfolio": ""})
             az_asins[a] = {
                 "asin": a,
+                "fk_sku": "",
                 "category": meta["category"],
                 "portfolio": meta["portfolio"],
                 "revenue": float(r["revenue"] or 0),
@@ -107,12 +108,15 @@ def generate_bi_data_orm(qs, fk_qs, user=None, asin_meta=None, fsn_meta=None):
                 az_asins[target_key]["fk_units"] = az_asins[target_key].get("fk_units", 0) + int(r["units"] or 0)
                 az_asins[target_key]["fk_spend"] = az_asins[target_key].get("fk_spend", 0.0) + float(r["total_spend"] or 0)
                 az_asins[target_key]["fk_pageviews"] = az_asins[target_key].get("fk_pageviews", 0) + fk_pv
+                existing_fk_sku = str(az_asins[target_key].get("fk_sku") or "").strip()
+                az_asins[target_key]["fk_sku"] = existing_fk_sku or fsn
             else:
                 amz_meta = asin_meta.get(target_key, {}) if asin_meta else {}
                 cat = amz_meta.get("category") or meta["category"]
                 port = amz_meta.get("portfolio") or meta["portfolio"]
                 az_asins[target_key] = {
                     "asin": target_key,
+                    "fk_sku": fsn,
                     "category": cat,
                     "portfolio": port,
                     "revenue": float(r["revenue"] or 0),
@@ -136,4 +140,3 @@ def generate_bi_data_orm(qs, fk_qs, user=None, asin_meta=None, fsn_meta=None):
                 }
 
     return sorted(az_asins.values(), key=lambda x: x["revenue"], reverse=True)
-

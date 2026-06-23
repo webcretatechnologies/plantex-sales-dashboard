@@ -8,9 +8,16 @@ from io import BytesIO
 import pandas as pd
 from django.db.models import Max, Sum
 
-from apps.dashboard.models import FlipkartProcessedDashboardData, ProcessedDashboardData
+from apps.dashboard.models import (
+    FlipkartCategoryMap,
+    FlipkartProcessedDashboardData,
+    ProcessedDashboardData,
+)
 from apps.dashboard.services.filters import apply_dashboard_entity_filters
-from apps.dashboard.services.analytics_services_orm_pipeline import apply_global_filters_orm
+from apps.dashboard.services.analytics_services_orm_pipeline import (
+    _fsn_status_bucket,
+    apply_global_filters_orm,
+)
 from apps.dashboard.services.metrics import (
     GST_REVENUE_FACTOR,
     amazon_cvr,
@@ -226,6 +233,70 @@ def export_csv(user, filters):
     buf = BytesIO()
     if df.empty:
         buf.write(b"No data available for the selected filters.\n")
+    else:
+        df.to_csv(buf, index=False)
+    buf.seek(0)
+    return buf
+
+
+def export_fsn_status_revenue_csv(user, filters, status_key):
+    """Return FSN status revenue detail rows matching the dashboard KPI."""
+    status_map = {
+        "continued": "Continued",
+        "discontinued": "Discontinued",
+        "unmapped": "Unmapped",
+    }
+    requested_status = status_map.get(str(status_key or "").strip().lower())
+    if not requested_status:
+        raise ValueError("Invalid status. Use continued, discontinued, or unmapped.")
+
+    data_owner = user.created_by if user.created_by else user
+    _, fk_qs = _get_filtered_querysets(user, filters)
+
+    traffic_rows = list(
+        fk_qs.values("fsn")
+        .annotate(revenue=Sum("revenue"))
+        .order_by("fsn")
+        .iterator(chunk_size=5000)
+    )
+    traffic_fsns = [str(row.get("fsn") or "").strip() for row in traffic_rows if row.get("fsn")]
+    category_meta = {
+        row["fsn"]: row
+        for row in FlipkartCategoryMap.objects.filter(user=data_owner, fsn__in=traffic_fsns)
+        .values("fsn", "product_status")
+        .iterator(chunk_size=5000)
+    }
+
+    rows = []
+    for row in traffic_rows:
+        traffic_fsn = str(row.get("fsn") or "").strip()
+        if not traffic_fsn:
+            continue
+
+        category_row = category_meta.get(traffic_fsn)
+        category_fsn = str((category_row or {}).get("fsn") or "").strip()
+        status = _fsn_status_bucket((category_row or {}).get("product_status")) or "Unmapped"
+        if status != requested_status:
+            continue
+
+        rows.append(
+            {
+                "Traffic FSNs": traffic_fsn,
+                "Category FSNs": category_fsn,
+                "Revenue": round(float(row.get("revenue") or 0), 2),
+                "Mapped? (Y/N)": "Y" if category_row else "N",
+            }
+        )
+
+    df = pd.DataFrame(
+        rows,
+        columns=["Traffic FSNs", "Category FSNs", "Revenue", "Mapped? (Y/N)"],
+    )
+    buf = BytesIO()
+    if df.empty:
+        pd.DataFrame(
+            columns=["Traffic FSNs", "Category FSNs", "Revenue", "Mapped? (Y/N)"]
+        ).to_csv(buf, index=False)
     else:
         df.to_csv(buf, index=False)
     buf.seek(0)

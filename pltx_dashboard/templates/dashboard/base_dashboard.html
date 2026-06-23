@@ -1625,6 +1625,22 @@
             window.location.href = url;
         }
 
+        function downloadFsnStatusRevenue(status) {
+            var params = new URLSearchParams(window.location.search || '');
+            var platformEl = document.getElementById('platformSelect');
+            var selectedPlatform = platformEl ? (platformEl.value || '').trim() : '';
+
+            if (selectedPlatform) {
+                params.set('platform', selectedPlatform);
+            } else {
+                params.delete('platform');
+            }
+
+            params.set('status', status);
+            var query = params.toString();
+            window.location.href = '/dashboard/fsn-status-revenue/download/' + (query ? ('?' + query) : '');
+        }
+
         var dashboardRefreshPollTimer = null;
         var dashboardRefreshLastState = null;
         var dashboardRefreshTerminalHideTimer = null;

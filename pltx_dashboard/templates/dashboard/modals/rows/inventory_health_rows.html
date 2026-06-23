@@ -4,7 +4,7 @@
     <td style="white-space: nowrap;">{{ item.date|date:"d M Y" }}</td>
 
     {% if platform == "Flipkart" %}
-    {# ── Flipkart-only: Date, SKU, FSN, Category, Stock, DOC, Revenue, Status, Calculation ── #}
+    {# ── Flipkart-only: Date, SKU, Category, FK FBF, FK Flex, Total FK Stock, DOC, Revenue, Status, Calculation ── #}
     <td>
         <div>
             <div style="font-weight:700;font-size:13px;line-height:1.3;">{{ item.msku|default:"-" }}</div>
@@ -12,7 +12,9 @@
         </div>
     </td>
     <td>{{ item.category }}</td>
-    <td class="num">{{ item.fk_stock|fmt_num }}</td>
+    <td class="num">{{ item.fk_fbf|fmt_num }}</td>
+    <td class="num">{{ item.fk_flex|fmt_num }}</td>
+    <td class="num">{{ item.total_fk_stock|fmt_num }}</td>
     <td class="num">{{ item.fk_sales|fmt_num }}</td>
     <td class="num" style="font-family:monospace;">
         {% if item.fk_doc >= 999 %}∞{% else %}{{ item.fk_doc }}{% endif %}
@@ -29,7 +31,7 @@
     </td>
 
     {% elif platform == "Amazon" %}
-    {# ── Amazon-only: Date, SKU, ASIN, Category, Stock, Sales, DOC, Revenue, Status, Calculation ── #}
+    {# ── Amazon-only: Date, SKU, ASIN, Category, AMZ FBA, AMZ Flex, Total AMZ Stock, Sales, DOC, Revenue, Status, Calculation ── #}
     <td>
         <div>
             <div style="font-weight:700;font-size:13px;line-height:1.3;">{{ item.msku|default:"-" }}</div>
@@ -37,7 +39,9 @@
         </div>
     </td>
     <td>{{ item.category }}</td>
-    <td class="num">{{ item.amz_stock|fmt_num }}</td>
+    <td class="num">{{ item.amz_fba|fmt_num }}</td>
+    <td class="num">{{ item.amz_flex|fmt_num }}</td>
+    <td class="num">{{ item.total_amz_stock|fmt_num }}</td>
     <td class="num">{{ item.amz_sales|fmt_num }}</td>
     <td class="num" style="font-family:monospace;">
         {% if item.amz_doc >= 999 %}∞{% else %}{{ item.amz_doc }}{% endif %}
@@ -54,7 +58,7 @@
     </td>
 
     {% else %}
-    {# ── Combined (All): SKU, ASIN, FSN, Category + full Amz + FK breakdown ── #}
+    {# ── Combined (All): stock split + total stock DOC ── #}
     <td>
         <div>
             <div style="font-weight:700;font-size:13px;line-height:1.3;">{{ item.msku|default:"-" }}</div>
@@ -66,12 +70,19 @@
         </div>
     </td>
     <td>{{ item.category }}</td>
-    <td class="num">{{ item.amz_stock|fmt_num }}</td>
-    <td class="num">{{ item.amz_sales|fmt_num }}</td>
+    <td class="num">{{ item.amz_fba|fmt_num }}</td>
+    <td class="num">{{ item.amz_flex|fmt_num }}</td>
+    <td class="num">{{ item.total_amz_stock|fmt_num }}</td>
+    <td class="num">{{ item.fk_fbf|fmt_num }}</td>
+    <td class="num">{{ item.fk_flex|fmt_num }}</td>
+    <td class="num">{{ item.total_fk_stock|fmt_num }}</td>
+    <td class="num"><strong>{{ item.total_stock|fmt_num }}</strong></td>
+    <td class="num">{{ item.total_sales|fmt_num }}</td>
     <td class="num" style="font-family:monospace;">
-        {% if item.asin %}{% if item.amz_doc >= 999 %}∞{% else %}{{ item.amz_doc }}{% endif %}{% else %}-{% endif %}
+        {% if item.total_doc >= 999 %}∞{% else %}{{ item.total_doc }}{% endif %}
     </td>
     <td class="num">{% if item.asin %}{{ item.amz_revenue|fmt_rupee }}{% else %}-{% endif %}</td>
+    <td class="num">{% if item.fsn %}{{ item.fk_revenue|fmt_rupee }}{% else %}-{% endif %}</td>
     <td>
         {% if item.asin %}
         <span class="ceo-inv-value {{ item.amz_status_class }}"
@@ -80,12 +91,6 @@
         </span>
         {% else %}<span style="color:var(--muted);font-size:11px;">-</span>{% endif %}
     </td>
-    <td class="num">{{ item.fk_stock|fmt_num }}</td>
-    <td class="num">{{ item.fk_sales|fmt_num }}</td>
-    <td class="num" style="font-family:monospace;">
-        {% if item.fsn %}{% if item.fk_doc >= 999 %}∞{% else %}{{ item.fk_doc }}{% endif %}{% else %}-{% endif %}
-    </td>
-    <td class="num">{% if item.fsn %}{{ item.fk_revenue|fmt_rupee }}{% else %}-{% endif %}</td>
     <td>
         {% if item.fsn %}
         <span class="ceo-inv-value {{ item.fk_status_class }}"
@@ -95,12 +100,12 @@
         {% else %}<span style="color:var(--muted);font-size:11px;">-</span>{% endif %}
     </td>
     <td style="font-size:10px;color:var(--muted);font-family:'JetBrains Mono',monospace;line-height:1.3;">
-        {{ item.reason|safe }}
+        {{ item.total_reason|safe }}
     </td>
     {% endif %}
 </tr>
 {% empty %}
 <tr>
-    <td colspan="15" class="empty">No inventory data available for the selected filters</td>
+    <td colspan="{% if platform == 'Amazon' or platform == 'Flipkart' %}11{% else %}17{% endif %}" class="empty">No inventory data available for the selected filters</td>
 </tr>
 {% endfor %}

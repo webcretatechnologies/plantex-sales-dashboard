@@ -446,30 +446,58 @@
 
     <div class="ceo-kpi-card" id="biz-kpi-fsn-revenue-mix">
         <div class="ceo-kpi-header">
-            <span class="ceo-kpi-label">Continue vs Discontinue FSN</span>
+            <span class="ceo-kpi-label">FSN Status Revenue</span>
             <div class="ceo-kpi-icon amber"><span class="material-icons-round" style="font-size:16px">leaderboard</span>
             </div>
         </div>
         <div class="ceo-kpi-dual-metric">
             <div class="ceo-kpi-dual-row">
                 <div class="ceo-kpi-dual-label">
-                    <strong>Continue FSN Revenue</strong>
-                    <span>SKU Count</span>
+                    <strong>Continued Active FSNs</strong>
+                    <span>Revenue / FSN Count</span>
                 </div>
-                <div class="ceo-kpi-dual-value">
-                    <strong>{{ payload.kpis.continue_sales_revenue|fmt_rupee }}</strong>
-                    <span>{{ payload.kpis.continue_sku_count|fmt_num }}</span>
+                <div class="ceo-kpi-dual-actions">
+                    <button type="button" class="fsn-status-download-btn" onclick="downloadFsnStatusRevenue('continued')" title="Download Continued Active FSNs" aria-label="Download Continued Active FSNs">
+                        <span class="material-icons-round">download</span>
+                    </button>
+                    <div class="ceo-kpi-dual-value">
+                        <strong>{{ payload.kpis.continue_sales_revenue|fmt_rupee }}</strong>
+                        <span>{{ payload.kpis.continue_sku_count|fmt_num }}</span>
+                    </div>
                 </div>
             </div>
             <div class="ceo-kpi-dual-row">
                 <div class="ceo-kpi-dual-label">
-                    <strong>Discontinue FSN Revenue</strong>
-                    <span>SKU Count</span>
+                    <strong>Discontinued Active FSNs</strong>
+                    <span>Revenue / FSN Count</span>
                 </div>
-                <div class="ceo-kpi-dual-value">
-                    <strong>{{ payload.kpis.discontinue_sales_revenue|fmt_rupee }}</strong>
-                    <span>{{ payload.kpis.discontinued_sku_count|fmt_num }}</span>
+                <div class="ceo-kpi-dual-actions">
+                    <button type="button" class="fsn-status-download-btn" onclick="downloadFsnStatusRevenue('discontinued')" title="Download Discontinued Active FSNs" aria-label="Download Discontinued Active FSNs">
+                        <span class="material-icons-round">download</span>
+                    </button>
+                    <div class="ceo-kpi-dual-value">
+                        <strong>{{ payload.kpis.discontinue_sales_revenue|fmt_rupee }}</strong>
+                        <span>{{ payload.kpis.discontinued_sku_count|fmt_num }}</span>
+                    </div>
                 </div>
+            </div>
+            <div class="ceo-kpi-dual-row warning">
+                <div class="ceo-kpi-dual-label">
+                    <strong>Unmapped Active FSNs</strong>
+                    <span>Missing category status</span>
+                </div>
+                <div class="ceo-kpi-dual-actions">
+                    <button type="button" class="fsn-status-download-btn warning" onclick="downloadFsnStatusRevenue('unmapped')" title="Download Unmapped Active FSNs" aria-label="Download Unmapped Active FSNs">
+                        <span class="material-icons-round">download</span>
+                    </button>
+                    <div class="ceo-kpi-dual-value">
+                        <strong>{{ payload.kpis.unmapped_fsn_revenue|fmt_rupee }}</strong>
+                        <span>{{ payload.kpis.unmapped_fsn_count|fmt_num }}</span>
+                    </div>
+                </div>
+            </div>
+            <div class="ceo-kpi-note">
+                Mapped {{ payload.kpis.mapped_fsn_count|fmt_num }} of {{ payload.kpis.active_fsn_count|fmt_num }} active FSNs
             </div>
         </div>
     </div>
