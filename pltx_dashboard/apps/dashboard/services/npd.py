@@ -39,6 +39,30 @@ def _date_text(value):
     return str(value or "")
 
 
+def _date_iso_values(qs):
+    return sorted(
+        {
+            _date_text(value)
+            for value in qs.exclude(launch_date__isnull=True).values_list("launch_date", flat=True).distinct()
+            if value
+        }
+    )
+
+
+def build_npd_launch_date_marks(user, filters):
+    from apps.dashboard.services.filters import get_filtered_mapping_querysets
+
+    mark_filters = dict(filters or {})
+    mark_filters.pop("launch_date_range", None)
+    mark_filters.pop("launch_start_date", None)
+    mark_filters.pop("launch_end_date", None)
+    az_map_qs, fk_map_qs = get_filtered_mapping_querysets(mark_filters, user)
+    return {
+        "amazon": _date_iso_values(az_map_qs),
+        "flipkart": _date_iso_values(fk_map_qs),
+    }
+
+
 def _load_amazon_meta(user, asins):
     rows = CategoryMapping.objects.filter(user=user, asin__in=asins)
     return {
@@ -206,6 +230,51 @@ def _distinct_non_empty(qs, field_name):
         for value in qs.values_list(field_name, flat=True).distinct()
         if str(value or "").strip()
     ]
+
+
+def _date_within_bounds(value, start, end):
+    if not value:
+        return False
+    if isinstance(value, datetime.datetime):
+        value = value.date()
+    if isinstance(value, str):
+        try:
+            value = datetime.datetime.strptime(value[:10], "%Y-%m-%d").date()
+        except (TypeError, ValueError):
+            return False
+    if start and value < start:
+        return False
+    if end and value > end:
+        return False
+    return True
+
+
+def _filter_rows_by_launch_bounds(rows, filters):
+    from apps.dashboard.services.filters import _resolve_launch_date_bounds
+
+    start, end = _resolve_launch_date_bounds(filters)
+    if not (start or end):
+        return rows
+
+    platform = filters.get("platform") or "All"
+    filtered = []
+    for row in rows:
+        az_matches = _date_within_bounds(row.get("az_launch_date"), start, end)
+        fk_matches = _date_within_bounds(row.get("fk_launch_date"), start, end)
+        if platform == "Amazon":
+            keep = az_matches
+        elif platform == "Flipkart":
+            keep = fk_matches
+        else:
+            visible_date_matches = []
+            if row.get("az_launch_date"):
+                visible_date_matches.append(az_matches)
+            if row.get("fk_launch_date"):
+                visible_date_matches.append(fk_matches)
+            keep = bool(visible_date_matches) and all(visible_date_matches)
+        if keep:
+            filtered.append(row)
+    return filtered
 
 
 def build_npd_performance(user, filters, qs_f, fk_qs_f, limit=None, include_trend=True):
@@ -401,9 +470,13 @@ def build_npd_performance(user, filters, qs_f, fk_qs_f, limit=None, include_tren
         row["launch_date_display"] = _date_text(row.get("launch_date"))
         rows.append(row)
 
+    rows = _filter_rows_by_launch_bounds(rows, filters)
     rows.sort(key=lambda item: (item.get("launch_date") or datetime.date.min, item.get("revenue") or 0), reverse=True)
     if limit:
         rows = rows[:limit]
+
+    trend_asins = {str(row.get("asin") or "").strip() for row in rows if str(row.get("asin") or "").strip()}
+    trend_fsns = {str(row.get("fsn") or "").strip() for row in rows if str(row.get("fsn") or "").strip()}
 
     trend = (
         build_npd_trend(
@@ -411,8 +484,8 @@ def build_npd_performance(user, filters, qs_f, fk_qs_f, limit=None, include_tren
             filters,
             qs_f,
             fk_qs_f,
-            set(az_metrics),
-            set(fk_metrics),
+            trend_asins,
+            trend_fsns,
             summary_az_qs=summary_az_qs,
             summary_fk_qs=summary_fk_qs,
         )

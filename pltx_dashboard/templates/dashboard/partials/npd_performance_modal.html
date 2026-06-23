@@ -10,6 +10,42 @@
         <div style="padding:14px 18px;border-bottom:1px solid var(--border-light);">
             <canvas id="{{ npd_chart_id }}" style="width:100%;height:260px;max-height:260px;"></canvas>
         </div>
+        <div class="npd-launch-filter" data-npd-launch-filter>
+            <div class="npd-launch-filter-main">
+                <div class="npd-launch-filter-title">
+                    <span>Custom Launch Date Range</span>
+                    <div class="npd-launch-legend">
+                        <span><i class="npd-launch-swatch npd-launch-swatch-amz"></i>Amazon</span>
+                        <span><i class="npd-launch-swatch npd-launch-swatch-fk"></i>Flipkart</span>
+                    </div>
+                </div>
+                <div class="npd-launch-mode" role="group" aria-label="Launch date mode">
+                    <button type="button" class="active" data-npd-mode="single">Single Date</button>
+                    <button type="button" data-npd-mode="range">Date Range</button>
+                </div>
+                <div class="npd-launch-fields">
+                    <label class="npd-launch-date-control active" data-npd-date-role="start">
+                        <span data-npd-start-label>Launch Date</span>
+                        <div class="npd-launch-input-wrap">
+                            <input type="text" readonly placeholder="Select date" data-npd-date-input="start">
+                            <i class="material-icons-round" aria-hidden="true">calendar_month</i>
+                        </div>
+                    </label>
+                    <label class="npd-launch-date-control npd-launch-end-field" data-npd-date-role="end" hidden>
+                        <span>End Launch Date</span>
+                        <div class="npd-launch-input-wrap">
+                            <input type="text" readonly placeholder="Select date" data-npd-date-input="end">
+                            <i class="material-icons-round" aria-hidden="true">calendar_month</i>
+                        </div>
+                    </label>
+                </div>
+                <div class="npd-launch-actions">
+                    <button type="button" class="ceo-view-all-btn" data-npd-apply>Apply</button>
+                    <button type="button" class="tbl-overlay-close" data-npd-clear>Clear</button>
+                </div>
+            </div>
+            <div class="npd-launch-calendar" data-npd-calendar hidden></div>
+        </div>
         <div class="tbl-overlay-scroll">
             <table class="ceo-table" style="min-width:1800px;" id="{{ npd_table_id }}">
                 <thead id="{{ npd_header_id }}">
@@ -74,9 +110,19 @@
         var canvas = document.getElementById(chartId);
         if (!canvas) return;
         var payload = (window.DASHBOARD_PAYLOAD || {});
-        var trend = payload.npd_trend || {};
+        var modalTrends = window._NPD_MODAL_TRENDS || {};
+        var trend = modalTrends[modalId] || payload.npd_trend || {};
         var labels = trend.labels || [];
-        if (!labels.length) return;
+        if (!labels.length) {
+            if (chartInstance) {
+                chartInstance.destroy();
+                chartInstance = null;
+            }
+            if (typeof drawFallbackEmpty === "function") {
+                drawFallbackEmpty(canvas, "No NPD chart data available");
+            }
+            return;
+        }
         if (chartInstance) chartInstance.destroy();
         chartInstance = new Chart(canvas, {
             type: "line",
@@ -105,6 +151,11 @@
     document.addEventListener("modalOpened", function(e) {
         if (e.detail && e.detail.id === modalId) {
             setTimeout(renderChart, 50); // small delay to ensure modal is fully visible
+        }
+    });
+    document.addEventListener("npdLaunchDataUpdated", function(e) {
+        if (e.detail && e.detail.id === modalId) {
+            setTimeout(renderChart, 20);
         }
     });
     document.addEventListener("click", function(e) {

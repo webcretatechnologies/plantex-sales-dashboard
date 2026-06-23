@@ -2560,6 +2560,284 @@ body {
     background: #ffffff;
 }
 
+.npd-launch-filter {
+    position: relative;
+    padding: 12px 18px;
+    border-bottom: 1px solid var(--border-light);
+    background: #ffffff;
+}
+
+.npd-launch-filter-main {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.npd-launch-filter-title {
+    min-width: 190px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    font-size: 12px;
+    font-weight: 800;
+    color: var(--text);
+}
+
+.npd-launch-legend {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--muted);
+}
+
+.npd-launch-legend span {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.npd-launch-swatch {
+    width: 10px;
+    height: 10px;
+    border-radius: 3px;
+    border: 1px solid rgba(15, 23, 42, 0.12);
+}
+
+.npd-launch-swatch-amz {
+    background: #0FAFBF;
+}
+
+.npd-launch-swatch-fk {
+    background: #FFD400;
+}
+
+.npd-launch-mode {
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--surface2);
+}
+
+.npd-launch-mode button {
+    height: 34px;
+    padding: 0 12px;
+    border: 0;
+    border-right: 1px solid var(--border);
+    background: transparent;
+    color: var(--muted);
+    font-family: 'Inter', sans-serif;
+    font-size: 12px;
+    font-weight: 800;
+    cursor: pointer;
+}
+
+.npd-launch-mode button:last-child {
+    border-right: 0;
+}
+
+.npd-launch-mode button.active {
+    background: #0f172a;
+    color: #ffffff;
+}
+
+.npd-launch-fields {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.npd-launch-date-control {
+    min-width: 150px;
+    display: inline-flex;
+    flex-direction: column;
+    gap: 4px;
+    cursor: pointer;
+    font-family: 'Inter', sans-serif;
+}
+
+.npd-launch-date-control span {
+    font-size: 9px;
+    font-weight: 800;
+    text-transform: uppercase;
+    color: var(--muted);
+}
+
+.npd-launch-input-wrap {
+    height: 42px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface2);
+    padding: 0 10px;
+    transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
+}
+
+.npd-launch-input-wrap input {
+    width: 116px;
+    min-width: 0;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    color: var(--text);
+    font-size: 12px;
+    font-weight: 800;
+    font-family: 'Inter', sans-serif;
+    cursor: pointer;
+}
+
+.npd-launch-input-wrap input::placeholder {
+    color: #94a3b8;
+}
+
+.npd-launch-input-wrap i {
+    color: #0FAFBF;
+    font-size: 18px;
+    line-height: 1;
+}
+
+.npd-launch-date-control.active .npd-launch-input-wrap {
+    border-color: #0FAFBF;
+    box-shadow: 0 0 0 2px rgba(15, 175, 191, 0.14);
+    background: #ffffff;
+}
+
+.npd-launch-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+}
+
+.npd-launch-calendar {
+    position: absolute;
+    top: calc(100% - 8px);
+    left: 18px;
+    z-index: 30;
+    width: 286px;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #ffffff;
+    box-shadow: 0 18px 38px rgba(15, 23, 42, 0.18);
+}
+
+.npd-calendar-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+}
+
+.npd-calendar-header strong {
+    font-size: 13px;
+    font-weight: 800;
+    color: var(--text);
+}
+
+.npd-calendar-picker-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.npd-calendar-picker-group select {
+    height: 30px;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    background: #ffffff;
+    color: var(--text);
+    font-family: 'Inter', sans-serif;
+    font-size: 12px;
+    font-weight: 800;
+    outline: 0;
+    cursor: pointer;
+}
+
+.npd-calendar-picker-group select:first-child {
+    width: 104px;
+}
+
+.npd-calendar-picker-group select:last-child {
+    width: 74px;
+}
+
+.npd-calendar-header button {
+    width: 30px;
+    height: 30px;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    background: var(--surface2);
+    color: var(--text);
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.npd-calendar-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 5px;
+}
+
+.npd-calendar-weekday {
+    height: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    font-weight: 800;
+    color: var(--muted);
+}
+
+.npd-calendar-empty,
+.npd-calendar-day {
+    width: 32px;
+    height: 32px;
+}
+
+.npd-calendar-day {
+    border: 1px solid transparent;
+    border-radius: 7px;
+    background: #f8fafc;
+    color: var(--text);
+    font-size: 12px;
+    font-weight: 800;
+    cursor: pointer;
+}
+
+.npd-calendar-day.has-amazon {
+    background: #0FAFBF;
+    color: #ffffff;
+}
+
+.npd-calendar-day.has-flipkart {
+    background: #FFD400;
+    color: #1f2937;
+}
+
+.npd-calendar-day.has-both {
+    background: linear-gradient(135deg, #0FAFBF 0 50%, #FFD400 50% 100%);
+    color: #0f172a;
+}
+
+.npd-calendar-day.in-range {
+    border-color: #0FAFBF;
+    box-shadow: inset 0 0 0 2px rgba(15, 175, 191, 0.18);
+}
+
+.npd-calendar-day.selected {
+    border-color: #0f172a;
+    box-shadow: 0 0 0 2px rgba(15, 23, 42, 0.18);
+}
+
 /* ── DataTables Dark Theme Override ── */
 .tbl-overlay .dataTables_wrapper {
     padding: 12px 18px;

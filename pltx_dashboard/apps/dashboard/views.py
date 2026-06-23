@@ -238,6 +238,31 @@ def _strip_non_dashboard_filters(filters):
     return cleaned
 
 
+def _apply_npd_modal_launch_filter_aliases(filters):
+    cleaned = dict(filters or {})
+    mode = str(cleaned.pop("npd_launch_mode", "") or "").strip()
+    date_range = str(cleaned.pop("npd_launch_date_range", "") or "").strip()
+    start = str(cleaned.pop("npd_launch_start_date", "") or "").strip()
+    end = str(cleaned.pop("npd_launch_end_date", "") or "").strip()
+
+    if not (date_range == "custom" or start or end):
+        return cleaned
+
+    if mode == "single" and start:
+        end = start
+    elif start and not end:
+        end = start
+    elif end and not start:
+        start = end
+    if start and end and end < start:
+        start, end = end, start
+
+    cleaned["launch_date_range"] = "custom"
+    cleaned["launch_start_date"] = start
+    cleaned["launch_end_date"] = end
+    return cleaned
+
+
 def _list_or_scalar_filter(qs, field_name, value):
     if not value:
         return qs
@@ -919,14 +944,20 @@ def _get_inventory_modal_queryset(data_owner, filters, query):
     return qs.order_by("-date", "-revenue", "sku")
 
 
-def _get_npd_modal_rows(data_owner, filters):
+def _get_npd_modal_payload(data_owner, filters, include_trend=False):
     from apps.dashboard.services.analytics_services_orm_pipeline import apply_global_filters_orm
-    from apps.dashboard.services.npd import build_npd_performance
+    from apps.dashboard.services.npd import build_npd_launch_date_marks, build_npd_performance
 
     qs, fk_qs = _get_filtered_processed_querysets(data_owner, filters)
     qs_f = apply_global_filters_orm(qs, filters)
     fk_qs_f = apply_global_filters_orm(fk_qs, filters)
-    return (build_npd_performance(data_owner, filters, qs_f, fk_qs_f, include_trend=False).get("rows") or [])
+    payload = build_npd_performance(data_owner, filters, qs_f, fk_qs_f, include_trend=include_trend)
+    payload["launch_dates"] = build_npd_launch_date_marks(data_owner, filters)
+    return payload
+
+
+def _get_npd_modal_rows(data_owner, filters):
+    return (_get_npd_modal_payload(data_owner, filters, include_trend=False).get("rows") or [])
 
 
 def _inventory_summary_row_dict(row, msku_map=None):
@@ -1717,10 +1748,12 @@ def dashboard_modal_rows_view(request, view_name, modal_key):
     data_owner = user.created_by if user.created_by else user
     data_version = cache.get(f"dashboard_data_version_{data_owner.id}", 0)
     filters = _strip_non_dashboard_filters(build_filters_from_querydict(request.GET))
+    if modal_key == "npd-performance":
+        filters = _apply_npd_modal_launch_filter_aliases(filters)
     filter_hash = hashlib.md5(cache_filter_string(filters).encode("utf-8")).hexdigest()
 
     modal_rows_cache_key = (
-        "dashboard_modal_rows_v6_"
+        "dashboard_modal_rows_v9_"
         f"{data_owner.id}_{view_name}_{modal_key}_{data_version}_{filter_hash}_"
         f"{hashlib.md5(query.encode('utf-8')).hexdigest()}_{page}_{page_size}"
     )
@@ -1740,13 +1773,15 @@ def dashboard_modal_rows_view(request, view_name, modal_key):
 
     # All-rows cache: keyed without page/page_size so page 2+ hits this and paginates in Python.
     all_rows_cache_key = (
-        "dashboard_modal_all_rows_v7_"
+        "dashboard_modal_all_rows_v9_"
         f"{data_owner.id}_{view_name}_{modal_key}_{data_version}_{filter_hash}_"
         f"{hashlib.md5(query.encode('utf-8')).hexdigest()}"
     )
 
     total = 0
     rows = None
+    npd_trend = None
+    npd_launch_dates = None
 
     if modal_key == "inventory-health":
         inventory_qs = _get_inventory_modal_queryset(data_owner, filters, query)
@@ -1772,7 +1807,13 @@ def dashboard_modal_rows_view(request, view_name, modal_key):
 
         # Fast path 2: full rows already cached in memory
         if not export_format:
-            rows = cache.get(all_rows_cache_key)
+            cached_rows = cache.get(all_rows_cache_key)
+            if modal_key == "npd-performance" and isinstance(cached_rows, dict):
+                rows = cached_rows.get("rows") or []
+                npd_trend = cached_rows.get("trend")
+                npd_launch_dates = cached_rows.get("launch_dates")
+            elif modal_key != "npd-performance":
+                rows = cached_rows
 
         # Fast path 3: reuse materialized summary computed by the section view.
         # Only for modals whose payload key is always fully populated in the materialized
@@ -1797,7 +1838,10 @@ def dashboard_modal_rows_view(request, view_name, modal_key):
             if modal_key == "top-products":
                 rows = _filter_rows_by_query(_get_top_product_modal_rows(data_owner, filters), query)
             elif modal_key == "npd-performance":
-                rows = _filter_rows_by_query(_get_npd_modal_rows(data_owner, filters), query)
+                npd_payload = _get_npd_modal_payload(data_owner, filters, include_trend=True)
+                rows = _filter_rows_by_query(npd_payload.get("rows") or [], query)
+                npd_trend = npd_payload.get("trend")
+                npd_launch_dates = npd_payload.get("launch_dates")
             elif modal_key == "declining-products":
                 rows = _filter_rows_by_query(
                     _get_declining_product_modal_rows(data_owner, filters), query
@@ -1819,7 +1863,18 @@ def dashboard_modal_rows_view(request, view_name, modal_key):
                 rows = _filter_rows_by_query(rows, query)
 
             if not export_format:
-                cache.set(all_rows_cache_key, rows or [], timeout=modal_rows_cache_ttl)
+                if modal_key == "npd-performance":
+                    cache.set(
+                        all_rows_cache_key,
+                        {
+                            "rows": rows or [],
+                            "trend": npd_trend or {"labels": [], "pageviews": [], "units": [], "conversion": []},
+                            "launch_dates": npd_launch_dates or {"amazon": [], "flipkart": []},
+                        },
+                        timeout=modal_rows_cache_ttl,
+                    )
+                else:
+                    cache.set(all_rows_cache_key, rows or [], timeout=modal_rows_cache_ttl)
 
         if rows is None:
             rows = []
@@ -2005,12 +2060,20 @@ def dashboard_modal_rows_view(request, view_name, modal_key):
             request=request,
         )
         dt_data = _extract_dt_cells_from_html(html)
-        return JsonResponse({
+        response_payload = {
             "draw": int(dt_draw),
             "recordsTotal": rows_total,
             "recordsFiltered": rows_total,
             "data": dt_data,
-        })
+        }
+        if modal_key == "npd-performance":
+            if npd_launch_dates is None:
+                from apps.dashboard.services.npd import build_npd_launch_date_marks
+
+                npd_launch_dates = build_npd_launch_date_marks(data_owner, filters)
+            response_payload["npd_launch_dates"] = npd_launch_dates or {"amazon": [], "flipkart": []}
+            response_payload["npd_trend"] = npd_trend or {"labels": [], "pageviews": [], "units": [], "conversion": []}
+        return JsonResponse(response_payload)
 
     # ── Legacy HTML/pagination path ───────────────────────────────────────────
     if modal_key == "inventory-health":
@@ -2048,6 +2111,13 @@ def dashboard_modal_rows_view(request, view_name, modal_key):
             "has_next": page < total_pages,
         },
     }
+    if modal_key == "npd-performance":
+        if npd_launch_dates is None:
+            from apps.dashboard.services.npd import build_npd_launch_date_marks
+
+            npd_launch_dates = build_npd_launch_date_marks(data_owner, filters)
+        payload["npd_launch_dates"] = npd_launch_dates or {"amazon": [], "flipkart": []}
+        payload["npd_trend"] = npd_trend or {"labels": [], "pageviews": [], "units": [], "conversion": []}
     if not load_all:
         cache.set(modal_rows_cache_key, payload, timeout=modal_rows_cache_ttl)
     return JsonResponse(payload)
