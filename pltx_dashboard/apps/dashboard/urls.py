@@ -17,6 +17,8 @@ from .views import (
     filter_dropdown_options,
     dashboard_refresh_status,
     dashboard_refresh_now,
+    qc_automation_view,
+    qc_automation_download,
 )
 
 urlpatterns = [
@@ -26,6 +28,12 @@ urlpatterns = [
         name="root-redirect",
     ),
     path("dashboard/upload/", upload_view, name="dashboard-upload"),
+    path("dashboard/qc-automation/", qc_automation_view, name="qc-automation"),
+    path(
+        "dashboard/qc-automation/download/<str:file_format>/",
+        qc_automation_download,
+        name="qc-automation-download",
+    ),
     path("dashboard/", dashboard_view, name="dashboard-home"),
     path("dashboard/business/", business_dashboard_view, name="business-dashboard"),
     path("dashboard/ceo/", ceo_dashboard_view, name="ceo-dashboard"),

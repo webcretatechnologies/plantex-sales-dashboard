@@ -239,6 +239,15 @@
             </a>
             {% endif %}
 
+            {% if logged_user.is_main_user or 'upload_data' in user_features %}
+            <a href="{% url 'qc-automation' %}"
+                class="nav-item {% if request.resolver_match.url_name == 'qc-automation' or request.resolver_match.url_name == 'qc-automation-download' %}active{% endif %}"
+                id="nav-qc-automation">
+                <span class="material-icons-round nav-icon">fact_check</span>
+                QC Automation
+            </a>
+            {% endif %}
+
             {% if 'replenishment' in user_features %}
             <a href="{% url 'replenishment-index' %}"
                 class="nav-item {% if request.resolver_match.url_name == 'replenishment-index' %}active{% endif %}"
@@ -999,6 +1008,8 @@
                 document.getElementById('nav-category')?.classList.add('active');
             } else if (viewType === 'upload') {
                 document.getElementById('nav-upload')?.classList.add('active');
+            } else if (viewType === 'qc-automation') {
+                document.getElementById('nav-qc-automation')?.classList.add('active');
             } else if (viewType === 'replenishment') {
                 document.getElementById('nav-replenishment')?.classList.add('active');
             } else if (viewType === 'user_management') {
