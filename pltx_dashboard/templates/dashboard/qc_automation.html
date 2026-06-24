@@ -1,0 +1,1034 @@
+{% extends 'dashboard/base_dashboard.html' %}
+
+{% block page_title %}QC Automation{% endblock %}
+{% block dashboard_title %}QC Automation{% endblock %}
+{% block dashboard_subtitle %}Order quality checks for first-order ASINs, bulk quantity, and high-value orders{% endblock %}
+{% block view_type %}qc-automation{% endblock %}
+{% block topbar_filters %}{% endblock %}
+
+{% block extra_head_inline_css %}
+.qc-skulens {
+  --page: #f8fafc;
+  --surface: #ffffff;
+  --surface2: #f8fafc;
+  --border: #e2e8f0;
+  --cyan: #0fafbf;
+  --gold: #f59e0b;
+  --green: #10b981;
+  --red: #ef4444;
+  --purple: #a78bfa;
+  --text: #0f172a;
+  --muted: #64748b;
+  --white: #0f172a;
+  background: var(--page);
+  color: var(--text);
+  min-height: calc(100vh - 80px);
+  padding: 32px 24px;
+  position: relative;
+}
+.qc-skulens::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: linear-gradient(rgba(15,175,191,0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(15,175,191,0.045) 1px, transparent 1px);
+  background-size: 28px 28px;
+  pointer-events: none;
+}
+.qc-app {
+  position: relative;
+  z-index: 1;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+.qc-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 32px;
+}
+.qc-logo-mark {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: rgba(15,175,191,0.1);
+  border: 1.5px solid rgba(15,175,191,0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.qc-logo-mark span {
+  color: var(--cyan);
+  font-size: 24px;
+}
+.qc-logo-text {
+  font-weight: 900;
+  font-size: 22px;
+  letter-spacing: 0;
+}
+.qc-logo-text span:last-child {
+  color: var(--cyan);
+}
+.qc-header-tagline {
+  font-size: 10px;
+  color: var(--muted);
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  margin-top: 2px;
+}
+.qc-header-right {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.qc-summary-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(16,185,129,0.1);
+  border: 1px solid rgba(16,185,129,0.25);
+  color: var(--green);
+  font-size: 11px;
+  padding: 5px 12px;
+  border-radius: 20px;
+  font-weight: 800;
+}
+.qc-export-link {
+  border: 1px solid rgba(15,175,191,0.45);
+  color: var(--cyan);
+  background: rgba(15,175,191,0.08);
+  text-decoration: none;
+  border-radius: 6px;
+  padding: 7px 12px;
+  font-size: 12px;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.qc-upload-section,
+.qc-date-row,
+.qc-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
+}
+.qc-upload-section {
+  padding: 28px;
+  margin-bottom: 20px;
+}
+.qc-upload-title,
+.qc-section-title {
+  font-weight: 900;
+  color: var(--white);
+}
+.qc-upload-title {
+  font-size: 15px;
+  margin-bottom: 4px;
+}
+.qc-upload-subtitle {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 20px;
+}
+.qc-upload-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+.qc-upload-card {
+  background: var(--surface2);
+  border: 1.5px dashed var(--border);
+  border-radius: 8px;
+  padding: 20px 16px;
+  text-align: center;
+  cursor: pointer;
+  position: relative;
+  display: block;
+}
+.qc-upload-card:hover {
+  border-color: var(--cyan);
+  background: rgba(15,175,191,0.04);
+}
+.qc-upload-card.loaded {
+  border-color: var(--green);
+  border-style: solid;
+  background: rgba(16,185,129,0.05);
+}
+.qc-upload-card input[type=file] {
+  margin-top: 12px;
+  max-width: 100%;
+  color: var(--muted);
+  font-size: 11px;
+}
+.qc-upload-icon {
+  color: var(--cyan);
+  font-size: 25px;
+  margin-bottom: 8px;
+}
+.qc-upload-label {
+  font-weight: 900;
+  font-size: 12px;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+.qc-upload-hint,
+.qc-upload-status {
+  font-size: 10px;
+  color: var(--muted);
+}
+.qc-upload-status {
+  color: var(--green);
+  margin-top: 6px;
+  display: none;
+}
+.qc-upload-card.loaded .qc-upload-status {
+  display: block;
+}
+.qc-load-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 18px;
+}
+.qc-input,
+.qc-date-input,
+.qc-select {
+  width: 100%;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 12px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  outline: none;
+}
+.qc-input:focus,
+.qc-date-input:focus,
+.qc-select:focus {
+  border-color: var(--cyan);
+}
+.qc-field-label {
+  display: block;
+  font-size: 10px;
+  text-transform: uppercase;
+  color: var(--muted);
+  letter-spacing: 1.5px;
+  margin-bottom: 6px;
+}
+.qc-load-btn,
+.qc-export-btn {
+  background: var(--cyan);
+  color: #ffffff;
+  font-weight: 900;
+  font-size: 13px;
+  border: none;
+  border-radius: 6px;
+  padding: 11px 22px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  text-decoration: none;
+}
+.qc-export-btn {
+  background: transparent;
+  color: var(--cyan);
+  border: 1px solid var(--cyan);
+  font-weight: 700;
+  font-size: 12px;
+  padding: 7px 14px;
+}
+.qc-date-row {
+  padding: 18px 24px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 24px;
+  flex-wrap: wrap;
+}
+.qc-date-row-label,
+.qc-section-label,
+.qc-stat-label,
+.qc-filter-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.qc-date-shortcuts {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.qc-date-btn {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 12px;
+  padding: 6px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.qc-date-btn:hover,
+.qc-date-btn.active {
+  border-color: var(--cyan);
+  color: var(--cyan);
+  background: rgba(15,175,191,0.12);
+}
+.qc-date-sep {
+  width: 1px;
+  height: 26px;
+  background: var(--border);
+}
+.qc-custom-date-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.qc-date-badge {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--cyan);
+  background: rgba(15,175,191,0.08);
+  border: 1px solid rgba(15,175,191,0.2);
+  padding: 5px 12px;
+  border-radius: 20px;
+  white-space: nowrap;
+}
+.qc-status-tabs,
+.qc-stats-bar {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-bottom: 24px;
+}
+.qc-status-tab,
+.qc-stat-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  position: relative;
+  overflow: hidden;
+}
+.qc-status-tab::before,
+.qc-stat-card::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+}
+.qc-status-tab.pending::before,
+.qc-stat-card.gold::before { background: var(--gold); }
+.qc-status-tab.shipped::before,
+.qc-stat-card.green::before { background: var(--green); }
+.qc-status-tab.shipping::before,
+.qc-stat-card.cyan::before { background: var(--cyan); }
+.qc-status-tab.cancelled::before,
+.qc-stat-card.red::before { background: var(--red); }
+.qc-status-tab-icon {
+  color: var(--muted);
+  font-size: 20px;
+  margin-bottom: 6px;
+}
+.qc-status-tab-label {
+  font-size: 9px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  margin-bottom: 6px;
+}
+.qc-status-tab-count,
+.qc-stat-val {
+  font-weight: 900;
+  font-size: 28px;
+  color: var(--white);
+}
+.qc-status-tab-sub,
+.qc-stat-sub {
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.qc-status-tab.pending .qc-status-tab-count { color: var(--gold); }
+.qc-status-tab.shipped .qc-status-tab-count { color: var(--green); }
+.qc-status-tab.shipping .qc-status-tab-count { color: var(--cyan); }
+.qc-status-tab.cancelled .qc-status-tab-count { color: var(--red); }
+.qc-section {
+  margin-bottom: 40px;
+}
+.qc-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.qc-section-label {
+  display: inline-block;
+  color: var(--cyan);
+  border: 1px solid rgba(15,175,191,0.25);
+  background: rgba(15,175,191,0.07);
+  padding: 4px 10px;
+  border-radius: 3px;
+  margin-bottom: 10px;
+}
+.qc-section-title {
+  font-size: 18px;
+}
+.qc-scroller {
+  display: flex;
+  gap: 16px;
+  overflow-x: auto;
+  padding-bottom: 12px;
+}
+.qc-sku-card {
+  flex-shrink: 0;
+  width: 180px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  position: relative;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.05);
+}
+.qc-rank-badge,
+.qc-badge {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  min-width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 900;
+  font-size: 11px;
+  z-index: 2;
+}
+.qc-badge {
+  left: auto;
+  right: 8px;
+  width: auto;
+  height: auto;
+  border-radius: 3px;
+  padding: 3px 7px;
+  font-size: 8px;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  color: var(--gold);
+  border: 1px solid rgba(245,158,11,0.3);
+  background: rgba(245,158,11,0.15);
+}
+.qc-rank-1 { background: rgba(245,158,11,0.2); color: var(--gold); border: 1px solid rgba(245,158,11,0.4); }
+.qc-rank-2 { background: rgba(148,163,184,0.2); color: #94a3b8; border: 1px solid rgba(148,163,184,0.3); }
+.qc-rank-3 { background: rgba(205,124,47,0.2); color: #cd7c2f; border: 1px solid rgba(205,124,47,0.3); }
+.qc-rank-other { background: rgba(100,116,139,0.1); color: var(--muted); border: 1px solid rgba(100,116,139,0.2); }
+.qc-sku-img-wrap {
+  width: 100%;
+  height: 130px;
+  background: var(--surface2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.qc-sku-img-wrap img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  padding: 8px;
+}
+.qc-sku-img-placeholder {
+  color: var(--muted);
+  font-size: 28px;
+}
+.qc-sku-info {
+  padding: 12px;
+}
+.qc-sku-name {
+  font-size: 9px;
+  color: var(--cyan);
+  letter-spacing: .5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 4px;
+}
+.qc-sku-asin {
+  font-size: 9px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.qc-sku-value {
+  font-weight: 900;
+  font-size: 16px;
+  color: var(--white);
+}
+.qc-sku-value-label {
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 1px;
+}
+.qc-sku-qty-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(15,175,191,0.1);
+  color: var(--cyan);
+  border: 1px solid rgba(15,175,191,0.2);
+  font-size: 9px;
+  padding: 3px 7px;
+  border-radius: 10px;
+  margin-top: 6px;
+}
+.qc-note-bar {
+  border-radius: 8px;
+  padding: 12px 16px;
+  font-size: 12px;
+  color: var(--text);
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.qc-note-bar.gold {
+  background: rgba(245,158,11,0.08);
+  border: 1px solid rgba(245,158,11,0.2);
+}
+.qc-note-bar.red {
+  background: rgba(239,68,68,0.08);
+  border: 1px solid rgba(239,68,68,0.2);
+}
+.qc-table-wrap {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  overflow-x: auto;
+}
+.qc-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.qc-table thead tr {
+  background: var(--surface2);
+  border-bottom: 1px solid var(--border);
+}
+.qc-table th {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: var(--muted);
+  padding: 11px 14px;
+  text-align: left;
+  white-space: nowrap;
+}
+.qc-table td {
+  padding: 10px 14px;
+  border-bottom: 1px solid #eef2f7;
+  color: var(--text);
+  vertical-align: middle;
+}
+.qc-table tbody tr:hover {
+  background: rgba(15,175,191,0.03);
+}
+.qc-td-id { color: var(--cyan); }
+.qc-td-val,
+.qc-td-qty,
+.qc-cat-orders {
+  font-weight: 900;
+  color: var(--white);
+}
+.qc-td-sku {
+  max-width: 210px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.qc-bulk-flag {
+  display: inline-flex;
+  font-size: 8px;
+  padding: 3px 7px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  white-space: nowrap;
+  background: rgba(167,139,250,0.12);
+  color: var(--purple);
+  border: 1px solid rgba(167,139,250,0.3);
+}
+.qc-cat-bar-wrap {
+  width: 120px;
+  height: 6px;
+  background: #e2e8f0;
+  border-radius: 3px;
+  overflow: hidden;
+}
+.qc-cat-bar {
+  height: 100%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--cyan), rgba(15,175,191,0.4));
+}
+.qc-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+.qc-alert {
+  border-radius: 8px;
+  padding: 12px 16px;
+  font-size: 13px;
+  font-weight: 800;
+  margin-bottom: 18px;
+}
+.qc-alert.error { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
+.qc-alert.success { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; }
+.qc-email-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+.qc-email-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+}
+.qc-empty {
+  text-align: center;
+  padding: 42px 20px;
+  color: var(--muted);
+}
+@media (max-width: 900px) {
+  .qc-upload-grid,
+  .qc-load-row,
+  .qc-status-tabs,
+  .qc-stats-bar,
+  .qc-email-grid {
+    grid-template-columns: 1fr;
+  }
+  .qc-date-badge {
+    margin-left: 0;
+  }
+}
+{% endblock %}
+
+{% block dashboard_content %}
+<div class="qc-skulens">
+  <div class="qc-app">
+    <div class="qc-header">
+      <div class="qc-logo-mark"><span class="material-icons-round">radar</span></div>
+      <div>
+        <div class="qc-logo-text"><span>QC</span><span> Automation</span></div>
+        <div class="qc-header-tagline">Order Quality Analytics</div>
+      </div>
+      <div class="qc-header-right">
+        <div class="qc-summary-pill">
+          <span>●</span>
+          {% if result %}
+          <span>{{ result.summary.row_count }} rows · {{ result.summary.day_count }} days · {{ result.summary.date_range }}</span>
+          {% else %}
+          <span>Upload files to begin</span>
+          {% endif %}
+        </div>
+        {% if result %}
+        <a class="qc-export-link" href="{% url 'qc-automation-download' 'csv' %}?selected_date={{ result.selected_date }}&status_category={{ result.status_category }}">
+          <span class="material-icons-round" style="font-size:15px;">download</span> CSV
+        </a>
+        <a class="qc-export-link" href="{% url 'qc-automation-download' 'excel' %}?selected_date={{ result.selected_date }}&status_category={{ result.status_category }}">
+          <span class="material-icons-round" style="font-size:15px;">table_view</span> Excel
+        </a>
+        {% endif %}
+      </div>
+    </div>
+
+    {% if error %}<div class="qc-alert error">{{ error }}</div>{% endif %}
+    {% if email_status %}<div class="qc-alert success">{{ email_status }}</div>{% endif %}
+
+    <form method="post" enctype="multipart/form-data" class="qc-upload-section">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="analyze">
+      <div class="qc-upload-title">Upload Reports</div>
+      <div class="qc-upload-subtitle">Upload your 30-day order report, ASIN image report, and category mapping. Use the date picker to view any day within the uploaded range.</div>
+      <div class="qc-upload-grid">
+        <label class="qc-upload-card {% if result %}loaded{% endif %}" id="card1">
+          <div class="qc-upload-icon"><span class="material-icons-round">calendar_month</span></div>
+          <div class="qc-upload-label">30-Day Order Report</div>
+          <div class="qc-upload-hint">.txt / .tsv / .csv · Amazon order report</div>
+          <div class="qc-upload-status">Loaded in current session</div>
+          <input type="file" name="order_report" accept=".txt,.tsv,.csv" multiple {% if not result %}required{% endif %}>
+        </label>
+        <label class="qc-upload-card {% if result %}loaded{% endif %}" id="card3">
+          <div class="qc-upload-icon"><span class="material-icons-round">image</span></div>
+          <div class="qc-upload-label">Image URL Report</div>
+          <div class="qc-upload-hint">.xlsx / .csv · ASIN + Image URL</div>
+          <div class="qc-upload-status">Loaded in current session</div>
+          <input type="file" name="image_report" accept=".xlsx,.xls,.csv" multiple {% if not result %}required{% endif %}>
+        </label>
+        <label class="qc-upload-card {% if result %}loaded{% endif %}" id="card4">
+          <div class="qc-upload-icon"><span class="material-icons-round">account_tree</span></div>
+          <div class="qc-upload-label">Category Mapping</div>
+          <div class="qc-upload-hint">.xlsx / .csv · ASIN, Portfolio, Category, Subcategory</div>
+          <div class="qc-upload-status">Loaded in current session</div>
+          <input type="file" name="category_mapping" accept=".xlsx,.xls,.csv" multiple {% if not result %}required{% endif %}>
+        </label>
+      </div>
+      <div class="qc-load-row">
+        <label>
+          <span class="qc-field-label">QC + Warehouse Recipients</span>
+          <input class="qc-input" type="text" name="qc_recipients" value="{{ qc_recipients }}" placeholder="qc@example.com, himanshu@example.com">
+        </label>
+        <label>
+          <span class="qc-field-label">Category Recipients</span>
+          <input class="qc-input" type="text" name="category_recipients" value="{{ category_recipients }}" placeholder="category@example.com">
+        </label>
+      </div>
+      <div style="margin-top:20px;">
+        <button class="qc-load-btn" type="submit">
+          <span class="material-icons-round" style="font-size:17px;">analytics</span>
+          Load Files
+        </button>
+      </div>
+    </form>
+
+    {% if result %}
+    <form method="post" id="qcDateForm" class="qc-date-row">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="select_date">
+      <input type="hidden" name="selected_date" id="qcSelectedDate" value="{{ result.selected_date }}">
+      <input type="hidden" name="qc_recipients" value="{{ qc_recipients }}">
+      <input type="hidden" name="category_recipients" value="{{ category_recipients }}">
+      <input type="hidden" name="status_category" value="{{ result.status_category }}">
+      <div class="qc-date-row-label">View date (IST)</div>
+      <div class="qc-date-shortcuts">
+        <button type="button" class="qc-date-btn" onclick="qcSelectRelativeDate(0)">Today</button>
+        <button type="button" class="qc-date-btn" onclick="qcSelectRelativeDate(-1)">Yesterday</button>
+        <button type="button" class="qc-date-btn" onclick="qcSelectRelativeDate(-2)">Day Before</button>
+      </div>
+      <div class="qc-date-sep"></div>
+      <div class="qc-custom-date-wrap">
+        <label class="qc-date-row-label">Custom</label>
+        <input class="qc-date-input" type="date" value="{{ result.selected_date }}" onchange="qcSelectDate(this.value)">
+      </div>
+      <select class="qc-select" style="width:auto; min-width:150px;" onchange="qcSelectDate(this.value)">
+        {% for date in result.date_options %}
+        <option value="{{ date }}" {% if date == result.selected_date %}selected{% endif %}>{{ date }}</option>
+        {% endfor %}
+      </select>
+      <div class="qc-date-badge">Showing: {{ result.selected_date }} IST</div>
+    </form>
+
+    <div class="qc-status-tabs">
+      <div class="qc-status-tab pending">
+        <div class="qc-status-tab-icon"><span class="material-icons-round">schedule</span></div>
+        <div class="qc-status-tab-label">Pending</div>
+        <div class="qc-status-tab-count">{{ result.summary.pending }}</div>
+        <div class="qc-status-tab-sub">orders</div>
+      </div>
+      <div class="qc-status-tab shipped">
+        <div class="qc-status-tab-icon"><span class="material-icons-round">check_circle</span></div>
+        <div class="qc-status-tab-label">Shipped</div>
+        <div class="qc-status-tab-count">{{ result.summary.shipped }}</div>
+        <div class="qc-status-tab-sub">orders</div>
+      </div>
+      <div class="qc-status-tab shipping">
+        <div class="qc-status-tab-icon"><span class="material-icons-round">local_shipping</span></div>
+        <div class="qc-status-tab-label">Shipping</div>
+        <div class="qc-status-tab-count">{{ result.summary.shipping }}</div>
+        <div class="qc-status-tab-sub">orders</div>
+      </div>
+      <div class="qc-status-tab cancelled">
+        <div class="qc-status-tab-icon"><span class="material-icons-round">cancel</span></div>
+        <div class="qc-status-tab-label">Cancelled</div>
+        <div class="qc-status-tab-count">{{ result.summary.cancelled }}</div>
+        <div class="qc-status-tab-sub">orders</div>
+      </div>
+    </div>
+
+    <div class="qc-stats-bar">
+      <div class="qc-stat-card cyan">
+        <div class="qc-stat-label">Total Revenue</div>
+        <div class="qc-stat-val">Rs. {{ result.summary.total_revenue|floatformat:0 }}</div>
+        <div class="qc-stat-sub">selected date</div>
+      </div>
+      <div class="qc-stat-card gold">
+        <div class="qc-stat-label">Total Orders</div>
+        <div class="qc-stat-val">{{ result.summary.total_orders }}</div>
+        <div class="qc-stat-sub">unique order IDs</div>
+      </div>
+      <div class="qc-stat-card green">
+        <div class="qc-stat-label">Active SKUs</div>
+        <div class="qc-stat-val">{{ result.summary.active_skus }}</div>
+        <div class="qc-stat-sub">ordered on this date</div>
+      </div>
+      <div class="qc-stat-card red">
+        <div class="qc-stat-label">QC Alerts</div>
+        <div class="qc-stat-val">{{ result.summary.qc_alerts }}</div>
+        <div class="qc-stat-sub">first order / 30d gap</div>
+      </div>
+    </div>
+
+    <div class="qc-section" id="valueSection">
+      <div class="qc-section-label">01 - Revenue Leaders</div>
+      <div class="qc-section-title">Top 10 SKUs by Order Value</div>
+      <div class="qc-scroller">
+        {% for row in result.top_value %}
+        <div class="qc-sku-card">
+          <div class="qc-rank-badge {% if forloop.counter == 1 %}qc-rank-1{% elif forloop.counter == 2 %}qc-rank-2{% elif forloop.counter == 3 %}qc-rank-3{% else %}qc-rank-other{% endif %}">{{ forloop.counter }}</div>
+          <div class="qc-sku-img-wrap">{% if row.image %}<img src="{{ row.image }}" alt="{{ row.sku }}">{% else %}<div class="qc-sku-img-placeholder"><span class="material-icons-round">inventory_2</span></div>{% endif %}</div>
+          <div class="qc-sku-info">
+            <div class="qc-sku-name" title="{{ row.sku }}">{{ row.sku }}</div>
+            <div class="qc-sku-asin">{{ row.asin }}</div>
+            <div class="qc-sku-value">Rs. {{ row.value|floatformat:0 }}</div>
+            <div class="qc-sku-value-label">order value</div>
+            <div class="qc-sku-qty-badge">{{ row.qty }} units</div>
+          </div>
+        </div>
+        {% empty %}<div class="qc-empty">No data for this date</div>{% endfor %}
+      </div>
+    </div>
+
+    <div class="qc-section" id="qtySection">
+      <div class="qc-section-label">02 - Volume Leaders</div>
+      <div class="qc-section-title">Top 10 SKUs by Quantity</div>
+      <div class="qc-scroller">
+        {% for row in result.top_qty %}
+        <div class="qc-sku-card">
+          <div class="qc-rank-badge {% if forloop.counter == 1 %}qc-rank-1{% elif forloop.counter == 2 %}qc-rank-2{% elif forloop.counter == 3 %}qc-rank-3{% else %}qc-rank-other{% endif %}">{{ forloop.counter }}</div>
+          <div class="qc-sku-img-wrap">{% if row.image %}<img src="{{ row.image }}" alt="{{ row.sku }}">{% else %}<div class="qc-sku-img-placeholder"><span class="material-icons-round">inventory_2</span></div>{% endif %}</div>
+          <div class="qc-sku-info">
+            <div class="qc-sku-name" title="{{ row.sku }}">{{ row.sku }}</div>
+            <div class="qc-sku-asin">{{ row.asin }}</div>
+            <div class="qc-sku-value">{{ row.qty }}</div>
+            <div class="qc-sku-value-label">units sold</div>
+            <div class="qc-sku-qty-badge">Rs. {{ row.value|floatformat:0 }}</div>
+          </div>
+        </div>
+        {% empty %}<div class="qc-empty">No data for this date</div>{% endfor %}
+      </div>
+    </div>
+
+    <div class="qc-section" id="bulkSection">
+      <div class="qc-section-header">
+        <div>
+          <div class="qc-section-label">03 - Bulk &amp; High Value</div>
+          <div class="qc-section-title">High Value Orders <span style="font-size:11px;color:var(--muted);font-weight:400;">qty &gt; 5 or value &gt; Rs. 10,000</span></div>
+        </div>
+        <a class="qc-export-btn" href="{% url 'qc-automation-download' 'csv' %}?section=bulk&selected_date={{ result.selected_date }}&status_category={{ result.status_category }}">Export CSV</a>
+      </div>
+      <div class="qc-note-bar gold"><span class="material-icons-round">lightbulb</span><span>{{ result.bulk_orders|length }} order lines exceed Rs. 10,000 or 5 units - sorted largest to smallest.</span></div>
+      <div class="qc-table-wrap">
+        <table class="qc-table">
+          <thead><tr><th>#</th><th>Order ID</th><th>Order Date (IST)</th><th>Order Value</th><th>Order Qty</th><th>SKU</th><th>ASIN</th><th>Flag</th></tr></thead>
+          <tbody>
+            {% for row in result.bulk_orders|slice:":25" %}
+            <tr>
+              <td>{{ forloop.counter }}</td>
+              <td class="qc-td-id">{{ row.order_id }}</td>
+              <td>{{ row.order_date_ist }}</td>
+              <td class="qc-td-val">Rs. {{ row.value|floatformat:0 }}</td>
+              <td class="qc-td-qty">{{ row.qty }}</td>
+              <td class="qc-td-sku" title="{{ row.sku }}">{{ row.sku }}</td>
+              <td class="qc-td-id">{{ row.asin }}</td>
+              <td><span class="qc-bulk-flag">{{ row.flag }}</span></td>
+            </tr>
+            {% empty %}<tr><td colspan="8" class="qc-empty">No orders exceed Rs. 10,000 or 5 units on this date</td></tr>{% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="qc-section" id="zeroSection">
+      <div class="qc-section-header">
+        <div>
+          <div class="qc-section-label">04 - QC Alert</div>
+          <div class="qc-section-title">Orders Needing QC Check</div>
+        </div>
+        <a class="qc-export-btn" href="{% url 'qc-automation-download' 'csv' %}?section=qc&selected_date={{ result.selected_date }}&status_category={{ result.status_category }}">Export CSV</a>
+      </div>
+      <div class="qc-note-bar red"><span class="material-icons-round">warning</span><span>{{ result.qc_message }}</span></div>
+      <div class="qc-scroller">
+        {% for row in result.qc_alerts|slice:":10" %}
+        <div class="qc-sku-card">
+          <div class="qc-badge">QC check</div>
+          <div class="qc-sku-img-wrap">{% if row.image %}<img src="{{ row.image }}" alt="{{ row.sku }}">{% else %}<div class="qc-sku-img-placeholder"><span class="material-icons-round">inventory_2</span></div>{% endif %}</div>
+          <div class="qc-sku-info">
+            <div class="qc-sku-name" title="{{ row.sku }}">{{ row.sku }}</div>
+            <div class="qc-sku-asin">{{ row.asin }}</div>
+            <div class="qc-sku-value" style="color:var(--gold);">Rs. {{ row.value|floatformat:0 }}</div>
+            <div class="qc-sku-value-label">order value</div>
+            <div class="qc-sku-qty-badge" style="background:rgba(245,158,11,0.08);color:var(--gold);border-color:rgba(245,158,11,0.2);">{{ row.qty }} units</div>
+          </div>
+        </div>
+        {% empty %}<div class="qc-empty">No QC alerts for this date.</div>{% endfor %}
+      </div>
+    </div>
+
+    <div class="qc-section" id="catSection">
+      <div class="qc-section-header">
+        <div>
+          <div class="qc-section-label">05 - Category Breakdown</div>
+          <div class="qc-section-title">Orders by Category</div>
+        </div>
+        <a class="qc-export-btn" href="{% url 'qc-automation-download' 'csv' %}?section=category&selected_date={{ result.selected_date }}&status_category={{ result.status_category }}">Export CSV</a>
+      </div>
+      <div class="qc-note-bar gold"><span class="material-icons-round">folder</span><span>{{ result.category_rows|length }} categories · showing top 10 · export for full list.</span></div>
+      <div class="qc-table-wrap">
+        <table class="qc-table">
+          <thead><tr><th>#</th><th>Category</th><th>ASINs</th><th>Orders</th><th>Units</th><th>Order Value</th><th>Share</th></tr></thead>
+          <tbody>
+            {% for row in result.category_rows|slice:":10" %}
+            <tr>
+              <td>{{ forloop.counter }}</td>
+              <td><strong style="color:var(--white);">{{ row.category }}</strong><div style="font-size:10px;color:var(--cyan);">{{ row.portfolio }}</div></td>
+              <td class="qc-td-qty">{{ row.asin_count }}</td>
+              <td class="qc-cat-orders">{{ row.orders }}</td>
+              <td class="qc-td-qty">{{ row.qty }}</td>
+              <td>Rs. {{ row.value|floatformat:0 }}</td>
+              <td><div style="display:flex;align-items:center;gap:8px;"><div class="qc-cat-bar-wrap"><div class="qc-cat-bar" style="width:{{ row.share }}%"></div></div><span style="font-size:10px;color:var(--muted);">{{ row.share }}%</span></div></td>
+            </tr>
+            {% empty %}<tr><td colspan="7" class="qc-empty">No order data for this date</td></tr>{% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="qc-section" id="hourlySection">
+      <div class="qc-section-header">
+        <div>
+          <div class="qc-section-label">06 - Hourly View</div>
+          <div class="qc-section-title">Orders by Hour (IST)</div>
+        </div>
+        <a class="qc-export-btn" href="{% url 'qc-automation-download' 'csv' %}?section=hourly&selected_date={{ result.selected_date }}&status_category={{ result.status_category }}">Export CSV</a>
+      </div>
+      <div class="qc-note-bar gold"><span class="material-icons-round">schedule</span><span>{{ result.hourly_rows|length }} active hours on this date.</span></div>
+      <div class="qc-table-wrap">
+        <table class="qc-table">
+          <thead><tr><th>Hour (IST)</th><th>Orders</th><th>Order Value</th><th>Share</th></tr></thead>
+          <tbody>
+            {% for row in result.hourly_rows %}
+            <tr>
+              <td class="qc-td-id">{{ row.label }}</td>
+              <td class="qc-cat-orders">{{ row.orders }}</td>
+              <td>Rs. {{ row.value|floatformat:0 }}</td>
+              <td><div style="display:flex;align-items:center;gap:8px;"><div class="qc-cat-bar-wrap"><div class="qc-cat-bar" style="width:{{ row.share }}%"></div></div><span style="font-size:10px;color:var(--muted);">{{ row.share }}%</span></div></td>
+            </tr>
+            {% empty %}<tr><td colspan="4" class="qc-empty">No order data for this date</td></tr>{% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="qc-section" id="statusOverviewSection">
+      <div class="qc-section-header">
+        <div>
+          <div class="qc-section-label">07 - Status Overview</div>
+          <div class="qc-section-title">Daily Order Status <span style="font-size:11px;color:var(--muted);font-weight:400;">all dates in file</span></div>
+        </div>
+        <a class="qc-export-btn" href="{% url 'qc-automation-download' 'csv' %}?section=status&selected_date={{ result.selected_date }}&status_category={{ result.status_category }}">Export CSV</a>
+      </div>
+      <form method="post" class="qc-filter-row">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="select_date">
+        <input type="hidden" name="selected_date" value="{{ result.selected_date }}">
+        <input type="hidden" name="qc_recipients" value="{{ qc_recipients }}">
+        <input type="hidden" name="category_recipients" value="{{ category_recipients }}">
+        <span class="qc-filter-label">Filter by category</span>
+        <select class="qc-select" name="status_category" style="width:auto;min-width:220px;" onchange="this.form.submit()">
+          <option value="__all__" {% if result.status_category == "__all__" %}selected{% endif %}>All Categories</option>
+          {% for category in result.category_options %}
+          <option value="{{ category }}" {% if result.status_category == category %}selected{% endif %}>{{ category }}</option>
+          {% endfor %}
+        </select>
+      </form>
+      <div class="qc-note-bar gold"><span class="material-icons-round">bar_chart</span><span>{% if result.status_category == "__all__" %}All categories{% else %}Category: {{ result.status_category }}{% endif %} · {{ result.status_overview|length }} days</span></div>
+      <div class="qc-table-wrap">
+        <table class="qc-table">
+          <thead><tr><th>Date</th><th>Shipped</th><th>Pending</th><th>Cancelled</th><th>Total Orders</th></tr></thead>
+          <tbody>
+            {% for row in result.status_overview %}
+            <tr>
+              <td class="qc-td-id">{{ row.date }}</td>
+              <td style="color:var(--green);font-weight:900;">{{ row.shipped }}</td>
+              <td style="color:var(--gold);font-weight:900;">{{ row.pending }}</td>
+              <td style="color:var(--red);font-weight:900;">{{ row.cancelled }}</td>
+              <td class="qc-td-val">{{ row.total }}</td>
+            </tr>
+            {% empty %}<tr><td colspan="5" class="qc-empty">No data available</td></tr>{% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="qc-section">
+      <div class="qc-section-header">
+        <div>
+          <div class="qc-section-label">08 - Email Automation</div>
+          <div class="qc-section-title">Team Notifications</div>
+        </div>
+      </div>
+      <div class="qc-email-grid">
+        <form method="post" class="qc-email-card">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="send_qc_email">
+          <input type="hidden" name="selected_date" value="{{ result.selected_date }}">
+          <input type="hidden" name="status_category" value="{{ result.status_category }}">
+          <span class="qc-field-label">QC Team + Himanshu bhai Warehouse</span>
+          <input class="qc-input" type="text" name="qc_recipients" value="{{ qc_recipients }}" placeholder="qc@example.com, himanshu@example.com">
+          <div style="height:10px;"></div>
+          <button class="qc-load-btn" type="submit"><span class="material-icons-round" style="font-size:17px;">outgoing_mail</span>Send QC Email</button>
+          <div class="qc-upload-hint" style="margin-top:8px;">Backend allows this after 12 Noon only.</div>
+        </form>
+        <form method="post" class="qc-email-card">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="send_category_email">
+          <input type="hidden" name="selected_date" value="{{ result.selected_date }}">
+          <input type="hidden" name="status_category" value="{{ result.status_category }}">
+          <span class="qc-field-label">Category Team Revenue Alert</span>
+          <input class="qc-input" type="text" name="category_recipients" value="{{ category_recipients }}" placeholder="category@example.com">
+          <div style="height:10px;"></div>
+          <button class="qc-load-btn" type="submit"><span class="material-icons-round" style="font-size:17px;">campaign</span>Send Category Email</button>
+          <div class="qc-upload-hint" style="margin-top:8px;">Progress: {{ result.threshold.revenue_pct }}% of capped projection. Email sends after 50%.</div>
+        </form>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<script>
+function qcDateStringFromOffset(offsetDays) {
+  var now = new Date();
+  var ist = new Date(now.getTime() + 330 * 60000);
+  ist.setUTCDate(ist.getUTCDate() + offsetDays);
+  var y = ist.getUTCFullYear();
+  var m = String(ist.getUTCMonth() + 1).padStart(2, "0");
+  var d = String(ist.getUTCDate()).padStart(2, "0");
+  return y + "-" + m + "-" + d;
+}
+function qcSelectRelativeDate(offsetDays) {
+  qcSelectDate(qcDateStringFromOffset(offsetDays));
+}
+function qcSelectDate(value) {
+  if (!value) return;
+  var input = document.getElementById("qcSelectedDate");
+  var form = document.getElementById("qcDateForm");
+  if (!input || !form) return;
+  input.value = value;
+  form.submit();
+}
+</script>
+{% endblock %}

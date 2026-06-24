@@ -11,6 +11,7 @@ from io import BytesIO, StringIO
 import pandas as pd
 from django.conf import settings
 from django.core.cache import cache
+from django.core.mail import EmailMessage
 from django.db.models import F, Max, Q, Sum, Case, When, Value, IntegerField
 from django.http import FileResponse, HttpResponse, JsonResponse
 from django.shortcuts import render, redirect
@@ -53,6 +54,15 @@ from apps.dashboard.services.cache_config import (
     DASHBOARD_CACHE_TTL_FULL_SECONDS,
     DASHBOARD_CACHE_TTL_LITE_SECONDS,
     DASHBOARD_CACHE_SCHEMA_VERSION,
+)
+from apps.dashboard.services.qc_automation import (
+    analyze_qc_dataset,
+    category_email_body,
+    export_tables as qc_export_tables,
+    parse_qc_uploads,
+    qc_email_body,
+    tables_to_excel_bytes,
+    DEFAULT_REVENUE_CAP,
 )
 from apps.dashboard.utils import DashboardEncoder
 
@@ -2372,6 +2382,279 @@ def dashboard_asin_fsn_report_rows_view(request):
         }
     )
 
+
+def _dashboard_user_features(user):
+    if user.is_main_user:
+        _feat_key = "all_feature_codenames_v1"
+        user_features = cache.get(_feat_key)
+        if user_features is None:
+            user_features = list(Feature.objects.values_list("code_name", flat=True))
+            cache.set(_feat_key, user_features, timeout=3600)
+        return user_features
+
+    if user.role:
+        _feat_key = f"role_feature_codenames_v1_{user.role_id}"
+        user_features = cache.get(_feat_key)
+        if user_features is None:
+            user_features = list(user.role.features.values_list("code_name", flat=True))
+            cache.set(_feat_key, user_features, timeout=3600)
+        return user_features
+    return []
+
+
+def _qc_context(request, user, result=None, error=None, email_status=None):
+    return {
+        "logged_user": user,
+        "user_features": _dashboard_user_features(user),
+        "payload_json": "null",
+        "selected_filters_json": "{}",
+        "dashboard_refresh_status_json": '{"state":"idle","message":""}',
+        "result": result,
+        "error": error,
+        "email_status": email_status,
+        "selected_date": (result or {}).get("selected_date"),
+        "projected_revenue": request.POST.get("projected_revenue")
+        or request.session.get("qc_projected_revenue")
+        or DEFAULT_REVENUE_CAP,
+        "revenue_cap": request.POST.get("revenue_cap")
+        or request.session.get("qc_revenue_cap")
+        or DEFAULT_REVENUE_CAP,
+        "qc_recipients": request.POST.get("qc_recipients")
+        or request.session.get("qc_recipients", ""),
+        "category_recipients": request.POST.get("category_recipients")
+        or request.session.get("qc_category_recipients", ""),
+        "status_category": request.POST.get("status_category")
+        or request.GET.get("status_category")
+        or "__all__",
+    }
+
+
+def _parse_recipients(raw_value):
+    recipients = []
+    for part in str(raw_value or "").replace(";", ",").split(","):
+        email = part.strip()
+        if email:
+            recipients.append(email)
+    return recipients
+
+
+def _result_from_session(request):
+    dataset = request.session.get("qc_automation_dataset")
+    if not dataset:
+        raise ValueError("Please upload the QC reports before using this action.")
+    selected_date = request.POST.get("selected_date") or request.GET.get("selected_date")
+    status_category = (
+        request.POST.get("status_category")
+        or request.GET.get("status_category")
+        or "__all__"
+    )
+    projected = request.POST.get("projected_revenue") or request.session.get(
+        "qc_projected_revenue"
+    )
+    cap = request.POST.get("revenue_cap") or request.session.get("qc_revenue_cap")
+    return analyze_qc_dataset(dataset, selected_date, projected, cap, status_category)
+
+
+@require_feature("upload_data")
+def qc_automation_view(request):
+    user = get_logged_in_user(request)
+    if not user:
+        return redirect("account-login")
+
+    result = None
+    error = None
+    email_status = None
+
+    if request.method == "POST":
+        action = request.POST.get("action", "analyze")
+        if "projected_revenue" in request.POST:
+            request.session["qc_projected_revenue"] = request.POST.get(
+                "projected_revenue", DEFAULT_REVENUE_CAP
+            )
+        if "revenue_cap" in request.POST:
+            request.session["qc_revenue_cap"] = request.POST.get(
+                "revenue_cap", DEFAULT_REVENUE_CAP
+            )
+        if "qc_recipients" in request.POST:
+            request.session["qc_recipients"] = request.POST.get("qc_recipients", "")
+        if "category_recipients" in request.POST:
+            request.session["qc_category_recipients"] = request.POST.get(
+                "category_recipients", ""
+            )
+
+        try:
+            if action == "analyze":
+                order_files = request.FILES.getlist("order_report")
+                image_files = request.FILES.getlist("image_report")
+                category_files = request.FILES.getlist("category_mapping")
+                if not order_files or not image_files or not category_files:
+                    raise ValueError(
+                        "Upload the 30-day order report, ASIN image report, and category mapping file."
+                    )
+                dataset = parse_qc_uploads(order_files, image_files, category_files)
+                request.session["qc_automation_dataset"] = dataset
+                selected_date = (
+                    request.POST.get("selected_date")
+                    if request.POST.get("selected_date") in dataset.get("date_options", [])
+                    else dataset.get("end_date")
+                )
+                result = analyze_qc_dataset(
+                    dataset,
+                    selected_date,
+                    request.POST.get("projected_revenue"),
+                    request.POST.get("revenue_cap"),
+                    request.POST.get("status_category") or "__all__",
+                )
+            elif action == "select_date":
+                result = _result_from_session(request)
+            elif action in {"send_qc_email", "send_category_email"}:
+                result = _result_from_session(request)
+                if action == "send_qc_email":
+                    if timezone.localtime().hour < 12:
+                        raise ValueError("QC email can be sent after 12 Noon only.")
+                    recipients = _parse_recipients(request.POST.get("qc_recipients"))
+                    if not recipients:
+                        raise ValueError("Enter QC email recipients before sending.")
+                    subject = f"QC Automation Alerts - {result['selected_date']}"
+                    body = qc_email_body(result)
+                else:
+                    recipients = _parse_recipients(
+                        request.POST.get("category_recipients")
+                    )
+                    if not recipients:
+                        raise ValueError("Enter Category Team recipients before sending.")
+                    if not result.get("threshold", {}).get("crossed"):
+                        raise ValueError(
+                            "Category email was not sent because revenue has not crossed 50% of the capped projection."
+                        )
+                    subject = f"Category Revenue Alert - {result['selected_date']}"
+                    body = category_email_body(result)
+
+                message = EmailMessage(
+                    subject=subject,
+                    body=body,
+                    from_email=getattr(settings, "DEFAULT_FROM_EMAIL", None),
+                    to=recipients,
+                )
+                csv_buffer = StringIO()
+                writer = csv.writer(csv_buffer)
+                writer.writerow(["Section", "Metric", "Value"])
+                writer.writerow(["Summary", "Revenue", result["summary"]["total_revenue"]])
+                writer.writerow(["Summary", "QC Alerts", len(result.get("qc_alerts", []))])
+                writer.writerow(
+                    ["Summary", "Bulk / High Value", len(result.get("bulk_orders", []))]
+                )
+                message.attach(
+                    f"qc_automation_{result['selected_date']}.csv",
+                    csv_buffer.getvalue(),
+                    "text/csv",
+                )
+                message.send(fail_silently=False)
+                email_status = f"Email sent to {', '.join(recipients)}."
+        except Exception as exc:
+            error = str(exc)
+            if action != "analyze":
+                try:
+                    result = _result_from_session(request)
+                except Exception:
+                    result = None
+
+    return render(
+        request,
+        "dashboard/qc_automation.html",
+        _qc_context(request, user, result=result, error=error, email_status=email_status),
+    )
+
+
+@require_feature("upload_data")
+def qc_automation_download(request, file_format):
+    user = get_logged_in_user(request)
+    if not user:
+        return redirect("account-login")
+    try:
+        result = _result_from_session(request)
+    except Exception as exc:
+        return HttpResponse(str(exc), status=400)
+
+    section = str(request.GET.get("section") or "").strip().lower()
+    tables = qc_export_tables(result, section=section)
+    if section and not tables:
+        return HttpResponse("Unsupported QC download section.", status=400)
+    selected_date = result.get("selected_date") or "selected-date"
+    section_slug = section or "all"
+    section_headers = {
+        "bulk": [
+            "Order ID",
+            "Order Date (IST)",
+            "Order Value (₹)",
+            "Order Qty",
+            "SKU",
+            "ASIN",
+            "Flag",
+        ],
+        "qc": ["ASIN", "SKU", "Product Name", "Qty Ordered", "Order Value (₹)"],
+        "category": [
+            "Portfolio",
+            "Category",
+            "Subcategory",
+            "ASIN",
+            "Orders",
+            "Units",
+            "Revenue",
+        ],
+        "hourly": ["Hour (IST)", "Order ID", "ASIN", "Quantity", "Order Value (₹)"],
+        "status": ["Date", "Shipped", "Pending", "Cancelled", "Total Orders"],
+    }
+    if file_format == "excel":
+        output = tables_to_excel_bytes(tables)
+        response = HttpResponse(
+            output.getvalue(),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        response["Content-Disposition"] = (
+            f'attachment; filename="qc_automation_{section_slug}_{selected_date}.xlsx"'
+        )
+        return response
+
+    if file_format == "csv":
+        buffer = StringIO()
+        writer = csv.writer(buffer)
+        if section:
+            rows = next(iter(tables.values()), [])
+            headers = section_headers.get(section) or (list(rows[0].keys()) if rows else [])
+            writer.writerow(headers)
+            for row in rows:
+                writer.writerow([row.get(header, "") for header in headers])
+        else:
+            writer.writerow(
+                [
+                    "Section",
+                    "Field 1",
+                    "Field 2",
+                    "Field 3",
+                    "Field 4",
+                    "Field 5",
+                    "Field 6",
+                    "Field 7",
+                ]
+            )
+            for section_name, rows in tables.items():
+                if not rows:
+                    writer.writerow([section_name, "No data available"])
+                    continue
+                headers = list(rows[0].keys())
+                writer.writerow([section_name, *headers])
+                for row in rows:
+                    writer.writerow(
+                        [section_name, *[row.get(header, "") for header in headers]]
+                    )
+        response = HttpResponse(buffer.getvalue(), content_type="text/csv")
+        response["Content-Disposition"] = (
+            f'attachment; filename="qc_automation_{section_slug}_{selected_date}.csv"'
+        )
+        return response
+
+    return HttpResponse("Unsupported download format.", status=400)
 
 @require_feature("upload_data")
 def upload_view(request):

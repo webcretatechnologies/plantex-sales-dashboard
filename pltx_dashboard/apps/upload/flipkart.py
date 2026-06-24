@@ -70,6 +70,30 @@ def _clean_optional_date(value):
         return None
 
 
+def _column_key(value):
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").replace("\ufeff", "").strip().lower())
+
+
+def _resolve_columns(df, required_columns, file_label):
+    lookup = {}
+    for col in df.columns:
+        key = _column_key(col)
+        if key and key not in lookup:
+            lookup[key] = col
+
+    resolved = {}
+    missing = []
+    for required in required_columns:
+        col = lookup.get(_column_key(required))
+        if col is None:
+            missing.append(required)
+        else:
+            resolved[required] = col
+    if missing:
+        raise ValueError(f"{file_label} missing required columns: {', '.join(missing)}")
+    return resolved
+
+
 def process_fk_inventory_file(file_obj, user):
     """
     Parse FK Inventory file (FK.xlsx).
@@ -319,127 +343,119 @@ def process_fk_search_traffic(file_obj, user):
     Extracts FSN from Listing Id using Mid(Listing Id, 4, 16) → listing_id[3:19].
     Saves per-FSN per-date traffic & sales data.
     """
-    import tempfile
-    import csv
-    from django.db import connection
-    from apps.dashboard.models import FlipkartSearchTraffic
-    import os
-
     total_records = 0
     any_chunk = False
     touched_dates = set()
     all_key_totals = {}
     row_number = 1
     _date_cache = {}
-    db_table = FlipkartSearchTraffic._meta.db_table
 
-    with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.csv') as tmp_csv:
-        writer = csv.writer(tmp_csv, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
-        writer.writerow(["user_id", "fsn", "sku", "vertical", "date", "page_views", "product_clicks", "sales", "revenue"])
+    for df in iter_file_chunks(file_obj):
+        any_chunk = True
+        cols = _resolve_columns(
+            df,
+            [
+                "Listing Id",
+                "SKU Id",
+                "Vertical",
+                "Impression Date",
+                "Product Clicks",
+                "Sales",
+                "Revenue",
+            ],
+            "FK Search Traffic",
+        )
 
-        for df in iter_file_chunks(file_obj):
-            any_chunk = True
-            require_columns(df, "fk_search_traffic")
+        # Pre-extract arrays for speed
+        listing_ids = df[cols["Listing Id"]].fillna("").astype(str).values
+        raw_dates = df[cols["Impression Date"]].values
+        sku_ids = df[cols["SKU Id"]].fillna("").astype(str).values
+        verticals = df[cols["Vertical"]].fillna("").astype(str).values
+        product_clicks = df[cols["Product Clicks"]].fillna(0).values
+        sales_arr = df[cols["Sales"]].fillna(0).values
+        revenues = df[cols["Revenue"]].fillna(0).values
 
-            # Pre-extract arrays for speed
-            listing_ids = df["Listing Id"].fillna("").astype(str).values
-            raw_dates = df["Impression Date"].values
-            sku_ids = df["SKU Id"].fillna("").astype(str).values
-            verticals = df["Vertical"].fillna("").astype(str).values
-            product_clicks = df["Product Clicks"].fillna(0).values
-            sales_arr = df["Sales"].fillna(0).values
-            revenues = df["Revenue"].fillna(0).values
+        for listing_id, raw_date, sku, vertical, clicks, sales, revenue in zip(
+            listing_ids, raw_dates, sku_ids, verticals, product_clicks, sales_arr, revenues
+        ):
+            row_number += 1
+            listing_id = str(listing_id).strip()
+            if not listing_id or listing_id.lower() == "nan" or len(listing_id) < 19:
+                continue
 
-            for listing_id, raw_date, sku, vertical, clicks, sales, revenue in zip(
-                listing_ids, raw_dates, sku_ids, verticals, product_clicks, sales_arr, revenues
-            ):
-                row_number += 1
-                listing_id = str(listing_id).strip()
-                if not listing_id or listing_id.lower() == "nan" or len(listing_id) < 19:
-                    continue
+            fsn = listing_id[3:19]  # Mid(Listing Id, 4, 16)
+            if raw_date not in _date_cache:
+                try:
+                    _date_cache[raw_date] = parse_report_date(raw_date, prefer_dayfirst=False)
+                except Exception as exc:
+                    raise ValueError(f"Invalid Impression Date in FK Search Traffic at row {row_number}: {exc}")
+            row_date = _date_cache[raw_date]
+            touched_dates.add(row_date)
 
-                fsn = listing_id[3:19]  # Mid(Listing Id, 4, 16)
-                if raw_date not in _date_cache:
-                    try:
-                        _date_cache[raw_date] = parse_report_date(raw_date, prefer_dayfirst=False)
-                    except Exception as exc:
-                        import os
-                        os.remove(tmp_csv.name)
-                        raise ValueError(f"Invalid Impression Date in FK Search Traffic at row {row_number}: {exc}")
-                row_date = _date_cache[raw_date]
-                touched_dates.add(row_date)
-
-                sku = str(sku).strip().replace('"', "")
-                sku = re.sub(r"(?i)^SKU:\s*", "", sku)
-                key = (fsn, row_date)
-                vertical = str(vertical).strip()
-                
-                if key not in all_key_totals:
-                    all_key_totals[key] = {
-                        "fsn": fsn,
-                        "date": row_date,
-                        "sku": sku,
-                        "vertical": vertical,
-                        "page_views": 0,
-                        "product_clicks": 0,
-                        "sales": 0,
-                        "revenue": 0.0,
-                    }
-                else:
-                    if not all_key_totals[key]["sku"] and sku:
-                        all_key_totals[key]["sku"] = sku
-                    if not all_key_totals[key]["vertical"] and vertical:
-                        all_key_totals[key]["vertical"] = vertical
-
-                clicks_val = clean_number(clicks)
-                all_key_totals[key]["page_views"] += clicks_val
-                all_key_totals[key]["product_clicks"] += clicks_val
-                all_key_totals[key]["sales"] += clean_number(sales)
-                all_key_totals[key]["revenue"] += float(clean_currency(revenue))
-
-        for payload in all_key_totals.values():
-            writer.writerow([
-                user.id,
-                payload["fsn"],
-                payload["sku"],
-                payload["vertical"],
-                payload["date"].isoformat(),
-                payload["page_views"],
-                payload["product_clicks"],
-                payload["sales"],
-                payload["revenue"]
-            ])
-            total_records += 1
+            sku = str(sku).strip().replace('"', "")
+            sku = re.sub(r"(?i)^SKU:\s*", "", sku)
+            key = (fsn, row_date)
+            vertical = str(vertical).strip()
             
-        tmp_csv_path = tmp_csv.name
+            if key not in all_key_totals:
+                all_key_totals[key] = {
+                    "fsn": fsn,
+                    "date": row_date,
+                    "sku": sku,
+                    "vertical": vertical,
+                    "page_views": 0,
+                    "product_clicks": 0,
+                    "sales": 0,
+                    "revenue": 0.0,
+                }
+            else:
+                if not all_key_totals[key]["sku"] and sku:
+                    all_key_totals[key]["sku"] = sku
+                if not all_key_totals[key]["vertical"] and vertical:
+                    all_key_totals[key]["vertical"] = vertical
+
+            clicks_val = clean_number(clicks)
+            all_key_totals[key]["page_views"] += clicks_val
+            all_key_totals[key]["product_clicks"] += clicks_val
+            all_key_totals[key]["sales"] += clean_number(sales)
+            all_key_totals[key]["revenue"] += float(clean_currency(revenue))
 
     if not any_chunk:
-        os.remove(tmp_csv_path)
         raise ValueError("FK Search Traffic file is empty.")
 
-    if total_records > 0:
-        with connection.cursor() as cursor:
-            cursor.execute("SET autocommit=0;")
-            cursor.execute("SET unique_checks=0;")
-            cursor.execute("SET foreign_key_checks=0;")
+    records = [
+        FlipkartSearchTraffic(
+            user=user,
+            fsn=payload["fsn"],
+            sku=payload["sku"],
+            vertical=payload["vertical"],
+            date=payload["date"],
+            page_views=payload["page_views"],
+            product_clicks=payload["product_clicks"],
+            sales=payload["sales"],
+            revenue=payload["revenue"],
+        )
+        for payload in all_key_totals.values()
+    ]
+    total_records = len(records)
+    if records:
+        for i in range(0, len(records), DB_BATCH_SIZE):
+            FlipkartSearchTraffic.objects.bulk_create(
+                records[i : i + DB_BATCH_SIZE],
+                **get_upsert_kwargs(
+                    unique_fields=["user", "fsn", "date"],
+                    update_fields=[
+                        "sku",
+                        "vertical",
+                        "page_views",
+                        "product_clicks",
+                        "sales",
+                        "revenue",
+                    ],
+                ),
+            )
 
-            query = f"""
-            LOAD DATA LOCAL INFILE '{tmp_csv_path}'
-            REPLACE INTO TABLE {db_table}
-            FIELDS TERMINATED BY ',' ENCLOSED BY '"'
-            IGNORE 1 LINES
-            (user_id, fsn, sku, vertical, date, page_views, product_clicks, sales, revenue);
-            """
-            cursor.execute(query)
-
-            cursor.execute("COMMIT;")
-            cursor.execute("SET autocommit=1;")
-            cursor.execute("SET unique_checks=1;")
-            cursor.execute("SET foreign_key_checks=1;")
-
-    os.remove(tmp_csv_path)
-
-    logger.info("[FK SearchTraffic] Processed and loaded %s records via INFILE.", total_records)
+    logger.info("[FK SearchTraffic] Processed and upserted %s records.", total_records)
     return touched_dates
 
 
@@ -661,81 +677,62 @@ def process_fk_pla(file_obj, user):
     File has 2 metadata rows then the header row.
     Columns: Campaign ID, Advertised FSN ID, Ad Spend.
     """
-    import tempfile
-    import csv
-    from django.db import connection
-    from apps.dashboard.models import FlipkartPLA
-    import os
-
     total_records = 0
     any_chunk = False
     all_key_spend = {}
-    db_table = FlipkartPLA._meta.db_table
 
     report_date = _extract_fk_report_date_from_metadata(file_obj)
     if report_date is None:
         raise ValueError("FK PLA metadata missing Start Time/End Time.")
 
-    with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.csv') as tmp_csv:
-        writer = csv.writer(tmp_csv, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
-        writer.writerow(["user_id", "campaign_id", "fsn_id", "date", "ad_spend"])
+    for df in iter_file_chunks(file_obj, skiprows=2):
+        any_chunk = True
+        cols = _resolve_columns(
+            df,
+            ["Campaign ID", "Advertised FSN ID", "Ad Spend"],
+            "FK PLA",
+        )
 
-        for df in iter_file_chunks(file_obj, skiprows=2):
-            any_chunk = True
-            require_columns(df, "fk_pla")
+        campaign_arr = df[cols["Campaign ID"]].fillna("").astype(str).values
+        fsn_arr = df[cols["Advertised FSN ID"]].fillna("").astype(str).values
+        spend_arr = df[cols["Ad Spend"]].fillna(0).values
 
-            campaign_arr = df["Campaign ID"].fillna("").astype(str).values
-            fsn_arr = df["Advertised FSN ID"].fillna("").astype(str).values
-            spend_arr = df["Ad Spend"].fillna(0).values
+        for camp_val, fsn_val, spend_val in zip(campaign_arr, fsn_arr, spend_arr):
+            campaign_id = str(camp_val or "").strip().replace('"', "")
+            if campaign_id.lower() == "nan":
+                campaign_id = ""
+            fsn_id = str(fsn_val).strip().replace('"', "")
+            if not fsn_id or fsn_id.lower() == "nan":
+                continue
 
-            for camp_val, fsn_val, spend_val in zip(campaign_arr, fsn_arr, spend_arr):
-                campaign_id = str(camp_val).strip()
-                fsn_id = str(fsn_val).strip().replace('"', "")
-                if not fsn_id or fsn_id.lower() == "nan":
-                    continue
-
-                key = (campaign_id, fsn_id, report_date)
-                all_key_spend[key] = all_key_spend.get(key, 0.0) + float(
-                    clean_currency(spend_val)
-                )
-
-        for key, spend in all_key_spend.items():
-            writer.writerow([
-                user.id,
-                key[0],
-                key[1],
-                key[2].isoformat(),
-                spend
-            ])
-            total_records += 1
-
-        tmp_csv_path = tmp_csv.name
+            key = (campaign_id, fsn_id, report_date)
+            all_key_spend[key] = all_key_spend.get(key, 0.0) + float(
+                clean_currency(spend_val)
+            )
 
     if not any_chunk:
-        os.remove(tmp_csv_path)
         raise ValueError("FK PLA file is empty.")
 
-    if total_records > 0:
-        with connection.cursor() as cursor:
-            cursor.execute("SET autocommit=0;")
-            cursor.execute("SET unique_checks=0;")
-            cursor.execute("SET foreign_key_checks=0;")
+    records = [
+        FlipkartPLA(
+            user=user,
+            campaign_id=campaign_id,
+            fsn_id=fsn_id,
+            date=row_date,
+            ad_spend=spend,
+        )
+        for (campaign_id, fsn_id, row_date), spend in all_key_spend.items()
+    ]
+    total_records = len(records)
+    if records:
+        for i in range(0, len(records), DB_BATCH_SIZE):
+            FlipkartPLA.objects.bulk_create(
+                records[i : i + DB_BATCH_SIZE],
+                **get_upsert_kwargs(
+                    unique_fields=["user", "campaign_id", "fsn_id", "date"],
+                    update_fields=["ad_spend"],
+                ),
+            )
 
-            query = f"""
-            LOAD DATA LOCAL INFILE '{tmp_csv_path}'
-            REPLACE INTO TABLE {db_table}
-            FIELDS TERMINATED BY ',' ENCLOSED BY '"'
-            IGNORE 1 LINES
-            (user_id, campaign_id, fsn_id, date, ad_spend);
-            """
-            cursor.execute(query)
-
-            cursor.execute("COMMIT;")
-            cursor.execute("SET autocommit=1;")
-            cursor.execute("SET unique_checks=1;")
-            cursor.execute("SET foreign_key_checks=1;")
-
-    os.remove(tmp_csv_path)
-
-    logger.info("[FK PLA] Processed and loaded %s records via INFILE.", total_records)
+    logger.info("[FK PLA] Processed and upserted %s records.", total_records)
     return {report_date}
