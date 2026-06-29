@@ -68,6 +68,10 @@ class CategoryMapping(models.Model):
 
     class Meta:
         unique_together = ("user", "asin")
+        indexes = [
+            models.Index(fields=["user", "launch_date", "asin"], name="idx_cm_u_launch_asin"),
+            models.Index(fields=["user", "category", "launch_date"], name="idx_cm_u_cat_launch"),
+        ]
 
 
 class PriceData(models.Model):
@@ -194,6 +198,8 @@ class ProcessedDashboardData(models.Model):
                 fields=["user", "date", "category", "portfolio", "subcategory"],
                 name="idx_pdd_u_d_c_p_s",
             ),
+            models.Index(fields=["user", "category", "date", "asin"], name="idx_pdd_u_cat_d_asn"),
+            models.Index(fields=["user", "portfolio", "date", "asin"], name="idx_pdd_u_port_d_asn"),
         ]
 
 
@@ -254,6 +260,9 @@ class FlipkartCategoryMap(models.Model):
             models.Index(fields=["user", "portfolio"], name="idx_fkcat_u_port"),
             models.Index(fields=["user", "subcategory"], name="idx_fkcat_u_sub"),
             models.Index(fields=["user", "product_status"], name="idx_fkcat_u_status"),
+            models.Index(fields=["user", "asin"], name="idx_fkcat_u_asin"),
+            models.Index(fields=["user", "launch_date", "fsn"], name="idx_fkcat_u_launch_fsn"),
+            models.Index(fields=["user", "category", "launch_date"], name="idx_fkcat_u_cat_launch"),
         ]
 
 
@@ -406,6 +415,8 @@ class FlipkartProcessedDashboardData(models.Model):
                 fields=["user", "date", "category", "portfolio", "subcategory"],
                 name="idx_fkpd_u_d_c_p_s",
             ),
+            models.Index(fields=["user", "category", "date", "fsn"], name="idx_fkpd_u_cat_d_fsn"),
+            models.Index(fields=["user", "portfolio", "date", "fsn"], name="idx_fkpd_u_port_d_fsn"),
         ]
 
 
@@ -532,6 +543,10 @@ class DashboardProductDailySummary(models.Model):
             models.Index(fields=["user", "portfolio", "date"], name="idx_dpds_u_port_d"),
             models.Index(fields=["user", "subcategory", "date"], name="idx_dpds_u_sub_d"),
             models.Index(fields=["user", "platform", "category", "date"], name="idx_dpds_u_p_cat_d"),
+            models.Index(fields=["user", "platform", "asin", "date"], name="idx_dpds_u_p_asn_d"),
+            models.Index(fields=["user", "platform", "fsn", "date"], name="idx_dpds_u_p_fsn_d"),
+            models.Index(fields=["user", "platform", "category", "date", "asin"], name="idx_dpds_u_p_c_d_a"),
+            models.Index(fields=["user", "platform", "category", "date", "fsn"], name="idx_dpds_u_p_c_d_f"),
         ]
 
 
@@ -643,6 +658,9 @@ class DashboardInventoryHealthSummary(models.Model):
             models.Index(fields=["user", "platform", "subcategory", "date"], name="idx_dihs_u_p_sub_d"),
             models.Index(fields=["user", "asin", "date"], name="idx_dihs_u_asin_d"),
             models.Index(fields=["user", "fsn", "date"], name="idx_dihs_u_fsn_d"),
+            models.Index(fields=["user", "platform", "date", "status_class"], name="idx_dihs_u_p_d_sc"),
+            models.Index(fields=["user", "platform", "date", "fk_status_class"], name="idx_dihs_u_p_d_fsc"),
+            models.Index(fields=["user", "platform", "category", "date", "status_class"], name="idx_dihs_u_p_c_d_sc"),
         ]
 
 

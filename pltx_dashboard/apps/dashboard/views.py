@@ -954,20 +954,42 @@ def _get_inventory_modal_queryset(data_owner, filters, query):
     return qs.order_by("-date", "-revenue", "sku")
 
 
-def _get_npd_modal_payload(data_owner, filters, include_trend=False):
+def _get_npd_modal_payload(
+    data_owner,
+    filters,
+    include_trend=False,
+    limit=None,
+    offset=0,
+    query=None,
+    order_field=None,
+    order_dir="desc",
+    include_total=False,
+):
     from apps.dashboard.services.analytics_services_orm_pipeline import apply_global_filters_orm
     from apps.dashboard.services.npd import build_npd_launch_date_marks, build_npd_performance
 
     qs, fk_qs = _get_filtered_processed_querysets(data_owner, filters)
     qs_f = apply_global_filters_orm(qs, filters)
     fk_qs_f = apply_global_filters_orm(fk_qs, filters)
-    payload = build_npd_performance(data_owner, filters, qs_f, fk_qs_f, include_trend=include_trend)
+    payload = build_npd_performance(
+        data_owner,
+        filters,
+        qs_f,
+        fk_qs_f,
+        limit=limit,
+        include_trend=include_trend,
+        offset=offset,
+        search_query=query,
+        order_field=order_field,
+        order_dir=order_dir,
+        include_total=include_total,
+    )
     payload["launch_dates"] = build_npd_launch_date_marks(data_owner, filters)
     return payload
 
 
-def _get_npd_modal_rows(data_owner, filters):
-    return (_get_npd_modal_payload(data_owner, filters, include_trend=False).get("rows") or [])
+def _get_npd_modal_rows(data_owner, filters, limit=None):
+    return (_get_npd_modal_payload(data_owner, filters, include_trend=False, limit=limit).get("rows") or [])
 
 
 def _inventory_summary_row_dict(row, msku_map=None):
@@ -1748,12 +1770,16 @@ def dashboard_modal_rows_view(request, view_name, modal_key):
         dt_length = _parse_positive_int(request.GET.get("length"), default=25, minimum=10, maximum=200)
         page_size = dt_length
         page = (dt_start // page_size) + 1
+        order_field = (request.GET.get("order_field") or "").strip()
+        order_dir = (request.GET.get("order_dir") or "desc").strip().lower()
     else:
         query = (request.GET.get("q") or "").strip().lower()
         page = _parse_positive_int(request.GET.get("page"), default=1, minimum=1, maximum=10_000)
         page_size = _parse_positive_int(
             request.GET.get("page_size"), default=50, minimum=10, maximum=200
         )
+        order_field = ""
+        order_dir = "desc"
 
     data_owner = user.created_by if user.created_by else user
     data_version = cache.get(f"dashboard_data_version_{data_owner.id}", 0)
@@ -1811,6 +1837,23 @@ def dashboard_modal_rows_view(request, view_name, modal_key):
             if _r["fsn"] and _r["sku"]:
                 _inv_msku_map[_r["fsn"]] = _r["sku"]
         rows = [_inventory_summary_row_dict(row, msku_map=_inv_msku_map) for row in row_qs]
+    elif dt_draw and modal_key == "npd-performance" and export_format not in {"csv", "excel", "xlsx"}:
+        offset = (page - 1) * page_size
+        npd_payload = _get_npd_modal_payload(
+            data_owner,
+            filters,
+            include_trend=True,
+            limit=page_size,
+            offset=offset,
+            query=query,
+            order_field=order_field,
+            order_dir=order_dir,
+            include_total=True,
+        )
+        rows = npd_payload.get("rows") or []
+        total = int(npd_payload.get("total") or 0)
+        npd_trend = npd_payload.get("trend")
+        npd_launch_dates = npd_payload.get("launch_dates")
     else:
         # Fast path 1: per-page HTML already cached (only for non-DataTables mode)
         # (handled above via modal_rows_cache_key check)
@@ -2029,9 +2072,6 @@ def dashboard_modal_rows_view(request, view_name, modal_key):
 
     # ── DataTables server-side path ──────────────────────────────────────────
     if dt_draw:
-        order_field = (request.GET.get("order_field") or "").strip()
-        order_dir = (request.GET.get("order_dir") or "desc").strip().lower()
-
         if modal_key == "inventory-health":
             # inventory-health uses ORM — apply ordering and re-slice
             if order_field:
@@ -2054,9 +2094,14 @@ def dashboard_modal_rows_view(request, view_name, modal_key):
             page_rows = rows
         else:
             # List-based modals: sort in Python then paginate
-            if order_field:
+            if modal_key == "npd-performance":
+                rows_total = total
+                page_rows = rows
+            elif order_field:
                 rows = _sort_rows_by_field(rows or [], order_field, order_dir)
-            rows_total, page_rows = _paginate_rows(rows or [], page, page_size)
+                rows_total, page_rows = _paginate_rows(rows or [], page, page_size)
+            else:
+                rows_total, page_rows = _paginate_rows(rows or [], page, page_size)
 
         html = render_to_string(
             template_name,
@@ -2166,22 +2211,22 @@ def dashboard_product_card_rows_view(request, view_name, card_key):
     if cached_html:
         return HttpResponse(cached_html)
 
+    limit_str = request.GET.get('limit')
+    limit = 10
+    if limit_str and limit_str.isdigit():
+        limit = int(limit_str)
+
     if card_key == "top-products":
         rows = _get_top_product_modal_rows(data_owner, filters)
     elif card_key == "declining-products":
         rows = _get_declining_product_modal_rows(data_owner, filters)
     elif card_key == "npd-performance":
-        rows = _get_npd_modal_rows(data_owner, filters)
+        rows = _get_npd_modal_rows(data_owner, filters, limit=limit)
     else:
         rows = []
 
     if not isinstance(rows, list):
         rows = []
-        
-    limit_str = request.GET.get('limit')
-    limit = 10
-    if limit_str and limit_str.isdigit():
-        limit = int(limit_str)
     
     rows = rows[:limit]
 
