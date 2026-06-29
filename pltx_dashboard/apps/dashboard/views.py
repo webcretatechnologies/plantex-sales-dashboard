@@ -11,7 +11,7 @@ from io import BytesIO, StringIO
 import pandas as pd
 from django.conf import settings
 from django.core.cache import cache
-from django.core.mail import EmailMessage
+from django.core.mail import EmailMultiAlternatives
 from django.db.models import F, Max, Q, Sum, Case, When, Value, IntegerField
 from django.http import FileResponse, HttpResponse, JsonResponse
 from django.shortcuts import render, redirect
@@ -58,9 +58,14 @@ from apps.dashboard.services.cache_config import (
 from apps.dashboard.services.qc_automation import (
     analyze_qc_dataset,
     category_email_body,
+    category_email_html,
     export_tables as qc_export_tables,
     parse_qc_uploads,
     qc_email_body,
+    qc_email_html,
+    qc_email_attachments,
+    qc_report_filename,
+    qc_section_csv_content,
     tables_to_excel_bytes,
     DEFAULT_REVENUE_CAP,
 )
@@ -2562,6 +2567,7 @@ def qc_automation_view(request):
                         raise ValueError("Enter QC email recipients before sending.")
                     subject = f"QC Automation Alerts - {result['selected_date']}"
                     body = qc_email_body(result)
+                    html_body = qc_email_html(result)
                 else:
                     recipients = _parse_recipients(
                         request.POST.get("category_recipients")
@@ -2574,26 +2580,17 @@ def qc_automation_view(request):
                         )
                     subject = f"Category Revenue Alert - {result['selected_date']}"
                     body = category_email_body(result)
+                    html_body = category_email_html(result)
 
-                message = EmailMessage(
+                message = EmailMultiAlternatives(
                     subject=subject,
                     body=body,
                     from_email=getattr(settings, "DEFAULT_FROM_EMAIL", None),
                     to=recipients,
                 )
-                csv_buffer = StringIO()
-                writer = csv.writer(csv_buffer)
-                writer.writerow(["Section", "Metric", "Value"])
-                writer.writerow(["Summary", "Revenue", result["summary"]["total_revenue"]])
-                writer.writerow(["Summary", "QC Alerts", len(result.get("qc_alerts", []))])
-                writer.writerow(
-                    ["Summary", "Bulk / High Value", len(result.get("bulk_orders", []))]
-                )
-                message.attach(
-                    f"qc_automation_{result['selected_date']}.csv",
-                    csv_buffer.getvalue(),
-                    "text/csv",
-                )
+                message.attach_alternative(html_body, "text/html")
+                for filename, content, mimetype in qc_email_attachments(result):
+                    message.attach(filename, content, mimetype)
                 message.send(fail_silently=False)
                 email_status = f"Email sent to {', '.join(recipients)}."
         except Exception as exc:
@@ -2626,30 +2623,7 @@ def qc_automation_download(request, file_format):
     if section and not tables:
         return HttpResponse("Unsupported QC download section.", status=400)
     selected_date = result.get("selected_date") or "selected-date"
-    section_slug = section or "all"
-    section_headers = {
-        "bulk": [
-            "Order ID",
-            "Order Date (IST)",
-            "Order Value (₹)",
-            "Order Qty",
-            "SKU",
-            "ASIN",
-            "Flag",
-        ],
-        "qc": ["ASIN", "SKU", "Product Name", "Qty Ordered", "Order Value (₹)"],
-        "category": [
-            "Portfolio",
-            "Category",
-            "Subcategory",
-            "ASIN",
-            "Orders",
-            "Units",
-            "Revenue",
-        ],
-        "hourly": ["Hour (IST)", "Order ID", "ASIN", "Quantity", "Order Value (₹)"],
-        "status": ["Date", "Shipped", "Pending", "Cancelled", "Total Orders"],
-    }
+    selected_category = result.get("status_category") or "all_categories"
     if file_format == "excel":
         output = tables_to_excel_bytes(tables)
         response = HttpResponse(
@@ -2657,7 +2631,7 @@ def qc_automation_download(request, file_format):
             content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
         response["Content-Disposition"] = (
-            f'attachment; filename="qc_automation_{section_slug}_{selected_date}.xlsx"'
+            f'attachment; filename="{qc_report_filename(section, selected_date, "xlsx", selected_category)}"'
         )
         return response
 
@@ -2666,10 +2640,7 @@ def qc_automation_download(request, file_format):
         writer = csv.writer(buffer)
         if section:
             rows = next(iter(tables.values()), [])
-            headers = section_headers.get(section) or (list(rows[0].keys()) if rows else [])
-            writer.writerow(headers)
-            for row in rows:
-                writer.writerow([row.get(header, "") for header in headers])
+            buffer.write(qc_section_csv_content(section, rows))
         else:
             writer.writerow(
                 [
@@ -2695,7 +2666,7 @@ def qc_automation_download(request, file_format):
                     )
         response = HttpResponse(buffer.getvalue(), content_type="text/csv")
         response["Content-Disposition"] = (
-            f'attachment; filename="qc_automation_{section_slug}_{selected_date}.csv"'
+            f'attachment; filename="{qc_report_filename(section, selected_date, "csv", selected_category)}"'
         )
         return response
 
