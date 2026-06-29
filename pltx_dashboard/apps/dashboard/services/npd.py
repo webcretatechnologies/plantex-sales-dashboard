@@ -220,6 +220,96 @@ def _fk_clicks_by_fsn(user, filters, fsns):
     }
 
 
+def _search_text_matches(row, query):
+    query = str(query or "").strip().lower()
+    if not query:
+        return True
+    searchable = (
+        "amazon_sku",
+        "asin",
+        "flipkart_sku",
+        "fsn",
+        "category",
+        "portfolio",
+        "category_manager",
+        "az_launch_date_display",
+        "fk_launch_date_display",
+    )
+    return any(query in str(row.get(field) or "").lower() for field in searchable)
+
+
+def _sort_value(row, field_name):
+    value = row.get(field_name)
+    if value in (None, ""):
+        return (0, "")
+    if isinstance(value, (datetime.date, datetime.datetime)):
+        if isinstance(value, datetime.datetime):
+            value = value.date()
+        return (1, value.toordinal())
+    if isinstance(value, (int, float)):
+        return (1, float(value))
+    return (1, str(value).lower())
+
+
+def _sort_npd_rows(rows, order_field=None, order_dir="desc"):
+    order_field = str(order_field or "").strip()
+    if order_field:
+        reverse = str(order_dir or "desc").lower() != "asc"
+        rows.sort(key=lambda item: _sort_value(item, order_field), reverse=reverse)
+        return rows
+
+    rows.sort(
+        key=lambda item: (item.get("launch_date") or datetime.date.min, item.get("revenue") or 0),
+        reverse=True,
+    )
+    return rows
+
+
+def _hydrate_npd_rows(user, filters, rows):
+    if not rows:
+        return rows
+
+    asins = {
+        str(row.get("asin") or "").strip()
+        for row in rows
+        if str(row.get("asin") or "").strip()
+    }
+    fsns = {
+        str(row.get("fsn") or "").strip()
+        for row in rows
+        if str(row.get("fsn") or "").strip()
+    }
+
+    az_fba, az_flex, az_fc_count = _latest_amazon_stock(user, asins)
+    fk_fba, fk_flex, fk_fc_count = _latest_flipkart_stock(user, fsns)
+    az_doc, fk_doc = _latest_docs(user, asins, fsns)
+    fk_clicks = _fk_clicks_by_fsn(user, filters, fsns)
+
+    for row in rows:
+        asin = str(row.get("asin") or "").strip()
+        fsn = str(row.get("fsn") or "").strip()
+        clicks = fk_clicks.get(fsn, {})
+
+        row["az_fc_stock"] = az_fba.get(asin, 0)
+        row["az_flex_stock"] = az_flex.get(asin, 0)
+        row["az_fc_stock_count"] = az_fc_count.get(asin, 0)
+        row["fk_fc_stock"] = fk_fba.get(fsn, 0)
+        row["fk_flex_stock"] = fk_flex.get(fsn, 0)
+        row["fk_fc_stock_count"] = fk_fc_count.get(fsn, 0)
+        row["az_doc"] = az_doc.get(asin, 0.0)
+        row["fk_doc"] = fk_doc.get(fsn, 0.0)
+        row["doc"] = max(float(row["az_doc"] or 0), float(row["fk_doc"] or 0))
+        row["az_conversion"] = _pct(row.get("_az_orders"), row.get("az_pageviews"))
+        row["fk_conversion"] = _pct(clicks.get("sales"), clicks.get("product_clicks"))
+        row["conversion"] = _pct(
+            (row["az_conversion"] * row["az_pageviews"] / 100.0)
+            + (row["fk_conversion"] * row["fk_pageviews"] / 100.0),
+            row["pageviews"],
+        )
+
+    return rows
+
+
 def _has_direct_product_filter(filters):
     return any(filters.get(field) for field in ("asin", "fsn", "sku", "parent_asin"))
 
@@ -277,7 +367,19 @@ def _filter_rows_by_launch_bounds(rows, filters):
     return filtered
 
 
-def build_npd_performance(user, filters, qs_f, fk_qs_f, limit=None, include_trend=True):
+def build_npd_performance(
+    user,
+    filters,
+    qs_f,
+    fk_qs_f,
+    limit=None,
+    include_trend=True,
+    offset=0,
+    search_query=None,
+    order_field=None,
+    order_dir="desc",
+    include_total=False,
+):
     az_metrics = {}
     fk_metrics = {}
     from apps.dashboard.services.analytics_services_orm_pipeline import _get_product_daily_summary_querysets
@@ -344,11 +446,6 @@ def build_npd_performance(user, filters, qs_f, fk_qs_f, limit=None, include_tren
     asins = set(az_metrics)
     fsns = set(fk_metrics)
 
-    az_fba, az_flex, az_fc_count = _latest_amazon_stock(user, asins)
-    fk_fba, fk_flex, fk_fc_count = _latest_flipkart_stock(user, fsns)
-    az_doc, fk_doc = _latest_docs(user, asins, fsns)
-    fk_clicks = _fk_clicks_by_fsn(user, filters, fsns)
-
     merged = {}
     for asin, data in az_metrics.items():
         meta = az_meta.get(asin, {})
@@ -365,11 +462,11 @@ def build_npd_performance(user, filters, qs_f, fk_qs_f, limit=None, include_tren
             "fk_pageviews": 0,
             "az_ad_spend": round(float(data.get("total_spend") or 0), 2),
             "fk_ad_spend": 0.0,
-            "az_fc_stock": az_fba.get(asin, 0),
+            "az_fc_stock": 0,
             "fk_fc_stock": 0,
-            "az_flex_stock": az_flex.get(asin, 0),
+            "az_flex_stock": 0,
             "fk_flex_stock": 0,
-            "az_fc_stock_count": az_fc_count.get(asin, 0),
+            "az_fc_stock_count": 0,
             "fk_fc_stock_count": 0,
             "az_revenue": round(float(data.get("revenue") or 0), 2),
             "fk_revenue": 0.0,
@@ -378,10 +475,11 @@ def build_npd_performance(user, filters, qs_f, fk_qs_f, limit=None, include_tren
             "category": meta.get("category") or "",
             "portfolio": meta.get("portfolio") or "",
             "category_manager": meta.get("category_manager") or "",
-            "az_doc": az_doc.get(asin, 0.0),
+            "az_doc": 0.0,
             "fk_doc": 0.0,
-            "az_conversion": _pct(data.get("orders"), data.get("pageviews")),
+            "az_conversion": 0.0,
             "fk_conversion": 0.0,
+            "_az_orders": int(data.get("orders") or 0),
         }
 
     for fsn, data in fk_metrics.items():
@@ -389,7 +487,6 @@ def build_npd_performance(user, filters, qs_f, fk_qs_f, limit=None, include_tren
         mapped_asin = str(meta.get("asin") or "").strip()
         paired_az_meta = az_meta.get(mapped_asin, {}) if mapped_asin else {}
         key = (meta.get("sku") or fsn).strip() or fsn
-        clicks = fk_clicks.get(fsn, {})
         if key not in merged:
             merged[key] = {
                 "amazon_sku": paired_az_meta.get("msku") or "",
@@ -403,11 +500,11 @@ def build_npd_performance(user, filters, qs_f, fk_qs_f, limit=None, include_tren
                 "az_ad_spend": 0.0,
                 "fk_ad_spend": round(float(data.get("total_spend") or 0), 2),
                 "az_fc_stock": 0,
-                "fk_fc_stock": fk_fba.get(fsn, 0),
+                "fk_fc_stock": 0,
                 "az_flex_stock": 0,
-                "fk_flex_stock": fk_flex.get(fsn, 0),
+                "fk_flex_stock": 0,
                 "az_fc_stock_count": 0,
-                "fk_fc_stock_count": fk_fc_count.get(fsn, 0),
+                "fk_fc_stock_count": 0,
                 "az_revenue": 0.0,
                 "fk_revenue": round(float(data.get("revenue") or 0), 2),
                 "az_units": 0,
@@ -416,9 +513,10 @@ def build_npd_performance(user, filters, qs_f, fk_qs_f, limit=None, include_tren
                 "portfolio": meta.get("portfolio") or "",
                 "category_manager": meta.get("category_manager") or "",
                 "az_doc": 0.0,
-                "fk_doc": fk_doc.get(fsn, 0.0),
+                "fk_doc": 0.0,
                 "az_conversion": 0.0,
-                "fk_conversion": _pct(clicks.get("sales"), clicks.get("product_clicks")),
+                "fk_conversion": 0.0,
+                "_az_orders": 0,
             }
         else:
             row = merged[key]
@@ -429,13 +527,13 @@ def build_npd_performance(user, filters, qs_f, fk_qs_f, limit=None, include_tren
                     "fk_launch_date": meta.get("launch_date"),
                     "fk_pageviews": int(data.get("pageviews") or 0),
                     "fk_ad_spend": round(float(data.get("total_spend") or 0), 2),
-                    "fk_fc_stock": fk_fba.get(fsn, 0),
-                    "fk_flex_stock": fk_flex.get(fsn, 0),
-                    "fk_fc_stock_count": fk_fc_count.get(fsn, 0),
+                    "fk_fc_stock": 0,
+                    "fk_flex_stock": 0,
+                    "fk_fc_stock_count": 0,
                     "fk_revenue": round(float(data.get("revenue") or 0), 2),
                     "fk_units": int(data.get("units") or 0),
-                    "fk_doc": fk_doc.get(fsn, 0.0),
-                    "fk_conversion": _pct(clicks.get("sales"), clicks.get("product_clicks")),
+                    "fk_doc": 0.0,
+                    "fk_conversion": 0.0,
                 }
             )
             if not row.get("asin") and mapped_asin:
@@ -457,12 +555,8 @@ def build_npd_performance(user, filters, qs_f, fk_qs_f, limit=None, include_tren
         row["ad_spend"] = round(row["az_ad_spend"] + row["fk_ad_spend"], 2)
         row["revenue"] = round(row["az_revenue"] + row["fk_revenue"], 2)
         row["units"] = row["az_units"] + row["fk_units"]
-        row["doc"] = max(float(row["az_doc"] or 0), float(row["fk_doc"] or 0))
-        row["conversion"] = _pct(
-            (row["az_conversion"] * row["az_pageviews"] / 100.0)
-            + (row["fk_conversion"] * row["fk_pageviews"] / 100.0),
-            row["pageviews"],
-        )
+        row["doc"] = 0.0
+        row["conversion"] = 0.0
         launch_dates = [d for d in (row.get("az_launch_date"), row.get("fk_launch_date")) if d]
         row["launch_date"] = max(launch_dates) if launch_dates else None
         row["az_launch_date_display"] = _date_text(row.get("az_launch_date"))
@@ -471,9 +565,35 @@ def build_npd_performance(user, filters, qs_f, fk_qs_f, limit=None, include_tren
         rows.append(row)
 
     rows = _filter_rows_by_launch_bounds(rows, filters)
-    rows.sort(key=lambda item: (item.get("launch_date") or datetime.date.min, item.get("revenue") or 0), reverse=True)
+    if search_query:
+        rows = [row for row in rows if _search_text_matches(row, search_query)]
+
+    hydrated_sort_fields = {
+        "az_fc_stock",
+        "fk_fc_stock",
+        "az_flex_stock",
+        "fk_flex_stock",
+        "az_fc_stock_count",
+        "fk_fc_stock_count",
+        "az_doc",
+        "fk_doc",
+        "az_conversion",
+        "fk_conversion",
+        "doc",
+        "conversion",
+    }
+    total = len(rows)
+    if order_field in hydrated_sort_fields:
+        rows = _hydrate_npd_rows(user, filters, rows)
+        rows = _sort_npd_rows(rows, order_field, order_dir)
+    else:
+        rows = _sort_npd_rows(rows, order_field, order_dir)
+
     if limit:
-        rows = rows[:limit]
+        rows = rows[int(offset or 0) : int(offset or 0) + int(limit)]
+
+    if order_field not in hydrated_sort_fields:
+        rows = _hydrate_npd_rows(user, filters, rows)
 
     trend_asins = {str(row.get("asin") or "").strip() for row in rows if str(row.get("asin") or "").strip()}
     trend_fsns = {str(row.get("fsn") or "").strip() for row in rows if str(row.get("fsn") or "").strip()}
@@ -492,7 +612,10 @@ def build_npd_performance(user, filters, qs_f, fk_qs_f, limit=None, include_tren
         if include_trend
         else {"labels": [], "pageviews": [], "units": [], "conversion": []}
     )
-    return {"rows": rows, "trend": trend}
+    payload = {"rows": rows, "trend": trend}
+    if include_total:
+        payload["total"] = total
+    return payload
 
 
 def build_npd_trend(user, filters, qs_f, fk_qs_f, asins, fsns, summary_az_qs=None, summary_fk_qs=None):

@@ -3,7 +3,7 @@ DEFAULT_DASHBOARD_VIEW_TYPES = (
 )
 
 # Increment this version whenever you want to invalidate all dashboard API caches.
-DASHBOARD_PAYLOAD_CACHE_VERSION = "v8"
+DASHBOARD_PAYLOAD_CACHE_VERSION = "v10"
 DASHBOARD_SCHEMA_VERSION = "v5"
 
 # In-memory payload cache TTL tuning

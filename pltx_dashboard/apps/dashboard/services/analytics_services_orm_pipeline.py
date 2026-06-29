@@ -85,6 +85,57 @@ def _inventory_mapping_filters_active(filters):
     return any(filters.get(field) for field in mapping_fields)
 
 
+def _has_active_inventory_dashboard_filter(filters, platform_filter=None):
+    if str(platform_filter or "").strip() in {"Amazon", "Flipkart"}:
+        return True
+
+    filter_fields = {
+        "date_range",
+        "start_date",
+        "end_date",
+        "category",
+        "portfolio",
+        "subcategory",
+        "inventory_health",
+        "asin",
+        "fsn",
+        "sku",
+        "parent_asin",
+        "category_manager",
+        "series_name",
+        "material",
+        "size",
+        "brand_name",
+        "ratings",
+        "finish",
+        "launch_date_range",
+        "launch_start_date",
+        "launch_end_date",
+    }
+    for field in filter_fields:
+        value = filters.get(field)
+        if isinstance(value, (list, tuple, set)):
+            if any(str(item).strip() for item in value):
+                return True
+        elif str(value or "").strip():
+            return True
+    return False
+
+
+def _apply_latest_inventory_date_when_unfiltered(inv_sum_qs, filters, platform_filter=None):
+    if _has_active_inventory_dashboard_filter(filters or {}, platform_filter):
+        return inv_sum_qs
+
+    latest_date = (
+        inv_sum_qs.order_by("-date")
+        .values_list("date", flat=True)
+        .first()
+    )
+    if latest_date:
+        return inv_sum_qs.filter(date=latest_date)
+    return inv_sum_qs
+
+
 def _inventory_health_status_q(status, platform_filter):
     if status == "In Stock":
         az_q = Q(status="In Stock")
@@ -111,6 +162,11 @@ def _inventory_health_status_q(status, platform_filter):
 def apply_inventory_summary_filters(inv_sum_qs, user, filters, platform_filter=None, *, apply_date_filter=True):
     if apply_date_filter:
         inv_sum_qs = apply_global_filters_orm(inv_sum_qs, filters)
+        inv_sum_qs = _apply_latest_inventory_date_when_unfiltered(
+            inv_sum_qs,
+            filters,
+            platform_filter,
+        )
 
     if platform_filter == "Amazon":
         inv_sum_qs = inv_sum_qs.exclude(Q(asin="") | Q(asin__isnull=True))
@@ -715,7 +771,7 @@ def _build_kpi_cache_key(user_id, cache_identity):
         return None
 
     data_version = int(cache_identity.get("data_version") or 0)
-    return f"dashboard_kpi_payload_v2_{user_id}_{data_version}_{filter_hash}"
+    return f"dashboard_kpi_payload_v3_{user_id}_{data_version}_{filter_hash}"
 
 
 def _batch_period_aggregates(base_qs, periods, rev_field="revenue", spend_field="total_spend"):
@@ -766,18 +822,12 @@ def _compute_sku_activity_combined_from_summary(qs, sku_field):
     ):
         active += 1
         sku = str(row.get(sku_field) or "").strip()
-        has_units = (row.get("total_units") or 0) > 0
-        has_activity = (
-            (row.get("total_pv") or 0) > 0
-            or (row.get("total_rev") or 0) > 0
-            or (row.get("total_orders") or 0) > 0
-        )
-        if has_units:
+        total_rev = _to_float(row.get("total_rev"))
+        if total_rev > 0:
             selling += 1
-        elif has_activity:
+        elif total_rev == 0:
             zero_selling_count += 1
             zero_sales_pv += int(row.get("total_pv") or 0)
-        else:
             if sku:
                 all_zero_skus.add(sku)
         if (row.get("total_ad_spend") or 0) > 0 and sku:
