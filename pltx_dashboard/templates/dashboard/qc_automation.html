@@ -243,6 +243,13 @@
   font-size: 12px;
   padding: 7px 14px;
 }
+.qc-export-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
 .qc-date-row {
   padding: 18px 24px;
   display: flex;
@@ -607,6 +614,33 @@
   border-radius: 10px;
   padding: 16px;
 }
+.qc-email-action {
+  margin-top: 12px;
+}
+.qc-email-btn {
+  width: 100%;
+  min-height: 42px;
+  justify-content: center;
+  border-radius: 8px;
+  padding: 10px 16px;
+  box-shadow: 0 10px 20px rgba(15, 175, 191, 0.16);
+  transition: background .18s ease, box-shadow .18s ease, transform .18s ease;
+  white-space: nowrap;
+}
+.qc-email-btn:hover {
+  background: #0d9fad;
+  box-shadow: 0 12px 24px rgba(15, 175, 191, 0.22);
+  transform: translateY(-1px);
+}
+.qc-email-btn:focus-visible {
+  outline: 3px solid rgba(15, 175, 191, 0.22);
+  outline-offset: 2px;
+}
+.qc-email-btn-label {
+  display: block;
+  width: 100%;
+  text-align: center;
+}
 .qc-empty {
   text-align: center;
   padding: 42px 20px;
@@ -644,14 +678,6 @@
           <span>Upload files to begin</span>
           {% endif %}
         </div>
-        {% if result %}
-        <a class="qc-export-link" href="{% url 'qc-automation-download' 'csv' %}?selected_date={{ result.selected_date }}&status_category={{ result.status_category }}">
-          <span class="material-icons-round" style="font-size:15px;">download</span> CSV
-        </a>
-        <a class="qc-export-link" href="{% url 'qc-automation-download' 'excel' %}?selected_date={{ result.selected_date }}&status_category={{ result.status_category }}">
-          <span class="material-icons-round" style="font-size:15px;">table_view</span> Excel
-        </a>
-        {% endif %}
       </div>
     </div>
 
@@ -827,7 +853,10 @@
           <div class="qc-section-label">03 - Bulk &amp; High Value</div>
           <div class="qc-section-title">High Value Orders <span style="font-size:11px;color:var(--muted);font-weight:400;">qty &gt; 5 or value &gt; Rs. 10,000</span></div>
         </div>
-        <a class="qc-export-btn" href="{% url 'qc-automation-download' 'csv' %}?section=bulk&selected_date={{ result.selected_date }}&status_category={{ result.status_category }}">Export CSV</a>
+        <div class="qc-export-actions">
+          <a class="qc-export-btn" href="{% url 'qc-automation-download' 'csv' %}?section=bulk&selected_date={{ result.selected_date }}&status_category={{ result.status_category }}">CSV</a>
+          <a class="qc-export-btn" href="{% url 'qc-automation-download' 'excel' %}?section=bulk&selected_date={{ result.selected_date }}&status_category={{ result.status_category }}">Excel</a>
+        </div>
       </div>
       <div class="qc-note-bar gold"><span class="material-icons-round">lightbulb</span><span>{{ result.bulk_orders|length }} order lines exceed Rs. 10,000 or 5 units - sorted largest to smallest.</span></div>
       <div class="qc-table-wrap">
@@ -857,7 +886,10 @@
           <div class="qc-section-label">04 - QC Alert</div>
           <div class="qc-section-title">Orders Needing QC Check</div>
         </div>
-        <a class="qc-export-btn" href="{% url 'qc-automation-download' 'csv' %}?section=qc&selected_date={{ result.selected_date }}&status_category={{ result.status_category }}">Export CSV</a>
+        <div class="qc-export-actions">
+          <a class="qc-export-btn" href="{% url 'qc-automation-download' 'csv' %}?section=qc&selected_date={{ result.selected_date }}&status_category={{ result.status_category }}">CSV</a>
+          <a class="qc-export-btn" href="{% url 'qc-automation-download' 'excel' %}?section=qc&selected_date={{ result.selected_date }}&status_category={{ result.status_category }}">Excel</a>
+        </div>
       </div>
       <div class="qc-note-bar red"><span class="material-icons-round">warning</span><span>{{ result.qc_message }}</span></div>
       <div class="qc-scroller">
@@ -883,7 +915,10 @@
           <div class="qc-section-label">05 - Category Breakdown</div>
           <div class="qc-section-title">Orders by Category</div>
         </div>
-        <a class="qc-export-btn" href="{% url 'qc-automation-download' 'csv' %}?section=category&selected_date={{ result.selected_date }}&status_category={{ result.status_category }}">Export CSV</a>
+        <div class="qc-export-actions">
+          <a class="qc-export-btn" href="{% url 'qc-automation-download' 'csv' %}?section=category&selected_date={{ result.selected_date }}&status_category={{ result.status_category }}">CSV</a>
+          <a class="qc-export-btn" href="{% url 'qc-automation-download' 'excel' %}?section=category&selected_date={{ result.selected_date }}&status_category={{ result.status_category }}">Excel</a>
+        </div>
       </div>
       <div class="qc-note-bar gold"><span class="material-icons-round">folder</span><span>{{ result.category_rows|length }} categories · showing top 10 · export for full list.</span></div>
       <div class="qc-table-wrap">
@@ -912,7 +947,10 @@
           <div class="qc-section-label">06 - Hourly View</div>
           <div class="qc-section-title">Orders by Hour (IST)</div>
         </div>
-        <a class="qc-export-btn" href="{% url 'qc-automation-download' 'csv' %}?section=hourly&selected_date={{ result.selected_date }}&status_category={{ result.status_category }}">Export CSV</a>
+        <div class="qc-export-actions">
+          <a class="qc-export-btn" href="{% url 'qc-automation-download' 'csv' %}?section=hourly&selected_date={{ result.selected_date }}&status_category={{ result.status_category }}">CSV</a>
+          <a class="qc-export-btn" href="{% url 'qc-automation-download' 'excel' %}?section=hourly&selected_date={{ result.selected_date }}&status_category={{ result.status_category }}">Excel</a>
+        </div>
       </div>
       <div class="qc-note-bar gold"><span class="material-icons-round">schedule</span><span>{{ result.hourly_rows|length }} active hours on this date.</span></div>
       <div class="qc-table-wrap">
@@ -938,7 +976,10 @@
           <div class="qc-section-label">07 - Status Overview</div>
           <div class="qc-section-title">Daily Order Status <span style="font-size:11px;color:var(--muted);font-weight:400;">all dates in file</span></div>
         </div>
-        <a class="qc-export-btn" href="{% url 'qc-automation-download' 'csv' %}?section=status&selected_date={{ result.selected_date }}&status_category={{ result.status_category }}">Export CSV</a>
+        <div class="qc-export-actions">
+          <a class="qc-export-btn" href="{% url 'qc-automation-download' 'csv' %}?section=status&selected_date={{ result.selected_date }}&status_category={{ result.status_category }}">CSV</a>
+          <a class="qc-export-btn" href="{% url 'qc-automation-download' 'excel' %}?section=status&selected_date={{ result.selected_date }}&status_category={{ result.status_category }}">Excel</a>
+        </div>
       </div>
       <form method="post" class="qc-filter-row">
         {% csrf_token %}
@@ -988,8 +1029,9 @@
           <input type="hidden" name="status_category" value="{{ result.status_category }}">
           <span class="qc-field-label">QC Team + Himanshu bhai Warehouse</span>
           <input class="qc-input" type="text" name="qc_recipients" value="{{ qc_recipients }}" placeholder="qc@example.com, himanshu@example.com">
-          <div style="height:10px;"></div>
-          <button class="qc-load-btn" type="submit"><span class="material-icons-round" style="font-size:17px;">outgoing_mail</span>Send QC Email</button>
+          <div class="qc-email-action">
+            <button class="qc-load-btn qc-email-btn" type="submit"><span class="qc-email-btn-label">Send QC Email</span></button>
+          </div>
           <div class="qc-upload-hint" style="margin-top:8px;">Backend allows this after 12 Noon only.</div>
         </form>
         <form method="post" class="qc-email-card">
@@ -999,8 +1041,9 @@
           <input type="hidden" name="status_category" value="{{ result.status_category }}">
           <span class="qc-field-label">Category Team Revenue Alert</span>
           <input class="qc-input" type="text" name="category_recipients" value="{{ category_recipients }}" placeholder="category@example.com">
-          <div style="height:10px;"></div>
-          <button class="qc-load-btn" type="submit"><span class="material-icons-round" style="font-size:17px;">campaign</span>Send Category Email</button>
+          <div class="qc-email-action">
+            <button class="qc-load-btn qc-email-btn" type="submit"><span class="qc-email-btn-label">Send Category Email</span></button>
+          </div>
           <div class="qc-upload-hint" style="margin-top:8px;">Progress: {{ result.threshold.revenue_pct }}% of capped projection. Email sends after 50%.</div>
         </form>
       </div>

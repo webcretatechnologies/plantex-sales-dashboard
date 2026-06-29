@@ -1,5 +1,9 @@
 import datetime
+import csv
+import re
+from html import escape
 from io import BytesIO
+from io import StringIO
 
 import pandas as pd
 
@@ -8,6 +12,40 @@ IST_OFFSET = pd.Timedelta(minutes=330)
 BULK_QTY_THRESHOLD = 5
 HIGH_VALUE_THRESHOLD = 10000
 DEFAULT_REVENUE_CAP = 3500000
+
+QC_SECTION_HEADERS = {
+    "bulk": [
+        "Order ID",
+        "Order Date (IST)",
+        "Order Value (₹)",
+        "Order Qty",
+        "SKU",
+        "ASIN",
+        "Flag",
+    ],
+    "qc": ["ASIN", "SKU", "Product Name", "Qty Ordered", "Order Value (₹)"],
+    "category": [
+        "Portfolio",
+        "Category",
+        "Subcategory",
+        "ASIN",
+        "Orders",
+        "Units",
+        "Revenue",
+    ],
+    "hourly": ["Hour (IST)", "Order ID", "ASIN", "Quantity", "Order Value (₹)"],
+    "status": ["Date", "Shipped", "Pending", "Cancelled", "Total Orders"],
+}
+
+QC_SECTION_FILENAME_PREFIXES = {
+    "bulk": "high_value_orders",
+    "qc": "orders_need_qc_check",
+    "category": "orders_by_category",
+    "hourly": "orders_by_hr",
+    "status": "daily_order_status",
+}
+
+QC_EMAIL_ATTACHMENT_SECTIONS = ("bulk", "qc", "category", "hourly", "status")
 
 
 def _column_key(value):
@@ -113,6 +151,330 @@ def _format_money(value):
     if value >= 1000:
         return f"{value / 1000:.1f}K"
     return str(int(round(value)))
+
+
+def _format_full_money(value):
+    return f"Rs. {float(value or 0):,.0f}"
+
+
+def _date_suffix(value):
+    text = str(value or "").strip()
+    try:
+        return datetime.date.fromisoformat(text).strftime("%d_%m_%Y")
+    except ValueError:
+        return _slug(text or "selected_date")
+
+
+def _slug(value):
+    text = str(value or "").strip().lower()
+    text = re.sub(r"[^a-z0-9]+", "_", text)
+    return text.strip("_") or "all_categories"
+
+
+def qc_report_filename(section, selected_date, extension, selected_category=None):
+    section = str(section or "").strip().lower()
+    prefix = QC_SECTION_FILENAME_PREFIXES.get(section, "qc_automation")
+    suffix = _date_suffix(selected_date)
+    ext = str(extension or "csv").strip().lower().lstrip(".")
+    if ext == "excel":
+        ext = "xlsx"
+    if section == "status":
+        category_value = "all_categories" if selected_category in {None, "", "__all__"} else selected_category
+        category = _slug(category_value)
+        return f"{prefix}_{category}_{suffix}.{ext}"
+    return f"{prefix}_{suffix}.{ext}"
+
+
+def qc_section_csv_content(section, rows):
+    buffer = StringIO()
+    writer = csv.writer(buffer)
+    headers = QC_SECTION_HEADERS.get(section) or (list(rows[0].keys()) if rows else [])
+    writer.writerow(headers)
+    for row in rows:
+        writer.writerow([row.get(header, "") for header in headers])
+    return buffer.getvalue()
+
+
+def qc_email_attachments(result):
+    selected_date = result.get("selected_date") or "selected-date"
+    selected_category = result.get("status_category") or "all_categories"
+    attachments = []
+    for section in QC_EMAIL_ATTACHMENT_SECTIONS:
+        tables = export_tables(result, section=section)
+        rows = next(iter(tables.values()), [])
+        filename = qc_report_filename(section, selected_date, "csv", selected_category)
+        attachments.append((filename, qc_section_csv_content(section, rows), "text/csv"))
+    return attachments
+
+
+def _html_card(label, value, color="#0fafbf"):
+    return f"""
+      <td class="metric-card-cell" style="width:25%;padding:8px;vertical-align:top;">
+        <div class="metric-card" style="border:1px solid #e2e8f0;border-radius:10px;padding:14px;background:#ffffff;">
+          <div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#64748b;margin-bottom:6px;">{escape(label)}</div>
+          <div class="metric-value" style="font-size:22px;font-weight:800;color:{color};line-height:1.2;">{escape(str(value))}</div>
+        </div>
+      </td>
+    """
+
+
+def _html_kpi_grid(cards):
+    first_row = "".join(_html_card(*card) for card in cards[:4])
+    second_row = "".join(_html_card(*card) for card in cards[4:8])
+    return f"""
+      <table role="presentation" cellspacing="0" cellpadding="0" style="width:100%;margin-bottom:14px;">
+        <tr class="metric-row">{first_row}</tr>
+        <tr class="metric-row">{second_row}</tr>
+      </table>
+    """
+
+
+def _html_table(headers, rows):
+    header_html = "".join(
+        f'<th style="text-align:left;padding:10px;border-bottom:1px solid #e2e8f0;font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.06em;">{escape(str(header))}</th>'
+        for header in headers
+    )
+    row_html = ""
+    for row in rows:
+        row_html += "<tr>"
+        for value in row:
+            cell_value = "" if value is None else value
+            row_html += f'<td style="padding:10px;border-bottom:1px solid #f1f5f9;font-size:13px;color:#0f172a;">{escape(str(cell_value))}</td>'
+        row_html += "</tr>"
+    if not rows:
+        row_html = f'<tr><td colspan="{len(headers)}" style="padding:18px;color:#64748b;text-align:center;">No data available.</td></tr>'
+    return f"""
+      <div class="table-scroll" style="width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;">
+        <table role="presentation" cellspacing="0" cellpadding="0" style="width:100%;min-width:560px;border-collapse:collapse;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;background:#ffffff;">
+          <thead><tr>{header_html}</tr></thead>
+          <tbody>{row_html}</tbody>
+        </table>
+      </div>
+    """
+
+
+def _image_cell(image_url, fallback_text):
+    image_url = str(image_url or "").strip()
+    if image_url:
+        return f"""
+          <td style="width:58px;padding:10px;border-bottom:1px solid #f1f5f9;vertical-align:top;">
+            <img src="{escape(image_url)}" alt="{escape(fallback_text)}" width="46" height="46" style="display:block;width:46px;height:46px;object-fit:cover;border-radius:8px;border:1px solid #e2e8f0;">
+          </td>
+        """
+    return """
+      <td style="width:58px;padding:10px;border-bottom:1px solid #f1f5f9;vertical-align:top;">
+        <div style="width:46px;height:46px;border-radius:8px;border:1px solid #e2e8f0;background:#f8fafc;color:#94a3b8;text-align:center;line-height:46px;font-size:11px;font-weight:800;">SKU</div>
+      </td>
+    """
+
+
+def _html_sku_cards(title, rows, metric_label, metric_getter):
+    body = ""
+    for row in rows[:5]:
+        sku = str(row.get("sku") or "-")
+        asin = str(row.get("asin") or "-")
+        metric_value = metric_getter(row)
+        body += f"""
+          <tr>
+            {_image_cell(row.get("image"), sku)}
+            <td style="padding:10px;border-bottom:1px solid #f1f5f9;vertical-align:top;">
+              <div style="font-size:13px;font-weight:800;color:#0f172a;line-height:1.35;">{escape(sku)}</div>
+              <div style="font-size:11px;color:#64748b;margin-top:3px;">ASIN: {escape(asin)}</div>
+            </td>
+            <td style="width:120px;padding:10px;border-bottom:1px solid #f1f5f9;text-align:right;vertical-align:top;">
+              <div style="font-size:13px;font-weight:800;color:#0fafbf;">{escape(str(metric_value))}</div>
+              <div style="font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-top:3px;">{escape(metric_label)}</div>
+            </td>
+          </tr>
+        """
+    if not body:
+        body = '<tr><td colspan="3" style="padding:18px;color:#64748b;text-align:center;">No data available.</td></tr>'
+    return f"""
+      <h3 style="font-size:16px;margin:18px 0 10px;color:#0f172a;">{escape(title)}</h3>
+      <div class="table-scroll" style="width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;">
+        <table role="presentation" cellspacing="0" cellpadding="0" style="width:100%;min-width:520px;border-collapse:collapse;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;background:#ffffff;">
+          <tbody>{body}</tbody>
+        </table>
+      </div>
+    """
+
+
+def _qc_kpi_cards(result):
+    summary = result.get("summary", {})
+    return _html_kpi_grid(
+        [
+            ("Pending Orders", summary.get("pending", 0), "#f59e0b"),
+            ("Shipped Orders", summary.get("shipped", 0), "#10b981"),
+            ("Shipping Orders", summary.get("shipping", 0), "#0fafbf"),
+            ("Cancelled Orders", summary.get("cancelled", 0), "#ef4444"),
+            ("Total Revenue", _format_full_money(summary.get("total_revenue", 0)), "#10b981"),
+            ("Unique Orders", summary.get("total_orders", 0), "#6366f1"),
+            ("Active SKUs", summary.get("active_skus", 0), "#0fafbf"),
+            ("QC Alerts", summary.get("qc_alerts", 0), "#ef4444"),
+        ]
+    )
+
+
+def _qc_email_sections_html(result):
+    return f"""
+      {_html_sku_cards(
+          "Top 5 SKUs by Order Value",
+          result.get("top_value", [])[:5],
+          "Order Value",
+          lambda row: _format_full_money(row.get("value", 0)),
+      )}
+      {_html_sku_cards(
+          "Top 5 SKUs by Quantity",
+          result.get("top_qty", [])[:5],
+          "Units",
+          lambda row: row.get("qty", 0),
+      )}
+      <h3 style="font-size:16px;margin:18px 0 10px;color:#0f172a;">Top 5 High Value Orders</h3>
+      {_html_table(
+          ["Order ID", "ASIN", "Qty", "Order Value", "Flag"],
+          [
+              [
+                  row.get("order_id", ""),
+                  row.get("asin", ""),
+                  row.get("qty", 0),
+                  _format_full_money(row.get("value", 0)),
+                  row.get("flag", ""),
+              ]
+              for row in result.get("bulk_orders", [])[:5]
+          ],
+      )}
+      <h3 style="font-size:16px;margin:18px 0 10px;color:#0f172a;">Top 5 Orders Needing QC Check</h3>
+      {_html_table(
+          ["ASIN", "SKU", "Qty", "Order Value"],
+          [
+              [
+                  row.get("asin", ""),
+                  row.get("sku", ""),
+                  row.get("qty", 0),
+                  _format_full_money(row.get("value", 0)),
+              ]
+              for row in result.get("qc_alerts", [])[:5]
+          ],
+      )}
+      <h3 style="font-size:16px;margin:18px 0 10px;color:#0f172a;">Top 5 Orders by Category</h3>
+      {_html_table(
+          ["Category", "Orders", "Units", "Revenue", "Share"],
+          [
+              [
+                  row.get("category", ""),
+                  row.get("orders", 0),
+                  row.get("qty", 0),
+                  _format_full_money(row.get("value", 0)),
+                  f"{row.get('share', 0)}%",
+              ]
+              for row in result.get("category_rows", [])[:5]
+          ],
+      )}
+      <h3 style="font-size:16px;margin:18px 0 10px;color:#0f172a;">Top 5 Orders by Hour (IST)</h3>
+      {_html_table(
+          ["Hour", "Orders", "Order Value", "Share"],
+          [
+              [
+                  row.get("label", ""),
+                  row.get("orders", 0),
+                  _format_full_money(row.get("value", 0)),
+                  f"{row.get('share', 0)}%",
+              ]
+              for row in result.get("hourly_rows", [])[:5]
+          ],
+      )}
+    """
+
+
+def _email_shell(title, subtitle, cards_html, body_html):
+    return f"""
+    <!doctype html>
+    <html>
+    <head>
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+      <style>
+        body {{
+          margin: 0 !important;
+          padding: 0 !important;
+          background: #f8fafc !important;
+        }}
+        table {{
+          border-spacing: 0;
+        }}
+        img {{
+          max-width: 100%;
+        }}
+        @media only screen and (max-width: 640px) {{
+          .email-page {{
+            padding: 12px !important;
+          }}
+          .email-container {{
+            width: 100% !important;
+            max-width: 100% !important;
+            border-radius: 10px !important;
+          }}
+          .email-header {{
+            padding: 18px !important;
+          }}
+          .email-title {{
+            font-size: 19px !important;
+          }}
+          .email-body {{
+            padding: 12px !important;
+          }}
+          .metric-row,
+          .metric-card-cell {{
+            display: block !important;
+            width: 100% !important;
+          }}
+          .metric-card-cell {{
+            padding: 6px 0 !important;
+          }}
+          .metric-card {{
+            padding: 12px !important;
+          }}
+          .metric-value {{
+            font-size: 20px !important;
+          }}
+          .table-scroll {{
+            overflow-x: auto !important;
+          }}
+          .email-footer {{
+            padding-left: 12px !important;
+            padding-right: 12px !important;
+          }}
+        }}
+        @media only screen and (min-width: 641px) and (max-width: 900px) {{
+          .email-container {{
+            max-width: 92% !important;
+          }}
+          .email-page {{
+            padding: 18px !important;
+          }}
+        }}
+      </style>
+    </head>
+    <body>
+    <div class="email-page" style="margin:0;padding:24px;background:#f8fafc;font-family:Arial,Helvetica,sans-serif;color:#0f172a;">
+      <div class="email-container" style="width:100%;max-width:760px;margin:0 auto;background:#ffffff;border:1px solid #e2e8f0;border-radius:14px;overflow:hidden;">
+        <div class="email-header" style="padding:22px 26px;background:#0fafbf;color:#ffffff;">
+          <div class="email-title" style="font-size:22px;font-weight:800;line-height:1.2;">{escape(title)}</div>
+          <div style="font-size:13px;opacity:.9;margin-top:6px;line-height:1.45;">{escape(subtitle)}</div>
+        </div>
+        <div class="email-body" style="padding:18px;">
+          {cards_html}
+          {body_html}
+          <div style="margin-top:18px;padding:14px;border-radius:10px;background:#eff6ff;color:#334155;font-size:13px;">
+            All QC Automation reports are attached as CSV files: high value orders, QC check orders, category breakdown, hourly orders, and daily status.
+          </div>
+        </div>
+      </div>
+      <div class="email-footer" style="max-width:760px;margin:12px auto 0;text-align:center;color:#94a3b8;font-size:12px;">Sent by System</div>
+    </div>
+    </body>
+    </html>
+    """
 
 
 def parse_qc_uploads(order_file, image_file, category_file=None):
@@ -605,6 +967,21 @@ def qc_email_body(result):
     return "\n".join(lines)
 
 
+def qc_email_html(result):
+    body = f"""
+      <div style="font-size:14px;line-height:1.6;color:#334155;margin-bottom:16px;">
+        Please review the orders below for QC priority. These include first-order ASIN checks, high quantity orders, and high value orders for the selected date.
+      </div>
+      {_qc_email_sections_html(result)}
+    """
+    return _email_shell(
+        f"QC Action Required - {result.get('selected_date')}",
+        "Order quality checks for first-order ASINs, bulk quantity, and high-value orders",
+        _qc_kpi_cards(result),
+        body,
+    )
+
+
 def category_email_body(result):
     threshold = result.get("threshold", {})
     lines = [
@@ -622,6 +999,22 @@ def category_email_body(result):
             f"- {row['category']} | orders {row['orders']} | units {row['qty']} | Rs. {row['value']:,.0f}"
         )
     return "\n".join(lines)
+
+
+def category_email_html(result):
+    threshold = result.get("threshold", {})
+    body = f"""
+      <div style="font-size:14px;line-height:1.6;color:#334155;margin-bottom:16px;">
+        Revenue has crossed the configured alert threshold. Current progress is <strong>{threshold.get('revenue_pct', 0)}%</strong> against a threshold of <strong>{_format_full_money(threshold.get("threshold_value", 0))}</strong>.
+      </div>
+      {_qc_email_sections_html(result)}
+    """
+    return _email_shell(
+        f"Category Revenue Alert - {result.get('selected_date')}",
+        "Revenue threshold crossed for the selected QC Automation date",
+        _qc_kpi_cards(result),
+        body,
+    )
 
 
 def tables_to_excel_bytes(tables):
