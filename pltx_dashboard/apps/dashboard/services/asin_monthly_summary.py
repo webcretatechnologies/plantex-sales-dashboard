@@ -108,9 +108,9 @@ def rebuild_asin_monthly_summary_for_user(user, *, only_months=None):
             'Amazon',
             asin,
             DATE_FORMAT(date, '%%Y-%%m-01'),
-            COALESCE(portfolio, ''),
-            COALESCE(category, ''),
-            COALESCE(subcategory, ''),
+            MAX(COALESCE(portfolio, '')),
+            MAX(COALESCE(category, '')),
+            MAX(COALESCE(subcategory, '')),
             SUM(revenue),
             SUM(orders),
             SUM(units),
@@ -122,10 +122,19 @@ def rebuild_asin_monthly_summary_for_user(user, *, only_months=None):
         FROM `{az_tbl}`
         WHERE user_id = %s{month_filter_sql}
         GROUP BY user_id, asin,
-                 DATE_FORMAT(date, '%%Y-%%m-01'),
-                 COALESCE(portfolio, ''),
-                 COALESCE(category, ''),
-                 COALESCE(subcategory, '')
+                 DATE_FORMAT(date, '%%Y-%%m-01')
+        ON DUPLICATE KEY UPDATE
+            portfolio = VALUES(portfolio),
+            category = VALUES(category),
+            subcategory = VALUES(subcategory),
+            revenue = VALUES(revenue),
+            orders = VALUES(orders),
+            units = VALUES(units),
+            pageviews = VALUES(pageviews),
+            total_spend = VALUES(total_spend),
+            spend_sp = VALUES(spend_sp),
+            spend_sb = VALUES(spend_sb),
+            spend_sd = VALUES(spend_sd)
     """
 
     fk_sql = f"""
@@ -140,9 +149,9 @@ def rebuild_asin_monthly_summary_for_user(user, *, only_months=None):
             'Flipkart',
             fsn,
             DATE_FORMAT(date, '%%Y-%%m-01'),
-            COALESCE(portfolio, ''),
-            COALESCE(category, ''),
-            COALESCE(subcategory, ''),
+            MAX(COALESCE(portfolio, '')),
+            MAX(COALESCE(category, '')),
+            MAX(COALESCE(subcategory, '')),
             SUM(revenue),
             SUM(orders),
             SUM(units),
@@ -154,10 +163,19 @@ def rebuild_asin_monthly_summary_for_user(user, *, only_months=None):
         FROM `{fk_tbl}`
         WHERE user_id = %s{month_filter_sql}
         GROUP BY user_id, fsn,
-                 DATE_FORMAT(date, '%%Y-%%m-01'),
-                 COALESCE(portfolio, ''),
-                 COALESCE(category, ''),
-                 COALESCE(subcategory, '')
+                 DATE_FORMAT(date, '%%Y-%%m-01')
+        ON DUPLICATE KEY UPDATE
+            portfolio = VALUES(portfolio),
+            category = VALUES(category),
+            subcategory = VALUES(subcategory),
+            revenue = VALUES(revenue),
+            orders = VALUES(orders),
+            units = VALUES(units),
+            pageviews = VALUES(pageviews),
+            total_spend = VALUES(total_spend),
+            spend_sp = VALUES(spend_sp),
+            spend_sb = VALUES(spend_sb),
+            spend_sd = VALUES(spend_sd)
     """
 
     params = [user.id] + month_params
@@ -651,4 +669,3 @@ def build_declining_products_from_monthly(
     # Sort by MoM Revenue Impact descending (largest absolute drop in revenue first)
     declining.sort(key=lambda r: _to_float(r.get("impact")), reverse=True)
     return declining if include_full_payload else declining[:5]
-

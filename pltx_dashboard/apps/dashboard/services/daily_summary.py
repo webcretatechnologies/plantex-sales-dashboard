@@ -37,6 +37,15 @@ def rebuild_daily_summary_for_user(user, *, only_dates=None):
             FROM {ProcessedDashboardData._meta.db_table}
             WHERE user_id = %s {date_filter}
             GROUP BY user_id, date, category, portfolio, subcategory
+            ON DUPLICATE KEY UPDATE
+                revenue = VALUES(revenue),
+                orders = VALUES(orders),
+                units = VALUES(units),
+                pageviews = VALUES(pageviews),
+                total_spend = VALUES(total_spend),
+                spend_sp = VALUES(spend_sp),
+                spend_sb = VALUES(spend_sb),
+                spend_sd = VALUES(spend_sd)
         """
 
         fk_sql = f"""
@@ -51,6 +60,15 @@ def rebuild_daily_summary_for_user(user, *, only_dates=None):
             FROM {FlipkartProcessedDashboardData._meta.db_table}
             WHERE user_id = %s {date_filter}
             GROUP BY user_id, date, category, portfolio, subcategory
+            ON DUPLICATE KEY UPDATE
+                revenue = VALUES(revenue),
+                orders = VALUES(orders),
+                units = VALUES(units),
+                pageviews = VALUES(pageviews),
+                total_spend = VALUES(total_spend),
+                spend_sp = VALUES(spend_sp),
+                spend_sb = VALUES(spend_sb),
+                spend_sd = VALUES(spend_sd)
         """
 
         params = [user.id]
