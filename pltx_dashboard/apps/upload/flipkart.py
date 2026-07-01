@@ -37,6 +37,17 @@ def _clean_optional_text(value):
     return text
 
 
+def _clean_text(value):
+    text = str(value or "").strip()
+    if text.lower() in {"nan", "none", "null"}:
+        return ""
+    return text
+
+
+def _prefer_present(existing, new_value):
+    return new_value if new_value else existing
+
+
 def _clean_optional_rating(value):
     """Like _clean_optional_text but keeps numeric rating values (e.g. 4.3).
     Returns None if value is 0, NaN, empty, or a formula string."""
@@ -124,6 +135,7 @@ def process_fk_inventory_file(file_obj, user):
 
     touched_dates = set()
     _date_cache = {}
+    inventory_by_key = {}
 
     for df in iter_file_chunks(file_obj):
         any_chunk = True
@@ -142,8 +154,6 @@ def process_fk_inventory_file(file_obj, user):
         # If the file has an explicit Date column, use it per-row
         has_date_col = "date" in col_lookup
 
-        records = []
-        
         fsn_arr = df[col_lookup.get("fsn", "FSN")].fillna("").astype(str).values if col_lookup.get("fsn", "FSN") in df.columns else [""] * len(df)
         date_arr = df[col_lookup["date"]].values if has_date_col else [None] * len(df)
         sku_arr = df[col_lookup.get("sku", "SKU")].fillna("").astype(str).values if col_lookup.get("sku", "SKU") in df.columns else [""] * len(df)
@@ -174,38 +184,67 @@ def process_fk_inventory_file(file_obj, user):
 
             touched_dates.add(row_date)
 
-            sku = str(sku_val).strip()
-            product_status = str(status_val).strip()
-            product_type = str(type_val).strip()
+            sku = _clean_text(sku_val)
+            product_status = _clean_text(status_val)
+            product_type = _clean_text(type_val)
             qty = clean_number(qty_val)
+            key = (fsn, row_date)
 
-            records.append(
-                FlipkartInventoryStock(
-                    user=user,
-                    date=row_date,
-                    fsn=fsn,
-                    sku=sku if sku.lower() != "nan" else "",
-                    product_status=product_status if product_status.lower() != "nan" else "",
-                    product_type=product_type if product_type.lower() != "nan" else "",
-                    qty=qty,
+            if key not in inventory_by_key:
+                inventory_by_key[key] = {
+                    "fsn": fsn,
+                    "date": row_date,
+                    "sku": sku,
+                    "product_status": product_status,
+                    "product_type": product_type,
+                    "qty": 0,
+                    "uploaded_rows": 0,
+                }
+            else:
+                inventory_by_key[key]["sku"] = _prefer_present(
+                    inventory_by_key[key]["sku"], sku
                 )
-            )
+                inventory_by_key[key]["product_status"] = _prefer_present(
+                    inventory_by_key[key]["product_status"], product_status
+                )
+                inventory_by_key[key]["product_type"] = _prefer_present(
+                    inventory_by_key[key]["product_type"], product_type
+                )
 
-        total_records += len(records)
-        if records:
-            for i in range(0, len(records), DB_BATCH_SIZE):
-                FlipkartInventoryStock.objects.bulk_create(
-                    records[i : i + DB_BATCH_SIZE],
-                    **get_upsert_kwargs(
-                        unique_fields=["user", "fsn", "date"],
-                        update_fields=["sku", "product_status", "product_type", "qty"],
-                    ),
-                )
+            inventory_by_key[key]["qty"] += qty
+            inventory_by_key[key]["uploaded_rows"] += 1
+            total_records += 1
 
     if not any_chunk:
         raise ValueError("FK Inventory file is empty.")
 
-    logger.info("[FlipkartInventoryStock] Processed %s uploaded rows.", total_records)
+    records = [
+        FlipkartInventoryStock(
+            user=user,
+            date=payload["date"],
+            fsn=payload["fsn"],
+            sku=payload["sku"],
+            product_status=payload["product_status"],
+            product_type=payload["product_type"],
+            qty=payload["qty"],
+        )
+        for payload in inventory_by_key.values()
+    ]
+    if records:
+        for i in range(0, len(records), DB_BATCH_SIZE):
+            FlipkartInventoryStock.objects.bulk_create(
+                records[i : i + DB_BATCH_SIZE],
+                **get_upsert_kwargs(
+                    unique_fields=["user", "fsn", "date"],
+                    update_fields=["sku", "product_status", "product_type", "qty"],
+                ),
+            )
+
+    logger.info(
+        "[FlipkartInventoryStock] Processed %s uploaded rows into %s unique FSN/date records.",
+        total_records,
+        len(records),
+    )
     return touched_dates
 
 
@@ -223,6 +262,7 @@ def process_fk_fba_stock_file(file_obj, user):
     touched_dates = set()
     row_number = 1
     _date_cache = {}
+    fba_by_key = {}
 
     for df in iter_file_chunks(file_obj):
         any_chunk = True
@@ -249,8 +289,6 @@ def process_fk_fba_stock_file(file_obj, user):
         brand_col = col_lookup.get("brand")
         price_col = col_lookup.get("flipkart selling price")
 
-        records = []
-        
         fsn_arr = df[fsn_col].fillna("").astype(str).values if fsn_col in df.columns else [""] * len(df)
         date_arr = df[date_col].values if date_col in df.columns else [None] * len(df)
         live_arr = df[live_col].fillna(0).values if live_col in df.columns else [0] * len(df)
@@ -284,47 +322,85 @@ def process_fk_fba_stock_file(file_obj, user):
 
             touched_dates.add(row_date)
             live_on_website_qty = clean_number(live_val)
-            location = str(wh_val).strip() if warehouse_col else ""
-            msku = str(sku_val).strip() if sku_col else ""
-            title = str(title_val).strip() if title_col else ""
-            
-            records.append(
-                Flipkartfba(
-                    user=user,
-                    date=row_date,
-                    fsn=fsn,
-                    warehouse_id=location,
-                    sku=msku,
-                    title=title[:500],
-                    listing_id=str(listing_val).strip() if listing_col else "",
-                    brand=str(brand_val).strip() if brand_col else "",
-                    flipkart_selling_price=clean_currency(price_val) if price_col else 0,
-                    live_on_website=live_on_website_qty,
-                )
-            )
+            location = _clean_text(wh_val) if warehouse_col else ""
+            msku = _clean_text(sku_val) if sku_col else ""
+            title = _clean_text(title_val) if title_col else ""
+            listing_id = _clean_text(listing_val) if listing_col else ""
+            brand = _clean_text(brand_val) if brand_col else ""
+            selling_price = clean_currency(price_val) if price_col else 0
+            key = (row_date, fsn, location)
 
-        total_records += len(records)
-        if records:
-            for i in range(0, len(records), DB_BATCH_SIZE):
-                Flipkartfba.objects.bulk_create(
-                    records[i : i + DB_BATCH_SIZE],
-                    **get_upsert_kwargs(
-                        unique_fields=["user", "date", "fsn", "warehouse_id"],
-                        update_fields=[
-                            "sku",
-                            "title",
-                            "listing_id",
-                            "brand",
-                            "flipkart_selling_price",
-                            "live_on_website",
-                        ],
-                    ),
+            if key not in fba_by_key:
+                fba_by_key[key] = {
+                    "date": row_date,
+                    "fsn": fsn,
+                    "warehouse_id": location,
+                    "sku": msku,
+                    "title": title[:500],
+                    "listing_id": listing_id,
+                    "brand": brand,
+                    "flipkart_selling_price": selling_price,
+                    "live_on_website": 0,
+                    "uploaded_rows": 0,
+                }
+            else:
+                fba_by_key[key]["sku"] = _prefer_present(fba_by_key[key]["sku"], msku)
+                fba_by_key[key]["title"] = _prefer_present(
+                    fba_by_key[key]["title"], title[:500]
                 )
+                fba_by_key[key]["listing_id"] = _prefer_present(
+                    fba_by_key[key]["listing_id"], listing_id
+                )
+                fba_by_key[key]["brand"] = _prefer_present(
+                    fba_by_key[key]["brand"], brand
+                )
+                if selling_price:
+                    fba_by_key[key]["flipkart_selling_price"] = selling_price
+
+            fba_by_key[key]["live_on_website"] += live_on_website_qty
+            fba_by_key[key]["uploaded_rows"] += 1
+            total_records += 1
 
     if not any_chunk:
         raise ValueError("FK FBA Stock file is empty.")
 
-    logger.info("[FK FBA Stock] Processed %s records.", total_records)
+    records = [
+        Flipkartfba(
+            user=user,
+            date=payload["date"],
+            fsn=payload["fsn"],
+            warehouse_id=payload["warehouse_id"],
+            sku=payload["sku"],
+            title=payload["title"],
+            listing_id=payload["listing_id"],
+            brand=payload["brand"],
+            flipkart_selling_price=payload["flipkart_selling_price"],
+            live_on_website=payload["live_on_website"],
+        )
+        for payload in fba_by_key.values()
+    ]
+    if records:
+        for i in range(0, len(records), DB_BATCH_SIZE):
+            Flipkartfba.objects.bulk_create(
+                records[i : i + DB_BATCH_SIZE],
+                **get_upsert_kwargs(
+                    unique_fields=["user", "date", "fsn", "warehouse_id"],
+                    update_fields=[
+                        "sku",
+                        "title",
+                        "listing_id",
+                        "brand",
+                        "flipkart_selling_price",
+                        "live_on_website",
+                    ],
+                ),
+            )
+
+    logger.info(
+        "[FK FBA Stock] Processed %s uploaded rows into %s unique FSN/date/warehouse records.",
+        total_records,
+        len(records),
+    )
     return touched_dates
 
 
@@ -480,6 +556,7 @@ def process_fk_category(file_obj, user):
     total_records = 0
     any_chunk = False
     touched_fsns = set()
+    category_by_fsn = {}
     for df in iter_file_chunks(file_obj):
         any_chunk = True
         col_lookup = {}
@@ -526,8 +603,6 @@ def process_fk_category(file_obj, user):
         if missing:
             raise ValueError(f"FK Category missing columns: {', '.join(missing)}")
 
-        records = []
-
         # Pre-extract arrays
         fsn_arr = df[fsn_col].fillna("").astype(str).values
         asin_arr = df[asin_col].values if asin_col in df.columns else [None] * len(df)
@@ -561,57 +636,89 @@ def process_fk_category(file_obj, user):
             elif status_lower in ("discontinued", "discontinue"):
                 normalized_status = "Discontinued"
 
-            records.append(
-                FlipkartCategoryMap(
-                    user=user,
-                    fsn=fsn,
-                    asin=_clean_optional_text(asin_val) if asin_col else None,
-                    sku=str(sku_val).strip(),
-                    portfolio=str(port_val).strip(),
-                    category=str(cat_val).strip(),
-                    subcategory=str(subcat_val).strip(),
-                    product_status=normalized_status,
-                    launch_date=_clean_optional_date(launch_val) if launch_date_col else None,
-                    category_manager=_clean_optional_text(cm_val) if category_manager_col else None,
-                    series_name=_clean_optional_text(series_val) if series_col else None,
-                    material=_clean_optional_text(mat_val) if material_col else None,
-                    size=_clean_optional_text(size_val) if size_col else None,
-                    brand_name=_clean_optional_text(brand_val) if brand_col else None,
-                    ratings=_clean_optional_rating(rating_val) if ratings_col else None,
-                    finish=_clean_optional_text(finish_val) if finish_col else None,
-                )
-            )
+            payload = {
+                "fsn": fsn,
+                "asin": _clean_optional_text(asin_val) if asin_col else None,
+                "sku": _clean_text(sku_val),
+                "portfolio": _clean_text(port_val),
+                "category": _clean_text(cat_val),
+                "subcategory": _clean_text(subcat_val),
+                "product_status": normalized_status,
+                "launch_date": _clean_optional_date(launch_val) if launch_date_col else None,
+                "category_manager": _clean_optional_text(cm_val) if category_manager_col else None,
+                "series_name": _clean_optional_text(series_val) if series_col else None,
+                "material": _clean_optional_text(mat_val) if material_col else None,
+                "size": _clean_optional_text(size_val) if size_col else None,
+                "brand_name": _clean_optional_text(brand_val) if brand_col else None,
+                "ratings": _clean_optional_rating(rating_val) if ratings_col else None,
+                "finish": _clean_optional_text(finish_val) if finish_col else None,
+            }
 
-        total_records += len(records)
-        if records:
-            for i in range(0, len(records), DB_BATCH_SIZE):
-                FlipkartCategoryMap.objects.bulk_create(
-                    records[i : i + DB_BATCH_SIZE],
-                    **get_upsert_kwargs(
-                        unique_fields=["user", "fsn"],
-                        update_fields=[
-                            "sku",
-                            "portfolio",
-                            "category",
-                            "subcategory",
-                            "product_status",
-                            "asin",
-                            "launch_date",
-                            "category_manager",
-                            "series_name",
-                            "material",
-                            "size",
-                            "brand_name",
-                            "ratings",
-                            "finish",
-                        ],
-                    ),
-                )
+            if fsn not in category_by_fsn:
+                category_by_fsn[fsn] = payload
+            else:
+                existing = category_by_fsn[fsn]
+                for field, value in payload.items():
+                    if field == "fsn":
+                        continue
+                    if value not in (None, ""):
+                        existing[field] = value
+            total_records += 1
 
     if not any_chunk:
         raise ValueError("FK Category file is empty.")
 
-    logger.info("[FK Category] Processed %s records.", total_records)
+    records = [
+        FlipkartCategoryMap(
+            user=user,
+            fsn=payload["fsn"],
+            asin=payload["asin"],
+            sku=payload["sku"],
+            portfolio=payload["portfolio"],
+            category=payload["category"],
+            subcategory=payload["subcategory"],
+            product_status=payload["product_status"],
+            launch_date=payload["launch_date"],
+            category_manager=payload["category_manager"],
+            series_name=payload["series_name"],
+            material=payload["material"],
+            size=payload["size"],
+            brand_name=payload["brand_name"],
+            ratings=payload["ratings"],
+            finish=payload["finish"],
+        )
+        for payload in category_by_fsn.values()
+    ]
+    if records:
+        for i in range(0, len(records), DB_BATCH_SIZE):
+            FlipkartCategoryMap.objects.bulk_create(
+                records[i : i + DB_BATCH_SIZE],
+                **get_upsert_kwargs(
+                    unique_fields=["user", "fsn"],
+                    update_fields=[
+                        "sku",
+                        "portfolio",
+                        "category",
+                        "subcategory",
+                        "product_status",
+                        "asin",
+                        "launch_date",
+                        "category_manager",
+                        "series_name",
+                        "material",
+                        "size",
+                        "brand_name",
+                        "ratings",
+                        "finish",
+                    ],
+                ),
+            )
+
+    logger.info(
+        "[FK Category] Processed %s uploaded rows into %s unique FSN records.",
+        total_records,
+        len(records),
+    )
     return touched_fsns
 
 
@@ -628,11 +735,11 @@ def process_fk_price(file_obj, user):
     total_records = 0
     any_chunk = False
     touched_fsns = set()
+    price_by_fsn = {}
     for df in iter_file_chunks(file_obj):
         any_chunk = True
         require_columns(df, "fk_price")
 
-        records = []
         fsn_arr = df["Flipkart Serial Number"].fillna("").astype(str).values
         deal_arr = df["Deal"].fillna(0).values
 
@@ -641,28 +748,30 @@ def process_fk_price(file_obj, user):
             if not fsn or fsn.lower() == "nan":
                 continue
             touched_fsns.add(fsn)
-            records.append(
-                FlipkartPrice(
-                    user=user,
-                    fsn=fsn,
-                    price=float(clean_currency(deal_val)),
-                )
-            )
-
-        total_records += len(records)
-        if records:
-            for i in range(0, len(records), DB_BATCH_SIZE):
-                FlipkartPrice.objects.bulk_create(
-                    records[i : i + DB_BATCH_SIZE],
-                    **get_upsert_kwargs(
-                        unique_fields=["user", "fsn"], update_fields=["price"]
-                    ),
-                )
+            price_by_fsn[fsn] = float(clean_currency(deal_val))
+            total_records += 1
 
     if not any_chunk:
         raise ValueError("FK Price file is empty.")
 
-    logger.info("[FK Price] Processed %s records.", total_records)
+    records = [
+        FlipkartPrice(user=user, fsn=fsn, price=price)
+        for fsn, price in price_by_fsn.items()
+    ]
+    if records:
+        for i in range(0, len(records), DB_BATCH_SIZE):
+            FlipkartPrice.objects.bulk_create(
+                records[i : i + DB_BATCH_SIZE],
+                **get_upsert_kwargs(
+                    unique_fields=["user", "fsn"], update_fields=["price"]
+                ),
+            )
+
+    logger.info(
+        "[FK Price] Processed %s uploaded rows into %s unique FSN records.",
+        total_records,
+        len(records),
+    )
     return touched_fsns
 
 

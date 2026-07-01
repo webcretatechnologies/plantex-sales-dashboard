@@ -1,4 +1,4 @@
-from django.db import transaction
+from django.db import connection, transaction
 from django.db.models import Sum
 
 from apps.dashboard.models import (
@@ -250,6 +250,44 @@ def rebuild_inventory_summary_for_user(user, *, only_dates=None):
 
         inserts = _build_combined_inventory_rows(user, only_dates=only_dates)
         if inserts:
-            DashboardInventoryHealthSummary.objects.bulk_create(inserts, batch_size=2000)
+            deduped = {}
+            for row in inserts:
+                deduped[(row.user_id, row.date, row.platform, row.sku)] = row
+            upsert_kwargs = {
+                "batch_size": 2000,
+                "update_conflicts": True,
+                "update_fields": [
+                    "asin",
+                    "fsn",
+                    "category",
+                    "portfolio",
+                    "subcategory",
+                    "stock_qty",
+                    "fba_qty",
+                    "flex_qty",
+                    "sale_qty",
+                    "total_sales_window",
+                    "drr",
+                    "doc",
+                    "revenue",
+                    "status",
+                    "status_class",
+                    "reason",
+                    "fk_stock_qty",
+                    "fk_fba_qty",
+                    "fk_flex_qty",
+                    "fk_sale_qty",
+                    "fk_doc",
+                    "fk_revenue",
+                    "fk_status",
+                    "fk_status_class",
+                ],
+            }
+            if connection.vendor != "mysql":
+                upsert_kwargs["unique_fields"] = ["user", "date", "platform", "sku"]
+            DashboardInventoryHealthSummary.objects.bulk_create(
+                list(deduped.values()),
+                **upsert_kwargs,
+            )
 
     return {"rows_written": len(inserts), "dates_scoped": sorted(only_dates)}

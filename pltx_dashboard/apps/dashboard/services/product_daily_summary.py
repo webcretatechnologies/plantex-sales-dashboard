@@ -48,9 +48,9 @@ def rebuild_product_daily_summary_for_user(user, *, only_dates=None):
                 asin,
                 asin,
                 NULL,
-                COALESCE(portfolio, ''),
-                COALESCE(category, ''),
-                COALESCE(subcategory, ''),
+                MAX(COALESCE(portfolio, '')),
+                MAX(COALESCE(category, '')),
+                MAX(COALESCE(subcategory, '')),
                 SUM(revenue),
                 SUM(units),
                 SUM(pageviews),
@@ -64,10 +64,23 @@ def rebuild_product_daily_summary_for_user(user, *, only_dates=None):
             FROM `{az_tbl}`
             WHERE user_id = %s{date_filter}
             GROUP BY
-                user_id, date, asin,
-                COALESCE(portfolio, ''),
-                COALESCE(category, ''),
-                COALESCE(subcategory, '')
+                user_id, date, asin
+            ON DUPLICATE KEY UPDATE
+                asin = VALUES(asin),
+                fsn = VALUES(fsn),
+                portfolio = VALUES(portfolio),
+                category = VALUES(category),
+                subcategory = VALUES(subcategory),
+                revenue = VALUES(revenue),
+                units_sold = VALUES(units_sold),
+                page_views = VALUES(page_views),
+                orders = VALUES(orders),
+                ad_spend = VALUES(ad_spend),
+                spend_sp = VALUES(spend_sp),
+                spend_sb = VALUES(spend_sb),
+                spend_sd = VALUES(spend_sd),
+                product_clicks = VALUES(product_clicks),
+                sales = VALUES(sales)
         """
 
         fk_processed_date_filter = date_filter.replace("date", "p.date")
@@ -87,9 +100,9 @@ def rebuild_product_daily_summary_for_user(user, *, only_dates=None):
                 p.fsn,
                 NULL,
                 p.fsn,
-                COALESCE(p.portfolio, ''),
-                COALESCE(p.category, ''),
-                COALESCE(p.subcategory, ''),
+                MAX(COALESCE(p.portfolio, '')),
+                MAX(COALESCE(p.category, '')),
+                MAX(COALESCE(p.subcategory, '')),
                 SUM(p.revenue),
                 SUM(p.units),
                 SUM(p.pageviews),
@@ -114,10 +127,23 @@ def rebuild_product_daily_summary_for_user(user, *, only_dates=None):
             ) t ON t.user_id = p.user_id AND t.date = p.date AND t.fsn = p.fsn
             WHERE p.user_id = %s{fk_processed_date_filter}
             GROUP BY
-                p.user_id, p.date, p.fsn,
-                COALESCE(p.portfolio, ''),
-                COALESCE(p.category, ''),
-                COALESCE(p.subcategory, '')
+                p.user_id, p.date, p.fsn
+            ON DUPLICATE KEY UPDATE
+                asin = VALUES(asin),
+                fsn = VALUES(fsn),
+                portfolio = VALUES(portfolio),
+                category = VALUES(category),
+                subcategory = VALUES(subcategory),
+                revenue = VALUES(revenue),
+                units_sold = VALUES(units_sold),
+                page_views = VALUES(page_views),
+                orders = VALUES(orders),
+                ad_spend = VALUES(ad_spend),
+                spend_sp = VALUES(spend_sp),
+                spend_sb = VALUES(spend_sb),
+                spend_sd = VALUES(spend_sd),
+                product_clicks = VALUES(product_clicks),
+                sales = VALUES(sales)
         """
 
         az_params = [user.id]

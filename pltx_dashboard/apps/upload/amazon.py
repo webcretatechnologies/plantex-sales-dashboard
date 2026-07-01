@@ -33,6 +33,17 @@ def _clean_optional_text(value):
     return text
 
 
+def _clean_text(value):
+    text = str(value or "").strip()
+    if text.lower() in {"nan", "none", "null"}:
+        return ""
+    return text
+
+
+def _prefer_present(existing, new_value):
+    return new_value if new_value else existing
+
+
 def _clean_optional_date(value):
     if value is None or pd.isna(value):
         return None
@@ -53,62 +64,73 @@ def process_category_file(file_obj, user):
     """
     any_chunk = False
     touched_asins = set()
+    mapping_by_asin = {}
     for df in iter_file_chunks(file_obj):
         any_chunk = True
         require_columns(df, "category")
 
-        new_mappings = []
         for row in df.to_dict("records"):
             asin = str(row.get("ASIN", "")).strip()
             if not asin or asin.lower() == "nan":
                 continue
             touched_asins.add(asin)
 
-            new_mappings.append(
-                CategoryMapping(
-                    user=user,
-                    asin=asin,
-                    portfolio=str(row.get("Portfolio", "")).strip(),
-                    category=str(row.get("Category", "")).strip(),
-                    subcategory=str(row.get("Subcategory", "")).strip(),
-                    msku=str(row.get("Skus", "") or "").strip() or None,
-                    parent_asin=_clean_optional_parent_asin(row.get("Parent ASIN")),
-                    launch_date=_clean_optional_date(
-                        row.get("Launch date", row.get("Launch Date"))
-                    ),
-                    category_manager=_clean_optional_text(row.get("RP")),
-                    series_name=_clean_optional_text(row.get("Series")),
-                    material=_clean_optional_text(row.get("Material")),
-                    size=_clean_optional_text(row.get("Size")),
-                    brand_name=_clean_optional_text(row.get("Brand name")),
-                    ratings=_clean_optional_text(row.get("Ratings")),
-                    finish=_clean_optional_text(row.get("Finish")),
-                )
-            )
+            payload = {
+                "asin": asin,
+                "portfolio": _clean_text(row.get("Portfolio", "")),
+                "category": _clean_text(row.get("Category", "")),
+                "subcategory": _clean_text(row.get("Subcategory", "")),
+                "msku": _clean_text(row.get("Skus", "")) or None,
+                "parent_asin": _clean_optional_parent_asin(row.get("Parent ASIN")),
+                "launch_date": _clean_optional_date(
+                    row.get("Launch date", row.get("Launch Date"))
+                ),
+                "category_manager": _clean_optional_text(row.get("RP")),
+                "series_name": _clean_optional_text(row.get("Series")),
+                "material": _clean_optional_text(row.get("Material")),
+                "size": _clean_optional_text(row.get("Size")),
+                "brand_name": _clean_optional_text(row.get("Brand name")),
+                "ratings": _clean_optional_text(row.get("Ratings")),
+                "finish": _clean_optional_text(row.get("Finish")),
+            }
 
-        if new_mappings:
-            for i in range(0, len(new_mappings), DB_BATCH_SIZE):
-                CategoryMapping.objects.bulk_create(
-                    new_mappings[i : i + DB_BATCH_SIZE],
-                    **get_upsert_kwargs(
-                        unique_fields=["user", "asin"],
-                        update_fields=[
-                            "portfolio",
-                            "category",
-                            "subcategory",
-                            "msku",
-                            "parent_asin",
-                            "launch_date",
-                            "category_manager",
-                            "series_name",
-                            "material",
-                            "size",
-                            "brand_name",
-                            "ratings",
-                            "finish",
-                        ],
-                    ),
-                )
+            if asin not in mapping_by_asin:
+                mapping_by_asin[asin] = payload
+            else:
+                existing = mapping_by_asin[asin]
+                for field, value in payload.items():
+                    if field == "asin":
+                        continue
+                    if value not in (None, ""):
+                        existing[field] = value
+
+    new_mappings = [
+        CategoryMapping(user=user, **payload)
+        for payload in mapping_by_asin.values()
+    ]
+    if new_mappings:
+        for i in range(0, len(new_mappings), DB_BATCH_SIZE):
+            CategoryMapping.objects.bulk_create(
+                new_mappings[i : i + DB_BATCH_SIZE],
+                **get_upsert_kwargs(
+                    unique_fields=["user", "asin"],
+                    update_fields=[
+                        "portfolio",
+                        "category",
+                        "subcategory",
+                        "msku",
+                        "parent_asin",
+                        "launch_date",
+                        "category_manager",
+                        "series_name",
+                        "material",
+                        "size",
+                        "brand_name",
+                        "ratings",
+                        "finish",
+                    ],
+                ),
+            )
 
     if not any_chunk:
         raise ValueError("Category Mapping file is empty.")
@@ -127,28 +149,30 @@ def process_price_file(file_obj, user):
     """
     any_chunk = False
     touched_asins = set()
+    price_by_asin = {}
     for df in iter_file_chunks(file_obj):
         any_chunk = True
         require_columns(df, "price")
 
-        new_prices = []
         for row in df.to_dict("records"):
             asin = str(row.get("ASIN", "")).strip()
             if not asin or asin.lower() == "nan":
                 continue
             touched_asins.add(asin)
-            new_prices.append(
-                PriceData(user=user, asin=asin, price=clean_currency(row.get("Price", 0)))
-            )
+            price_by_asin[asin] = clean_currency(row.get("Price", 0))
 
-        if new_prices:
-            for i in range(0, len(new_prices), DB_BATCH_SIZE):
-                PriceData.objects.bulk_create(
-                    new_prices[i : i + DB_BATCH_SIZE],
-                    **get_upsert_kwargs(
-                        unique_fields=["user", "asin"], update_fields=["price"]
-                    ),
-                )
+    new_prices = [
+        PriceData(user=user, asin=asin, price=price)
+        for asin, price in price_by_asin.items()
+    ]
+    if new_prices:
+        for i in range(0, len(new_prices), DB_BATCH_SIZE):
+            PriceData.objects.bulk_create(
+                new_prices[i : i + DB_BATCH_SIZE],
+                **get_upsert_kwargs(
+                    unique_fields=["user", "asin"], update_fields=["price"]
+                ),
+            )
 
     if not any_chunk:
         raise ValueError("Pricing Data file is empty.")
@@ -166,6 +190,7 @@ def process_spend_file(file_obj, user):
     """
     import tempfile
     import csv
+    import uuid
     from django.db import connection
     from apps.dashboard.models import SpendData
     import os
@@ -175,6 +200,7 @@ def process_spend_file(file_obj, user):
     any_chunk = False
     row_number = 1
     _date_cache = {}
+    spend_by_key = {}
     
     db_table = SpendData._meta.db_table
     
@@ -187,7 +213,6 @@ def process_spend_file(file_obj, user):
             any_chunk = True
             require_columns(df, "spend")
 
-            spend_agg = {}
             for row in df.to_dict("records"):
                 row_number += 1
                 asin = str(row.get("ASIN", "")).strip()
@@ -219,18 +244,18 @@ def process_spend_file(file_obj, user):
                 spend_val = clean_currency(row.get("Spend", 0))
 
                 key = (row_date, asin, ad_account, ad_type)
-                spend_agg[key] = spend_agg.get(key, 0.0) + spend_val
+                spend_by_key[key] = spend_by_key.get(key, 0.0) + spend_val
 
-            for (row_date, asin, ad_account, ad_type), spend_total in spend_agg.items():
-                writer.writerow([
-                    user.id,
-                    row_date.isoformat(),
-                    asin,
-                    ad_account,
-                    ad_type,
-                    spend_total
-                ])
-                total_spends += 1
+        for (row_date, asin, ad_account, ad_type), spend_total in spend_by_key.items():
+            writer.writerow([
+                user.id,
+                row_date.isoformat(),
+                asin,
+                ad_account,
+                ad_type,
+                spend_total
+            ])
+            total_spends += 1
         
         tmp_csv_path = tmp_csv.name
 
@@ -239,28 +264,50 @@ def process_spend_file(file_obj, user):
         raise ValueError("Ads Spends file is empty.")
 
     if total_spends > 0:
+        temp_table = f"tmp_spend_upload_{uuid.uuid4().hex}"
         with connection.cursor() as cursor:
             cursor.execute("SET autocommit=0;")
-            cursor.execute("SET unique_checks=0;")
-            cursor.execute("SET foreign_key_checks=0;")
-            
-            query = f"""
+            cursor.execute(
+                f"""
+                CREATE TEMPORARY TABLE {temp_table} (
+                    user_id BIGINT NOT NULL,
+                    date DATE NOT NULL,
+                    asin VARCHAR(50) NOT NULL,
+                    ad_account VARCHAR(100) NOT NULL,
+                    ad_type VARCHAR(10) NOT NULL,
+                    spend DOUBLE NOT NULL DEFAULT 0
+                ) ENGINE=InnoDB;
+                """
+            )
+            cursor.execute(
+                f"""
             LOAD DATA LOCAL INFILE '{tmp_csv_path}'
-            REPLACE INTO TABLE {db_table}
+                INTO TABLE {temp_table}
             FIELDS TERMINATED BY ',' ENCLOSED BY '"'
             IGNORE 1 LINES
             (user_id, date, asin, ad_account, ad_type, spend);
             """
-            cursor.execute(query)
-            
+            )
+            cursor.execute(
+                f"""
+                INSERT INTO {db_table}
+                    (user_id, date, asin, ad_account, ad_type, spend)
+                SELECT
+                    user_id, date, asin, ad_account, ad_type, spend
+                FROM {temp_table}
+                ON DUPLICATE KEY UPDATE
+                    spend = VALUES(spend);
+                """
+            )
             cursor.execute("COMMIT;")
             cursor.execute("SET autocommit=1;")
-            cursor.execute("SET unique_checks=1;")
-            cursor.execute("SET foreign_key_checks=1;")
 
     os.remove(tmp_csv_path)
 
-    logger.info("[SpendData] Processed and loaded %s records via INFILE.", total_spends)
+    logger.info(
+        "[SpendData] Processed and loaded %s unique ASIN/ad-account/ad-type/date records via INFILE.",
+        total_spends,
+    )
     return touched_dates
 
 
@@ -276,6 +323,7 @@ def process_sales_file(file_obj, date_str, user):
     import tempfile
     import csv
     import os
+    import uuid
     from django.db import connection
     from apps.dashboard.models import SalesData
     
@@ -284,30 +332,48 @@ def process_sales_file(file_obj, date_str, user):
 
     total_sales = 0
     any_chunk = False
+    sales_by_asin = {}
+    row_count = 0
+
+    for df in iter_file_chunks(file_obj):
+        any_chunk = True
+        require_columns(df, "sales")
+
+        for row in df.to_dict("records"):
+            asin = str(row.get("(Child) ASIN", "")).strip()
+            if not asin or asin.lower() == "nan":
+                continue
+
+            item = sales_by_asin.setdefault(
+                asin,
+                {
+                    "pageviews": 0,
+                    "units": 0,
+                    "orders": 0,
+                    "revenue": 0.0,
+                },
+            )
+            item["pageviews"] += int(clean_number(row.get("Page Views - Total", 0)) or 0)
+            item["units"] += int(clean_number(row.get("Units Ordered", 0)) or 0)
+            item["orders"] += int(clean_number(row.get("Total Order Items", 0)) or 0)
+            item["revenue"] += float(clean_currency(row.get("Ordered Product Sales", 0)) or 0.0)
+            row_count += 1
     
     with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.csv') as tmp_csv:
         writer = csv.writer(tmp_csv, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
         writer.writerow(["user_id", "date", "asin", "pageviews", "units", "orders", "revenue"])
 
-        for df in iter_file_chunks(file_obj):
-            any_chunk = True
-            require_columns(df, "sales")
-
-            for row in df.to_dict("records"):
-                asin = str(row.get("(Child) ASIN", "")).strip()
-                if not asin or asin.lower() == "nan":
-                    continue
-
-                writer.writerow([
-                    user.id,
-                    date_obj.isoformat(),
-                    asin,
-                    clean_number(row.get("Page Views - Total", 0)),
-                    clean_number(row.get("Units Ordered", 0)),
-                    clean_number(row.get("Total Order Items", 0)),
-                    float(clean_currency(row.get("Ordered Product Sales", 0)))
-                ])
-                total_sales += 1
+        for asin, data in sales_by_asin.items():
+            writer.writerow([
+                user.id,
+                date_obj.isoformat(),
+                asin,
+                data["pageviews"],
+                data["units"],
+                data["orders"],
+                data["revenue"],
+            ])
+            total_sales += 1
                 
         tmp_csv_path = tmp_csv.name
 
@@ -316,28 +382,56 @@ def process_sales_file(file_obj, date_str, user):
         raise ValueError("Daily Sales file is empty.")
 
     if total_sales > 0:
+        temp_table = f"tmp_sales_upload_{uuid.uuid4().hex}"
         with connection.cursor() as cursor:
             cursor.execute("SET autocommit=0;")
-            cursor.execute("SET unique_checks=0;")
-            cursor.execute("SET foreign_key_checks=0;")
-
-            query = f"""
+            cursor.execute(
+                f"""
+                CREATE TEMPORARY TABLE {temp_table} (
+                    user_id BIGINT NOT NULL,
+                    date DATE NOT NULL,
+                    asin VARCHAR(50) NOT NULL,
+                    pageviews INT NOT NULL DEFAULT 0,
+                    units INT NOT NULL DEFAULT 0,
+                    orders INT NOT NULL DEFAULT 0,
+                    revenue DOUBLE NOT NULL DEFAULT 0
+                ) ENGINE=InnoDB;
+                """
+            )
+            cursor.execute(
+                f"""
             LOAD DATA LOCAL INFILE '{tmp_csv_path}'
-            REPLACE INTO TABLE {db_table}
+                INTO TABLE {temp_table}
             FIELDS TERMINATED BY ',' ENCLOSED BY '"'
             IGNORE 1 LINES
             (user_id, date, asin, pageviews, units, orders, revenue);
             """
-            cursor.execute(query)
-
+            )
+            cursor.execute(
+                f"""
+                INSERT INTO {db_table}
+                    (user_id, date, asin, pageviews, units, orders, revenue)
+                SELECT
+                    user_id, date, asin, pageviews, units, orders, revenue
+                FROM {temp_table}
+                ON DUPLICATE KEY UPDATE
+                    pageviews = VALUES(pageviews),
+                    units = VALUES(units),
+                    orders = VALUES(orders),
+                    revenue = VALUES(revenue);
+                """
+            )
             cursor.execute("COMMIT;")
             cursor.execute("SET autocommit=1;")
-            cursor.execute("SET unique_checks=1;")
-            cursor.execute("SET foreign_key_checks=1;")
 
     os.remove(tmp_csv_path)
 
-    logger.info("[SalesData] date=%s, processed and loaded %s records via INFILE.", date_obj, total_sales)
+    logger.info(
+        "[SalesData] date=%s, processed %s rows into %s unique ASIN records via INFILE.",
+        date_obj,
+        row_count,
+        total_sales,
+    )
     return {date_obj}
 
 
@@ -382,6 +476,23 @@ def process_fba_stock_file(file_obj, user, id_columns=("ASIN",)):
     any_chunk = False
     row_number = 1
     _date_cache = {}
+    stock_by_key = {}
+    numeric_fields = [
+        "starting_warehouse_balance",
+        "in_transit_between_warehouses",
+        "receipts",
+        "customer_shipments",
+        "customer_returns",
+        "vendor_returns",
+        "warehouse_transfer_in_out",
+        "found",
+        "lost",
+        "damaged",
+        "disposed",
+        "other_events",
+        "ending_warehouse_balance",
+        "unknown_events",
+    ]
     for df in iter_file_chunks(file_obj):
         any_chunk = True
         col_lookup = {}
@@ -405,7 +516,6 @@ def process_fba_stock_file(file_obj, user, id_columns=("ASIN",)):
                 f"FBA Stock file missing required columns: {', '.join(missing_cols)}"
             )
 
-        records = []
         for row in df.to_dict("records"):
             row_number += 1
             asin = str(row.get(col_lookup[id_col_key], "")).strip()
@@ -424,81 +534,105 @@ def process_fba_stock_file(file_obj, user, id_columns=("ASIN",)):
                     )
             row_date = _date_cache[raw_date]
             touched_dates.add(row_date)
+            disposition = _clean_text(row.get(col_lookup["disposition"], ""))
+            location = _clean_text(row.get(col_lookup["location"], ""))
+            key = (asin, row_date, disposition, location)
 
-            records.append(
-                FBAStockData(
-                    user=user,
-                    date=row_date,
-                    fnsku=str(row.get(col_lookup["fnsku"], "") or "").strip(),
-                    asin=asin,
-                    msku=str(row.get(col_lookup["msku"], "") or "").strip(),
-                    title=str(row.get(col_lookup["title"], "") or "").strip()[:500],
-                    disposition=str(row.get(col_lookup["disposition"], "") or "").strip(),
-                    starting_warehouse_balance=clean_number(
-                        row.get(col_lookup["starting warehouse balance"], 0)
-                    ),
-                    in_transit_between_warehouses=clean_number(
-                        row.get(col_lookup["in transit between warehouses"], 0)
-                    ),
-                    receipts=clean_number(row.get(col_lookup["receipts"], 0)),
-                    customer_shipments=clean_number(
-                        row.get(col_lookup["customer shipments"], 0)
-                    ),
-                    customer_returns=clean_number(
-                        row.get(col_lookup["customer returns"], 0)
-                    ),
-                    vendor_returns=clean_number(row.get(col_lookup["vendor returns"], 0)),
-                    warehouse_transfer_in_out=clean_number(
-                        row.get(col_lookup["warehouse transfer in/out"], 0)
-                    ),
-                    found=clean_number(row.get(col_lookup["found"], 0)),
-                    lost=clean_number(row.get(col_lookup["lost"], 0)),
-                    damaged=clean_number(row.get(col_lookup["damaged"], 0)),
-                    disposed=clean_number(row.get(col_lookup["disposed"], 0)),
-                    other_events=clean_number(row.get(col_lookup["other events"], 0)),
-                    ending_warehouse_balance=clean_number(
-                        row.get(col_lookup["ending warehouse balance"], 0)
-                    ),
-                    unknown_events=clean_number(
-                        row.get(col_lookup["unknown events"], 0)
-                    ),
-                    location=str(row.get(col_lookup["location"], "") or "").strip(),
+            if key not in stock_by_key:
+                stock_by_key[key] = {
+                    "date": row_date,
+                    "fnsku": _clean_text(row.get(col_lookup["fnsku"], "")),
+                    "asin": asin,
+                    "msku": _clean_text(row.get(col_lookup["msku"], "")),
+                    "title": _clean_text(row.get(col_lookup["title"], ""))[:500],
+                    "disposition": disposition,
+                    "location": location,
+                    **{field: 0 for field in numeric_fields},
+                }
+            else:
+                stock_by_key[key]["fnsku"] = _prefer_present(
+                    stock_by_key[key]["fnsku"],
+                    _clean_text(row.get(col_lookup["fnsku"], "")),
                 )
+                stock_by_key[key]["msku"] = _prefer_present(
+                    stock_by_key[key]["msku"],
+                    _clean_text(row.get(col_lookup["msku"], "")),
+                )
+                stock_by_key[key]["title"] = _prefer_present(
+                    stock_by_key[key]["title"],
+                    _clean_text(row.get(col_lookup["title"], ""))[:500],
+                )
+
+            stock_by_key[key]["starting_warehouse_balance"] += clean_number(
+                row.get(col_lookup["starting warehouse balance"], 0)
             )
-
-        total_records += len(records)
-        if records:
-            for i in range(0, len(records), DB_BATCH_SIZE):
-                FBAStockData.objects.bulk_create(
-                    records[i : i + DB_BATCH_SIZE],
-                    **get_upsert_kwargs(
-                        unique_fields=["user", "asin", "date", "disposition", "location"],
-                        update_fields=[
-                            "fnsku",
-                            "msku",
-                            "title",
-                            "starting_warehouse_balance",
-                            "in_transit_between_warehouses",
-                            "receipts",
-                            "customer_shipments",
-                            "customer_returns",
-                            "vendor_returns",
-                            "warehouse_transfer_in_out",
-                            "found",
-                            "lost",
-                            "damaged",
-                            "disposed",
-                            "other_events",
-                            "ending_warehouse_balance",
-                            "unknown_events",
-                        ],
-                    ),
-                )
+            stock_by_key[key]["in_transit_between_warehouses"] += clean_number(
+                row.get(col_lookup["in transit between warehouses"], 0)
+            )
+            stock_by_key[key]["receipts"] += clean_number(row.get(col_lookup["receipts"], 0))
+            stock_by_key[key]["customer_shipments"] += clean_number(
+                row.get(col_lookup["customer shipments"], 0)
+            )
+            stock_by_key[key]["customer_returns"] += clean_number(
+                row.get(col_lookup["customer returns"], 0)
+            )
+            stock_by_key[key]["vendor_returns"] += clean_number(row.get(col_lookup["vendor returns"], 0))
+            stock_by_key[key]["warehouse_transfer_in_out"] += clean_number(
+                row.get(col_lookup["warehouse transfer in/out"], 0)
+            )
+            stock_by_key[key]["found"] += clean_number(row.get(col_lookup["found"], 0))
+            stock_by_key[key]["lost"] += clean_number(row.get(col_lookup["lost"], 0))
+            stock_by_key[key]["damaged"] += clean_number(row.get(col_lookup["damaged"], 0))
+            stock_by_key[key]["disposed"] += clean_number(row.get(col_lookup["disposed"], 0))
+            stock_by_key[key]["other_events"] += clean_number(row.get(col_lookup["other events"], 0))
+            stock_by_key[key]["ending_warehouse_balance"] += clean_number(
+                row.get(col_lookup["ending warehouse balance"], 0)
+            )
+            stock_by_key[key]["unknown_events"] += clean_number(
+                row.get(col_lookup["unknown events"], 0)
+            )
+            total_records += 1
 
     if not any_chunk:
         raise ValueError("FBA Stock file is empty.")
 
-    logger.info("[FBAStockData] Processed %s records.", total_records)
+    records = [
+        FBAStockData(user=user, **payload)
+        for payload in stock_by_key.values()
+    ]
+    if records:
+        for i in range(0, len(records), DB_BATCH_SIZE):
+            FBAStockData.objects.bulk_create(
+                records[i : i + DB_BATCH_SIZE],
+                **get_upsert_kwargs(
+                    unique_fields=["user", "asin", "date", "disposition", "location"],
+                    update_fields=[
+                        "fnsku",
+                        "msku",
+                        "title",
+                        "starting_warehouse_balance",
+                        "in_transit_between_warehouses",
+                        "receipts",
+                        "customer_shipments",
+                        "customer_returns",
+                        "vendor_returns",
+                        "warehouse_transfer_in_out",
+                        "found",
+                        "lost",
+                        "damaged",
+                        "disposed",
+                        "other_events",
+                        "ending_warehouse_balance",
+                        "unknown_events",
+                    ],
+                ),
+            )
+
+    logger.info(
+        "[FBAStockData] Processed %s uploaded rows into %s unique ASIN/date/disposition/location records.",
+        total_records,
+        len(records),
+    )
     return touched_dates
 
 
@@ -518,6 +652,7 @@ def process_flex_stock_file(file_obj, user, id_columns=("ASIN",)):
     any_chunk = False
     row_number = 1
     _date_cache = {}
+    stock_by_key = {}
     for df in iter_file_chunks(file_obj):
         any_chunk = True
         col_lookup = {}
@@ -541,7 +676,6 @@ def process_flex_stock_file(file_obj, user, id_columns=("ASIN",)):
                 f"Flex Stock file missing required columns: {', '.join(missing_cols)}"
             )
 
-        records = []
         for row in df.to_dict("records"):
             row_number += 1
             asin = str(row.get(col_lookup[id_col_key], "")).strip()
@@ -560,30 +694,39 @@ def process_flex_stock_file(file_obj, user, id_columns=("ASIN",)):
                     )
             row_date = _date_cache[raw_date]
             touched_dates.add(row_date)
+            cluster = _clean_text(row.get(col_lookup["cluster"], ""))
+            key = (asin, row_date, cluster)
 
-            records.append(
-                FlexStockData(
-                    user=user,
-                    date=row_date,
-                    asin=asin,
-                    cluster=str(row.get(col_lookup["cluster"], "") or "").strip(),
-                    qty=clean_number(row.get(col_lookup["qty"], 0)),
-                )
-            )
-
-        total_records += len(records)
-        if records:
-            for i in range(0, len(records), DB_BATCH_SIZE):
-                FlexStockData.objects.bulk_create(
-                    records[i : i + DB_BATCH_SIZE],
-                    **get_upsert_kwargs(
-                        unique_fields=["user", "asin", "date", "cluster"],
-                        update_fields=["qty"],
-                    ),
-                )
+            if key not in stock_by_key:
+                stock_by_key[key] = {
+                    "date": row_date,
+                    "asin": asin,
+                    "cluster": cluster,
+                    "qty": 0,
+                }
+            stock_by_key[key]["qty"] += clean_number(row.get(col_lookup["qty"], 0))
+            total_records += 1
 
     if not any_chunk:
         raise ValueError("Flex Stock file is empty.")
 
-    logger.info("[FlexStockData] Processed %s records.", total_records)
+    records = [
+        FlexStockData(user=user, **payload)
+        for payload in stock_by_key.values()
+    ]
+    if records:
+        for i in range(0, len(records), DB_BATCH_SIZE):
+            FlexStockData.objects.bulk_create(
+                records[i : i + DB_BATCH_SIZE],
+                **get_upsert_kwargs(
+                    unique_fields=["user", "asin", "date", "cluster"],
+                    update_fields=["qty"],
+                ),
+            )
+
+    logger.info(
+        "[FlexStockData] Processed %s uploaded rows into %s unique ASIN/date/cluster records.",
+        total_records,
+        len(records),
+    )
     return touched_dates
