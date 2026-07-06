@@ -3120,6 +3120,118 @@ body {
     border-bottom: none;
 }
 
+.inventory-health-inline-card {
+    grid-column: 1 / -1;
+    margin-bottom: 20px;
+}
+
+.biz-row-3-equal.category-product-health-row,
+.biz-row-4.business-inventory-ops-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.ceo-row-5.ceo-inventory-full-row {
+    grid-template-columns: minmax(0, 1fr);
+}
+
+.ceo-row-5.ceo-inventory-full-row > .ceo-card {
+    grid-column: 1 / -1;
+}
+
+.inventory-health-inline-header {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    justify-content: space-between;
+}
+
+.inventory-health-inline-subtitle {
+    color: var(--muted);
+    font-size: 11px;
+    margin-top: 2px;
+}
+
+.inventory-health-inline-toolbar {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: flex-end;
+}
+
+.inventory-health-inline-select {
+    min-width: 150px;
+}
+
+.inventory-health-inline-custom {
+    align-items: center;
+    color: var(--muted);
+    display: flex;
+    flex-wrap: wrap;
+    font-size: 13px;
+    gap: 8px;
+}
+
+.inventory-health-inline-apply {
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    padding: 6px 12px;
+}
+
+.inventory-health-inline-search {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font-family: 'Inter', sans-serif;
+    font-size: 12px;
+    min-width: 240px;
+    outline: none;
+    padding: 8px 12px;
+}
+
+.inventory-health-inline-search:focus {
+    border-color: var(--accent);
+}
+
+.inventory-health-inline-search::placeholder {
+    color: var(--muted);
+}
+
+.inventory-health-inline-body {
+    overflow-x: auto;
+}
+
+.inventory-health-inline-table tbody td {
+    vertical-align: top;
+}
+
+.inventory-health-inline-table .dataTables_empty {
+    color: var(--muted);
+    padding: 20px !important;
+    text-align: center;
+}
+
+@media(max-width:768px) {
+    .inventory-health-inline-header,
+    .inventory-health-inline-toolbar {
+        align-items: stretch;
+        justify-content: flex-start;
+    }
+
+    .inventory-health-inline-select,
+    .inventory-health-inline-search {
+        min-width: 100%;
+        width: 100%;
+    }
+
+    .inventory-health-inline-custom {
+        width: 100%;
+    }
+}
+
 /* Scrollbar */
 ::-webkit-scrollbar {
     width: 5px;

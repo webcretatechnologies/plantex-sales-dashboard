@@ -432,6 +432,7 @@ class DashboardMaterializedSummary(models.Model):
         related_name="dashboard_materialized_summaries",
     )
     view_type = models.CharField(max_length=20, default="shared", db_index=True)
+    section_scope = models.CharField(max_length=20, default="all", db_index=True)
     data_version = models.BigIntegerField(default=0, db_index=True)
     filter_hash = models.CharField(max_length=64, db_index=True)
     normalized_filters = models.TextField()
@@ -440,11 +441,21 @@ class DashboardMaterializedSummary(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        unique_together = ("user", "view_type", "data_version", "filter_hash")
+        unique_together = (
+            "user",
+            "view_type",
+            "section_scope",
+            "data_version",
+            "filter_hash",
+        )
         indexes = [
             models.Index(
                 fields=["user", "view_type", "data_version"],
                 name="idx_dms_u_v_dv",
+            ),
+            models.Index(
+                fields=["user", "view_type", "section_scope", "data_version"],
+                name="idx_dms_u_v_s_dv",
             ),
             models.Index(fields=["user", "updated_at"], name="idx_dms_u_upd"),
         ]
@@ -497,6 +508,132 @@ class DashboardDailySummary(models.Model):
         ]
 
 
+class DashboardMappingDimensionDailySummary(models.Model):
+    """
+    Day-level aggregates keyed by category-master dimensions.
+    Used when dashboard filters require mapping fields such as RP/category manager,
+    series, material, size, finish, brand, or ratings.
+    """
+
+    user = models.ForeignKey(
+        "accounts.Users",
+        on_delete=models.CASCADE,
+        related_name="dashboard_mapping_dimension_daily_summaries",
+    )
+    date = models.DateField(db_index=True)
+    platform = models.CharField(max_length=20, db_index=True)
+    dimension_hash = models.CharField(max_length=255, db_index=True)
+
+    category = models.CharField(max_length=100, null=True, blank=True, db_index=True)
+    portfolio = models.CharField(max_length=100, null=True, blank=True, db_index=True)
+    subcategory = models.CharField(max_length=100, null=True, blank=True, db_index=True)
+    category_manager = models.CharField(max_length=100, null=True, blank=True, db_index=True)
+    series_name = models.CharField(max_length=100, null=True, blank=True, db_index=True)
+    material = models.CharField(max_length=100, null=True, blank=True, db_index=True)
+    size = models.CharField(max_length=100, null=True, blank=True, db_index=True)
+    brand_name = models.CharField(max_length=100, null=True, blank=True, db_index=True)
+    ratings = models.CharField(max_length=50, null=True, blank=True, db_index=True)
+    finish = models.CharField(max_length=100, null=True, blank=True, db_index=True)
+
+    revenue = models.FloatField(default=0.0)
+    orders = models.IntegerField(default=0)
+    units = models.IntegerField(default=0)
+    pageviews = models.IntegerField(default=0)
+    total_spend = models.FloatField(default=0.0)
+    spend_sp = models.FloatField(default=0.0)
+    spend_sb = models.FloatField(default=0.0)
+    spend_sd = models.FloatField(default=0.0)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["user", "date", "platform"], name="idx_dmds_u_d_p"),
+            models.Index(fields=["user", "platform", "date"], name="idx_dmds_u_p_d"),
+            models.Index(fields=["user", "category_manager", "date"], name="idx_dmds_u_mgr_d"),
+            models.Index(fields=["user", "series_name", "date"], name="idx_dmds_u_series_d"),
+            models.Index(fields=["user", "material", "date"], name="idx_dmds_u_mat_d"),
+            models.Index(fields=["user", "size", "date"], name="idx_dmds_u_size_d"),
+            models.Index(fields=["user", "finish", "date"], name="idx_dmds_u_finish_d"),
+            models.Index(fields=["user", "brand_name", "date"], name="idx_dmds_u_brand_d"),
+            models.Index(fields=["user", "ratings", "date"], name="idx_dmds_u_rating_d"),
+            models.Index(fields=["user", "platform", "category_manager", "date"], name="idx_dmds_u_p_mgr_d"),
+            models.Index(fields=["user", "platform", "material", "date"], name="idx_dmds_u_p_mat_d"),
+        ]
+
+
+class DashboardMappingFilterDailySummary(models.Model):
+    """
+    Tall day-level aggregates for one mapping filter at a time.
+    This keeps common filters such as material=SS or finish=Chrome compact.
+    """
+
+    user = models.ForeignKey(
+        "accounts.Users",
+        on_delete=models.CASCADE,
+        related_name="dashboard_mapping_filter_daily_summaries",
+    )
+    date = models.DateField(db_index=True)
+    platform = models.CharField(max_length=20, db_index=True)
+    filter_name = models.CharField(max_length=40, db_index=True)
+    filter_value = models.CharField(max_length=120, db_index=True)
+
+    category = models.CharField(max_length=100, null=True, blank=True, db_index=True)
+    portfolio = models.CharField(max_length=100, null=True, blank=True, db_index=True)
+    subcategory = models.CharField(max_length=100, null=True, blank=True, db_index=True)
+
+    revenue = models.FloatField(default=0.0)
+    orders = models.IntegerField(default=0)
+    units = models.IntegerField(default=0)
+    pageviews = models.IntegerField(default=0)
+    total_spend = models.FloatField(default=0.0)
+    spend_sp = models.FloatField(default=0.0)
+    spend_sb = models.FloatField(default=0.0)
+    spend_sd = models.FloatField(default=0.0)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["user", "filter_name", "filter_value", "date"], name="idx_dmfs_u_n_v_d"),
+            models.Index(fields=["user", "platform", "filter_name", "filter_value", "date"], name="idx_dmfs_u_p_n_v_d"),
+            models.Index(fields=["user", "filter_name", "date"], name="idx_dmfs_u_n_d"),
+            models.Index(fields=["user", "platform", "date"], name="idx_dmfs_u_p_d"),
+        ]
+
+
+class DashboardMappingFilterMonthlyActivitySummary(models.Model):
+    """
+    Monthly per-listing activity for one mapping filter at a time.
+    Used for exact all-time/full-month distinct listing counts without joining
+    category master rows during dashboard requests.
+    """
+
+    user = models.ForeignKey(
+        "accounts.Users",
+        on_delete=models.CASCADE,
+        related_name="dashboard_mapping_filter_monthly_activity_summaries",
+    )
+    year_month = models.DateField(db_index=True)
+    platform = models.CharField(max_length=20, db_index=True)
+    filter_name = models.CharField(max_length=40, db_index=True)
+    filter_value = models.CharField(max_length=120, db_index=True)
+    sku = models.CharField(max_length=80, db_index=True)
+
+    category = models.CharField(max_length=100, blank=True, default="", db_index=True)
+    portfolio = models.CharField(max_length=100, blank=True, default="", db_index=True)
+    subcategory = models.CharField(max_length=100, blank=True, default="", db_index=True)
+
+    revenue = models.FloatField(default=0.0)
+    units = models.IntegerField(default=0)
+    pageviews = models.IntegerField(default=0)
+    total_spend = models.FloatField(default=0.0)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["user", "filter_name", "filter_value", "year_month"], name="idx_dmfma_u_n_v_m"),
+            models.Index(fields=["user", "platform", "filter_name", "filter_value", "year_month"], name="idx_dmfma_u_p_n_v_m"),
+            models.Index(fields=["user", "filter_name", "filter_value", "sku", "year_month"], name="idx_dmfma_u_n_v_s_m"),
+            models.Index(fields=["user", "platform", "filter_name", "filter_value", "sku", "year_month"], name="idx_dmfma_u_p_nvs_m"),
+        ]
+
+
 class DashboardProductDailySummary(models.Model):
     """
     Pre-aggregated day-level metrics per ASIN/FSN.
@@ -536,6 +673,8 @@ class DashboardProductDailySummary(models.Model):
             models.Index(fields=["user", "platform", "date"], name="idx_dpds_u_p_d"),
             models.Index(fields=["user", "platform", "sku", "date"], name="idx_dpds_u_p_s_d"),
             models.Index(fields=["user", "platform", "date", "sku"], name="idx_dpds_u_p_d_s"),
+            models.Index(fields=["user", "platform", "date", "asin"], name="idx_dpds_u_p_d_asn"),
+            models.Index(fields=["user", "platform", "date", "fsn"], name="idx_dpds_u_p_d_fsn"),
             models.Index(fields=["user", "platform", "fsn"], name="idx_dpds_u_p_fsn"),
             models.Index(fields=["user", "asin", "date"], name="idx_dpds_u_asn_d"),
             models.Index(fields=["user", "fsn", "date"], name="idx_dpds_u_fsn_d"),

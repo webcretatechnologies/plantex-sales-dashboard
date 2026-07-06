@@ -74,55 +74,9 @@
 
 
 <!-- ════════════ ROW 5: Inventory Health | Today's Priorities ════════════ -->
-<div class="ceo-row-5">
+<div class="ceo-row-5 ceo-inventory-full-row">
 
-    <!-- Inventory Health -->
-    <div class="ceo-card" id="card-inventory">
-        <div class="ceo-card-header" style="display: flex; justify-content: space-between; align-items: center;">
-            <span class="ceo-card-title">Inventory Health</span>
-            <button class="ceo-view-all-btn" onclick="openModal('inventoryHealthModal')">View Details</button>
-        </div>
-        <div class="ceo-card-body">
-            <div class="ceo-inv-grid">
-                <div class="ceo-inv-card">
-                    <div class="ceo-inv-icon good">✓</div>
-                    <div class="ceo-inv-label">In Stock</div>
-                    <div class="ceo-inv-value good">{{ payload.inventory.in_stock }} Rows</div>
-                    <div style="font-size: 10px; color: var(--muted); margin-top: 6px; display: flex; justify-content: space-between; padding: 0 4px;">
-                        <span style="display:inline-flex;align-items:center;"><img src="{% static 'logo/amazon_logo.png' %}" alt="Amz" style="width:14px;height:14px;margin-right:4px;"> <strong style="color:var(--text-color);">{{ payload.inventory.amz_in_stock }}</strong></span>
-                        <span style="display:inline-flex;align-items:center;"><img src="{% static 'logo/flipkart_logo.png' %}" alt="FK" style="width:14px;height:14px;margin-right:4px;"> <strong style="color:var(--text-color);">{{ payload.inventory.fk_in_stock }}</strong></span>
-                    </div>
-                </div>
-                <div class="ceo-inv-card">
-                    <div class="ceo-inv-icon warn">!</div>
-                    <div class="ceo-inv-label">Low Stock</div>
-                    <div class="ceo-inv-value warn">{{ payload.inventory.low_stock }} Rows</div>
-                    <div style="font-size: 10px; color: var(--muted); margin-top: 6px; display: flex; justify-content: space-between; padding: 0 4px;">
-                        <span style="display:inline-flex;align-items:center;"><img src="{% static 'logo/amazon_logo.png' %}" alt="Amz" style="width:14px;height:14px;margin-right:4px;"> <strong style="color:var(--text-color);">{{ payload.inventory.amz_low_stock }}</strong></span>
-                        <span style="display:inline-flex;align-items:center;"><img src="{% static 'logo/flipkart_logo.png' %}" alt="FK" style="width:14px;height:14px;margin-right:4px;"> <strong style="color:var(--text-color);">{{ payload.inventory.fk_low_stock }}</strong></span>
-                    </div>
-                </div>
-                <div class="ceo-inv-card">
-                    <div class="ceo-inv-icon danger">✕</div>
-                    <div class="ceo-inv-label">Out of Stock</div>
-                    <div class="ceo-inv-value danger">{{ payload.inventory.oos }} Rows</div>
-                    <div style="font-size: 10px; color: var(--muted); margin-top: 6px; display: flex; justify-content: space-between; padding: 0 4px;">
-                        <span style="display:inline-flex;align-items:center;"><img src="{% static 'logo/amazon_logo.png' %}" alt="Amz" style="width:14px;height:14px;margin-right:4px;"> <strong style="color:var(--text-color);">{{ payload.inventory.amz_oos }}</strong></span>
-                        <span style="display:inline-flex;align-items:center;"><img src="{% static 'logo/flipkart_logo.png' %}" alt="FK" style="width:14px;height:14px;margin-right:4px;"> <strong style="color:var(--text-color);">{{ payload.inventory.fk_oos }}</strong></span>
-                    </div>
-                </div>
-                <div class="ceo-inv-card">
-                    <div class="ceo-inv-icon bad">↓</div>
-                    <div class="ceo-inv-label">Overstock</div>
-                    <div class="ceo-inv-value bad">{{ payload.inventory.overstock }} Rows</div>
-                    <div style="font-size: 10px; color: var(--muted); margin-top: 6px; display: flex; justify-content: space-between; padding: 0 4px;">
-                        <span style="display:inline-flex;align-items:center;"><img src="{% static 'logo/amazon_logo.png' %}" alt="Amz" style="width:14px;height:14px;margin-right:4px;"> <strong style="color:var(--text-color);">{{ payload.inventory.amz_overstock }}</strong></span>
-                        <span style="display:inline-flex;align-items:center;"><img src="{% static 'logo/flipkart_logo.png' %}" alt="FK" style="width:14px;height:14px;margin-right:4px;"> <strong style="color:var(--text-color);">{{ payload.inventory.fk_overstock }}</strong></span>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
+    {% include "dashboard/partials/inventory_health_datatable.html" with inventory_view_name="ceo" inventory_table_uid="ceo" %}
 
     <!-- Today's Priorities -->
     <div class="ceo-card" id="card-priorities">

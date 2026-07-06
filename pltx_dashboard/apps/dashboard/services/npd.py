@@ -4,6 +4,7 @@ from django.db.models import Count, Q, Sum
 
 from apps.dashboard.models import (
     CategoryMapping,
+    DashboardAsinMonthlySummary,
     DashboardInventoryHealthSummary,
     FBAStockData,
     FlexStockData,
@@ -36,6 +37,12 @@ def _latest_date_for(model, user):
 def _date_text(value):
     if isinstance(value, (datetime.date, datetime.datetime)):
         return value.strftime("%Y-%m-%d")
+    return str(value or "")
+
+
+def _date_display_text(value):
+    if isinstance(value, (datetime.date, datetime.datetime)):
+        return value.strftime("%d-%m-%Y")
     return str(value or "")
 
 
@@ -204,19 +211,32 @@ def _latest_docs(user, asins, fsns):
 def _fk_clicks_by_fsn(user, filters, fsns):
     if not fsns:
         return {}
-    from apps.dashboard.services.analytics_services_orm_pipeline import _get_product_daily_summary_querysets
+    from apps.dashboard.services.analytics_services_orm_pipeline import (
+        _force_indexed_product_summary_sum_rows,
+        _get_product_daily_summary_querysets,
+    )
 
     _, summary_fk_qs = _get_product_daily_summary_querysets(user, filters)
     summary_fk_qs = summary_fk_qs.filter(fsn__in=fsns)
+    rows = _force_indexed_product_summary_sum_rows(
+        summary_fk_qs,
+        "fsn",
+        (
+            ("product_clicks", "product_clicks"),
+            ("sales", "sales"),
+        ),
+    )
+    if rows is None:
+        rows = summary_fk_qs.values("fsn").annotate(
+            product_clicks=Sum("product_clicks"),
+            sales=Sum("sales"),
+        )
     return {
         row["fsn"]: {
             "product_clicks": int(row["product_clicks"] or 0),
             "sales": int(row["sales"] or 0),
         }
-        for row in summary_fk_qs.values("fsn").annotate(
-            product_clicks=Sum("product_clicks"),
-            sales=Sum("sales"),
-        )
+        for row in rows
     }
 
 
@@ -322,6 +342,125 @@ def _distinct_non_empty(qs, field_name):
     ]
 
 
+def _apply_mapping_search(az_map_qs, fk_map_qs, search_query):
+    query = str(search_query or "").strip()
+    if not query:
+        return az_map_qs, fk_map_qs
+
+    az_predicate = (
+        Q(asin__icontains=query)
+        | Q(msku__icontains=query)
+        | Q(category__icontains=query)
+        | Q(portfolio__icontains=query)
+        | Q(subcategory__icontains=query)
+        | Q(category_manager__icontains=query)
+    )
+    fk_predicate = (
+        Q(fsn__icontains=query)
+        | Q(asin__icontains=query)
+        | Q(sku__icontains=query)
+        | Q(category__icontains=query)
+        | Q(portfolio__icontains=query)
+        | Q(subcategory__icontains=query)
+        | Q(category_manager__icontains=query)
+    )
+    return az_map_qs.filter(az_predicate), fk_map_qs.filter(fk_predicate)
+
+
+def _apply_monthly_dimension_filter(qs, field_name, value):
+    if not value:
+        return qs
+    if isinstance(value, (list, tuple, set)):
+        values = [str(item).strip() for item in value if str(item).strip()]
+        return qs.filter(**{f"{field_name}__in": values}) if values else qs
+    return qs.filter(**{field_name: str(value).strip()})
+
+
+def _monthly_summary_qs_for_npd(user, filters):
+    try:
+        from apps.dashboard.services.asin_monthly_summary import _ym_range_from_filters
+    except Exception:
+        return None
+
+    ym_range = _ym_range_from_filters(filters)
+    if ym_range is None:
+        return None
+
+    ym_start, ym_end = ym_range
+    qs = DashboardAsinMonthlySummary.objects.filter(user=user)
+    if ym_start != "all" and ym_end != "all":
+        qs = qs.filter(year_month__gte=ym_start, year_month__lte=ym_end)
+
+    platform = (filters.get("platform") or "").strip()
+    if platform == "Amazon":
+        qs = qs.filter(platform="Amazon")
+    elif platform == "Flipkart":
+        qs = qs.filter(platform="Flipkart")
+
+    qs = _apply_monthly_dimension_filter(qs, "category", filters.get("category"))
+    qs = _apply_monthly_dimension_filter(qs, "portfolio", filters.get("portfolio"))
+    qs = _apply_monthly_dimension_filter(qs, "subcategory", filters.get("subcategory"))
+    return qs
+
+
+def _build_npd_metrics_from_monthly(user, filters, npd_asins, npd_fsns):
+    monthly_qs = _monthly_summary_qs_for_npd(user, filters)
+    if monthly_qs is None:
+        return None
+
+    platform = (filters.get("platform") or "").strip()
+    az_metrics = {}
+    fk_metrics = {}
+    saw_monthly_rows = False
+
+    if platform != "Flipkart" and npd_asins:
+        for row in (
+            monthly_qs.filter(platform="Amazon", asin__in=npd_asins)
+            .values("asin")
+            .annotate(
+                pageviews=Sum("pageviews"),
+                orders=Sum("orders"),
+                units=Sum("units"),
+                revenue=Sum("revenue"),
+                total_spend=Sum("total_spend"),
+            )
+        ):
+            saw_monthly_rows = True
+            asin = str(row.get("asin") or "").strip()
+            if asin:
+                az_metrics[asin] = row
+        for asin in npd_asins:
+            az_metrics.setdefault(asin, {})
+
+    if platform != "Amazon" and npd_fsns:
+        for row in (
+            monthly_qs.filter(platform="Flipkart", asin__in=npd_fsns)
+            .values("asin")
+            .annotate(
+                pageviews=Sum("pageviews"),
+                units=Sum("units"),
+                revenue=Sum("revenue"),
+                total_spend=Sum("total_spend"),
+            )
+        ):
+            saw_monthly_rows = True
+            fsn = str(row.get("asin") or "").strip()
+            if fsn:
+                fk_metrics[fsn] = {
+                    "fsn": fsn,
+                    "pageviews": row.get("pageviews"),
+                    "units": row.get("units"),
+                    "revenue": row.get("revenue"),
+                    "total_spend": row.get("total_spend"),
+                }
+        for fsn in npd_fsns:
+            fk_metrics.setdefault(fsn, {})
+
+    if not saw_monthly_rows and not monthly_qs.values("id")[:1].exists():
+        return None
+    return az_metrics, fk_metrics
+
+
 def _date_within_bounds(value, start, end):
     if not value:
         return False
@@ -382,7 +521,10 @@ def build_npd_performance(
 ):
     az_metrics = {}
     fk_metrics = {}
-    from apps.dashboard.services.analytics_services_orm_pipeline import _get_product_daily_summary_querysets
+    from apps.dashboard.services.analytics_services_orm_pipeline import (
+        _force_indexed_product_summary_sum_rows,
+        _get_product_daily_summary_querysets,
+    )
     from apps.dashboard.services.filters import get_filtered_mapping_querysets
 
     summary_az_qs, summary_fk_qs = _get_product_daily_summary_querysets(user, filters)
@@ -394,35 +536,70 @@ def build_npd_performance(
     if not include_missing_launch_dates:
         npd_az_meta = npd_az_meta.exclude(launch_date__isnull=True)
 
+    npd_az_meta, npd_fk_meta = _apply_mapping_search(
+        npd_az_meta,
+        npd_fk_meta,
+        search_query,
+    )
+
     npd_asins = _distinct_non_empty(npd_az_meta, "asin")
     npd_fsns = _distinct_non_empty(npd_fk_meta, "fsn")
 
-    if npd_asins:
-        for row in summary_az_qs.filter(asin__in=npd_asins).values("asin").annotate(
-            pageviews=Sum("page_views"),
-            orders=Sum("orders"),
-            units=Sum("units_sold"),
-            revenue=Sum("revenue"),
-            total_spend=Sum("ad_spend"),
-        ):
-            asin = str(row.get("asin") or "").strip()
-            if asin:
-                az_metrics[asin] = row
-        for asin in npd_asins:
-            az_metrics.setdefault(asin, {})
+    monthly_metrics = _build_npd_metrics_from_monthly(user, filters, npd_asins, npd_fsns)
+    if monthly_metrics is not None:
+        az_metrics, fk_metrics = monthly_metrics
+    else:
+        if npd_asins:
+            az_rows = _force_indexed_product_summary_sum_rows(
+                summary_az_qs.filter(asin__in=npd_asins),
+                "asin",
+                (
+                    ("page_views", "pageviews"),
+                    ("orders", "orders"),
+                    ("units_sold", "units"),
+                    ("revenue", "revenue"),
+                    ("ad_spend", "total_spend"),
+                ),
+            )
+            if az_rows is None:
+                az_rows = summary_az_qs.filter(asin__in=npd_asins).values("asin").annotate(
+                    pageviews=Sum("page_views"),
+                    orders=Sum("orders"),
+                    units=Sum("units_sold"),
+                    revenue=Sum("revenue"),
+                    total_spend=Sum("ad_spend"),
+                )
+            for row in az_rows:
+                asin = str(row.get("asin") or "").strip()
+                if asin:
+                    az_metrics[asin] = row
+            for asin in npd_asins:
+                az_metrics.setdefault(asin, {})
 
-    if npd_fsns:
-        for row in summary_fk_qs.filter(fsn__in=npd_fsns).values("fsn").annotate(
-            pageviews=Sum("page_views"),
-            units=Sum("units_sold"),
-            revenue=Sum("revenue"),
-            total_spend=Sum("ad_spend"),
-        ):
-            fsn = str(row.get("fsn") or "").strip()
-            if fsn:
-                fk_metrics[fsn] = row
-        for fsn in npd_fsns:
-            fk_metrics.setdefault(fsn, {})
+        if npd_fsns:
+            fk_rows = _force_indexed_product_summary_sum_rows(
+                summary_fk_qs.filter(fsn__in=npd_fsns),
+                "fsn",
+                (
+                    ("page_views", "pageviews"),
+                    ("units_sold", "units"),
+                    ("revenue", "revenue"),
+                    ("ad_spend", "total_spend"),
+                ),
+            )
+            if fk_rows is None:
+                fk_rows = summary_fk_qs.filter(fsn__in=npd_fsns).values("fsn").annotate(
+                    pageviews=Sum("page_views"),
+                    units=Sum("units_sold"),
+                    revenue=Sum("revenue"),
+                    total_spend=Sum("ad_spend"),
+                )
+            for row in fk_rows:
+                fsn = str(row.get("fsn") or "").strip()
+                if fsn:
+                    fk_metrics[fsn] = row
+            for fsn in npd_fsns:
+                fk_metrics.setdefault(fsn, {})
 
     asins = set(az_metrics)
     fsns = set(fk_metrics)
@@ -559,9 +736,9 @@ def build_npd_performance(
         row["conversion"] = 0.0
         launch_dates = [d for d in (row.get("az_launch_date"), row.get("fk_launch_date")) if d]
         row["launch_date"] = max(launch_dates) if launch_dates else None
-        row["az_launch_date_display"] = _date_text(row.get("az_launch_date"))
-        row["fk_launch_date_display"] = _date_text(row.get("fk_launch_date"))
-        row["launch_date_display"] = _date_text(row.get("launch_date"))
+        row["az_launch_date_display"] = _date_display_text(row.get("az_launch_date"))
+        row["fk_launch_date_display"] = _date_display_text(row.get("fk_launch_date"))
+        row["launch_date_display"] = _date_display_text(row.get("launch_date"))
         rows.append(row)
 
     rows = _filter_rows_by_launch_bounds(rows, filters)

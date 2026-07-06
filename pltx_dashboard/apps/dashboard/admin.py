@@ -13,6 +13,9 @@ from .models import (
     FlipkartPrice,
     FlipkartPLA,
     FlipkartProcessedDashboardData,
+    DashboardMappingDimensionDailySummary,
+    DashboardMappingFilterDailySummary,
+    DashboardMappingFilterMonthlyActivitySummary,
     DashboardProductDailySummary,
 )
 
@@ -127,3 +130,24 @@ class DashboardProductDailySummaryAdmin(admin.ModelAdmin):
     list_display = ("user", "date", "platform", "sku", "revenue", "ad_spend")
     list_filter = ("date", "platform", "user")
     search_fields = ("sku", "asin", "fsn", "category")
+
+
+@admin.register(DashboardMappingDimensionDailySummary)
+class DashboardMappingDimensionDailySummaryAdmin(admin.ModelAdmin):
+    list_display = ("user", "date", "platform", "category_manager", "material", "finish", "revenue")
+    list_filter = ("date", "platform", "user", "category_manager", "material", "finish")
+    search_fields = ("category", "portfolio", "subcategory", "series_name", "size", "brand_name")
+
+
+@admin.register(DashboardMappingFilterDailySummary)
+class DashboardMappingFilterDailySummaryAdmin(admin.ModelAdmin):
+    list_display = ("user", "date", "platform", "filter_name", "filter_value", "revenue")
+    list_filter = ("date", "platform", "user", "filter_name", "filter_value")
+    search_fields = ("filter_value", "category", "portfolio", "subcategory")
+
+
+@admin.register(DashboardMappingFilterMonthlyActivitySummary)
+class DashboardMappingFilterMonthlyActivitySummaryAdmin(admin.ModelAdmin):
+    list_display = ("user", "year_month", "platform", "filter_name", "filter_value", "sku", "units", "pageviews")
+    list_filter = ("year_month", "platform", "user", "filter_name", "filter_value")
+    search_fields = ("sku", "filter_value", "category", "portfolio", "subcategory")

@@ -228,57 +228,8 @@
 </script>
 
 <!-- ════════════ ROW 4: Inventory Health | OOS Impact | Inventory Position ════════════ -->
-<div class="biz-row-4">
-    <!-- Inventory Health (CEO-style) -->
-    <div class="ceo-card" id="biz-card-inventory">
-        <div class="ceo-card-header" style="display: flex; justify-content: space-between; align-items: center;">
-            <div>
-                <span class="ceo-card-title">Inventory Health</span>
-                <div style="font-size:11px;color:var(--muted);margin-top:2px;">Current stock status</div>
-            </div>
-            <button class="ceo-view-all-btn" onclick="openModal('bizInventoryHealthModal')">View Details</button>
-        </div>
-        <div class="ceo-card-body">
-            <div class="ceo-inv-grid">
-                <div class="ceo-inv-card">
-                    <div class="ceo-inv-icon good">✓</div>
-                    <div class="ceo-inv-label">In Stock</div>
-                    <div class="ceo-inv-value good">{{ payload.inventory.in_stock }} Rows</div>
-                    <div style="font-size: 10px; color: var(--muted); margin-top: 6px; display: flex; justify-content: space-between; padding: 0 4px;">
-                        <span style="display:inline-flex;align-items:center;"><img src="{% static 'logo/amazon_logo.png' %}" alt="Amz" style="width:14px;height:14px;margin-right:4px;"> <strong style="color:var(--text-color);">{{ payload.inventory.amz_in_stock }}</strong></span>
-                        <span style="display:inline-flex;align-items:center;"><img src="{% static 'logo/flipkart_logo.png' %}" alt="FK" style="width:14px;height:14px;margin-right:4px;"> <strong style="color:var(--text-color);">{{ payload.inventory.fk_in_stock }}</strong></span>
-                    </div>
-                </div>
-                <div class="ceo-inv-card">
-                    <div class="ceo-inv-icon warn">!</div>
-                    <div class="ceo-inv-label">Low Stock</div>
-                    <div class="ceo-inv-value warn">{{ payload.inventory.low_stock }} Rows</div>
-                    <div style="font-size: 10px; color: var(--muted); margin-top: 6px; display: flex; justify-content: space-between; padding: 0 4px;">
-                        <span style="display:inline-flex;align-items:center;"><img src="{% static 'logo/amazon_logo.png' %}" alt="Amz" style="width:14px;height:14px;margin-right:4px;"> <strong style="color:var(--text-color);">{{ payload.inventory.amz_low_stock }}</strong></span>
-                        <span style="display:inline-flex;align-items:center;"><img src="{% static 'logo/flipkart_logo.png' %}" alt="FK" style="width:14px;height:14px;margin-right:4px;"> <strong style="color:var(--text-color);">{{ payload.inventory.fk_low_stock }}</strong></span>
-                    </div>
-                </div>
-                <div class="ceo-inv-card">
-                    <div class="ceo-inv-icon danger">✕</div>
-                    <div class="ceo-inv-label">OOS</div>
-                    <div class="ceo-inv-value danger">{{ payload.inventory.oos }} Rows</div>
-                    <div style="font-size: 10px; color: var(--muted); margin-top: 6px; display: flex; justify-content: space-between; padding: 0 4px;">
-                        <span style="display:inline-flex;align-items:center;"><img src="{% static 'logo/amazon_logo.png' %}" alt="Amz" style="width:14px;height:14px;margin-right:4px;"> <strong style="color:var(--text-color);">{{ payload.inventory.amz_oos }}</strong></span>
-                        <span style="display:inline-flex;align-items:center;"><img src="{% static 'logo/flipkart_logo.png' %}" alt="FK" style="width:14px;height:14px;margin-right:4px;"> <strong style="color:var(--text-color);">{{ payload.inventory.fk_oos }}</strong></span>
-                    </div>
-                </div>
-                <div class="ceo-inv-card">
-                    <div class="ceo-inv-icon neutral">⬆</div>
-                    <div class="ceo-inv-label">Overstock</div>
-                    <div class="ceo-inv-value neutral">{{ payload.inventory.overstock }} Rows</div>
-                    <div style="font-size: 10px; color: var(--muted); margin-top: 6px; display: flex; justify-content: space-between; padding: 0 4px;">
-                        <span style="display:inline-flex;align-items:center;"><img src="{% static 'logo/amazon_logo.png' %}" alt="Amz" style="width:14px;height:14px;margin-right:4px;"> <strong style="color:var(--text-color);">{{ payload.inventory.amz_overstock }}</strong></span>
-                        <span style="display:inline-flex;align-items:center;"><img src="{% static 'logo/flipkart_logo.png' %}" alt="FK" style="width:14px;height:14px;margin-right:4px;"> <strong style="color:var(--text-color);">{{ payload.inventory.fk_overstock }}</strong></span>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
+<div class="biz-row-4 business-inventory-ops-row">
+    {% include "dashboard/partials/inventory_health_datatable.html" with inventory_view_name="business" inventory_table_uid="biz" %}
 
     <!-- OOS Impact -->
     <div class="ceo-card" id="biz-card-oos">
@@ -347,7 +298,7 @@
                         <div class="biz-mkt-kicker">Campaign Health</div>
                         <div class="biz-mkt-copy">Track spend efficiency first, then review SKU coverage to spot waste and missed opportunity.</div>
                     </div>
-                    <div class="biz-mkt-chip">{{ payload.marketing.advertised_asin_count_with_variants|fmt_num }} advertised ASINs</div>
+                    <div class="biz-mkt-chip">{{ payload.marketing.advertised_asin_count_with_variants|fmt_num }} advertised listings</div>
                 </div>
 
                 <div class="biz-mkt-section">
@@ -445,10 +396,10 @@
                 </div>
 
                 <div class="biz-mkt-section">
-                    <div class="biz-mkt-section-title">ASIN Coverage</div>
+                    <div class="biz-mkt-section-title">Listing Coverage</div>
                     <div class="biz-mkt-support-grid">
                         <div class="biz-mkt-support-card">
-                            <span class="biz-mkt-label">Advertised ASINs</span>
+                            <span class="biz-mkt-label">Advertised Listings</span>
                             <strong class="biz-mkt-support-value">{{ payload.marketing.advertised_asin_count_with_variants|fmt_num }}</strong>
                             <div class="biz-mkt-support-split">
                                 <span>Direct {{ payload.marketing.advertised_asin_count|fmt_num }}</span>

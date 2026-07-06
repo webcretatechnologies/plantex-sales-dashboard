@@ -584,7 +584,7 @@ def process_fk_category(file_obj, user):
         finish_col = resolve_col("Finish")
         category_manager_col = resolve_col("RP")
         series_col = resolve_col("Series name", "Series")
-        ratings_col = resolve_col("Ratings")
+        ratings_col = resolve_col("Ratings", "Rating")
         brand_col = resolve_col("Brand name")
         size_col = resolve_col("Size")
         launch_date_col = resolve_col("Launch Date", "Launch date")

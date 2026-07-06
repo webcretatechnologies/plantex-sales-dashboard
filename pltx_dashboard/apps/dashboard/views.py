@@ -46,6 +46,7 @@ from apps.dashboard.services.filters import (
 )
 from apps.dashboard.services.materialized_cache import (
     get_materialized_summary,
+    get_stale_materialized_summary,
     store_materialized_summary,
 )
 from apps.dashboard.services.invalidation import invalidate_dashboard_cache_for_user
@@ -244,6 +245,8 @@ def _strip_non_dashboard_filters(filters):
         "length",
         "order_field",
         "order_dir",
+        "identity_search",
+        "inventory_date_mode",
         "_",
         "all",
     }
@@ -787,7 +790,7 @@ def _get_light_filter_metadata(data_owner_id, data_version):
 
 
 
-def _get_top_product_modal_rows(data_owner, filters):
+def _get_top_product_modal_rows(data_owner, filters, limit=None):
     from apps.dashboard.services.analytics_services_orm_pipeline import (
         apply_global_filters_orm,
         _build_top_product_rows,
@@ -830,8 +833,8 @@ def _get_top_product_modal_rows(data_owner, filters):
                 filters,
                 asin_meta=asin_meta,
                 fsn_meta=fsn_meta,
-                limit=200,
-                include_full_payload=True,
+                limit=limit or 200,
+                include_full_payload=limit is None,
             )
             if monthly_rows is not None:
                 return monthly_rows
@@ -845,7 +848,7 @@ def _get_top_product_modal_rows(data_owner, filters):
         fk_prev,
         asin_meta=asin_meta,
         fsn_meta=fsn_meta,
-        include_full_payload=True,
+        include_full_payload=limit is None,
         summary_qs_f=summary_az_f,
         fk_summary_qs_f=summary_fk_f,
         summary_prev_f=get_prev_period_qs(summary_az_base, filters),
@@ -853,7 +856,7 @@ def _get_top_product_modal_rows(data_owner, filters):
     )
 
 
-def _get_declining_product_modal_rows(data_owner, filters):
+def _get_declining_product_modal_rows(data_owner, filters, limit=None):
     from apps.dashboard.services.analytics_services_orm_pipeline import (
         _build_declining_product_rows,
         _get_product_daily_summary_querysets,
@@ -904,7 +907,7 @@ def _get_declining_product_modal_rows(data_owner, filters):
                 cm_end,
                 pm_start,
                 pm_end,
-                include_full_payload=True,
+                include_full_payload=limit is None,
                 asin_meta=asin_meta,
                 fsn_meta=fsn_meta,
             )
@@ -923,7 +926,7 @@ def _get_declining_product_modal_rows(data_owner, filters):
         cm_end,
         pm_start,
         pm_end,
-        include_full_payload=True,
+        include_full_payload=limit is None,
         asin_meta=asin_meta,
         fsn_meta=fsn_meta,
         summary_qs=summary_az_base,
@@ -931,7 +934,45 @@ def _get_declining_product_modal_rows(data_owner, filters):
     )
 
 
-def _get_inventory_modal_queryset(data_owner, filters, query):
+INVENTORY_HEALTH_ORDER_FIELD_MAP = {
+    "date": "date",
+    "sku": "sku",
+    "az_sku": "asin",
+    "fk_sku": "fsn",
+    "asin": "asin",
+    "fsn": "fsn",
+    "category": "category",
+    "portfolio": "portfolio",
+    "subcategory": "subcategory",
+    "amz_fba": "fba_qty",
+    "amz_flex": "flex_qty",
+    "total_amz_stock": "stock_qty",
+    "amz_sales": "sale_qty",
+    "amz_doc": "doc",
+    "amz_revenue": "revenue",
+    "amz_status": "status",
+    "fk_fbf": "fk_fba_qty",
+    "fk_flex": "fk_flex_qty",
+    "total_fk_stock": "fk_stock_qty",
+    "fk_sales": "fk_sale_qty",
+    "fk_doc": "fk_doc",
+    "fk_revenue": "fk_revenue",
+    "fk_status": "fk_status",
+}
+
+
+def _get_inventory_order_field(order_field):
+    return INVENTORY_HEALTH_ORDER_FIELD_MAP.get(str(order_field or "").strip())
+
+
+def _get_inventory_modal_queryset(
+    data_owner,
+    filters,
+    query,
+    *,
+    identity_search_only=False,
+    force_latest_date=False,
+):
     from apps.dashboard.services.analytics_services_orm_pipeline import (
         apply_inventory_summary_filters,
     )
@@ -942,20 +983,30 @@ def _get_inventory_modal_queryset(data_owner, filters, query):
     )
     platform_filter = filters.get("platform")
     qs = apply_inventory_summary_filters(qs, data_owner, filters, platform_filter)
+    if force_latest_date:
+        latest_date = qs.order_by("-date").values_list("date", flat=True).first()
+        if latest_date:
+            qs = qs.filter(date=latest_date)
 
     if query:
         needle = str(query).strip()
-        qs = qs.filter(
+        identity_q = (
             Q(sku__icontains=needle)
             | Q(asin__icontains=needle)
             | Q(fsn__icontains=needle)
-            | Q(category__icontains=needle)
-            | Q(portfolio__icontains=needle)
-            | Q(subcategory__icontains=needle)
-            | Q(status__icontains=needle)
-            | Q(fk_status__icontains=needle)
-            | Q(reason__icontains=needle)
         )
+        if identity_search_only:
+            qs = qs.filter(identity_q)
+        else:
+            qs = qs.filter(
+                identity_q
+                | Q(category__icontains=needle)
+                | Q(portfolio__icontains=needle)
+                | Q(subcategory__icontains=needle)
+                | Q(status__icontains=needle)
+                | Q(fk_status__icontains=needle)
+                | Q(reason__icontains=needle)
+            )
     return qs.order_by("-date", "-revenue", "sku")
 
 
@@ -1079,6 +1130,37 @@ def _inventory_summary_row_dict(row, msku_map=None):
     }
 
 
+def _inventory_msku_map_for_summary_rows(data_owner, rows):
+    from apps.dashboard.models import CategoryMapping, FlipkartCategoryMap
+
+    row_list = list(rows)
+    asins = {
+        str(getattr(row, "asin", "") or "").strip()
+        for row in row_list
+        if str(getattr(row, "asin", "") or "").strip()
+    }
+    fsns = {
+        str(getattr(row, "fsn", "") or "").strip()
+        for row in row_list
+        if str(getattr(row, "fsn", "") or "").strip()
+    }
+
+    msku_map = {}
+    if asins:
+        for item in CategoryMapping.objects.filter(user=data_owner, asin__in=asins).values("asin", "msku"):
+            asin = str(item.get("asin") or "").strip()
+            msku = str(item.get("msku") or "").strip()
+            if asin and msku:
+                msku_map[asin] = msku
+    if fsns:
+        for item in FlipkartCategoryMap.objects.filter(user=data_owner, fsn__in=fsns).values("fsn", "sku"):
+            fsn = str(item.get("fsn") or "").strip()
+            sku = str(item.get("sku") or "").strip()
+            if fsn and sku:
+                msku_map[fsn] = sku
+    return row_list, msku_map
+
+
 def _build_template_payload(payload):
     """
     Keep template payload separate from cached payload mutation.
@@ -1108,6 +1190,14 @@ def _trim_payload_for_initial_load(payload):
         inventory["details"] = []
         inventory["details_shown"] = 0
         inventory["details_truncated"] = False
+    return payload
+
+
+def _mark_dashboard_payload(payload, section_scope):
+    if not isinstance(payload, dict):
+        return payload
+    payload["_payload_schema_version"] = DASHBOARD_CACHE_SCHEMA_VERSION
+    payload["_section_scope"] = str(section_scope or "all").lower()
     return payload
 
 
@@ -1232,6 +1322,9 @@ def _payload_needs_refresh(payload):
     if not isinstance(payload, dict):
         return True
 
+    if int(payload.get("_payload_schema_version") or 0) != DASHBOARD_CACHE_SCHEMA_VERSION:
+        return True
+
     inventory = payload.get("inventory")
     if not isinstance(inventory, dict):
         return True
@@ -1269,6 +1362,46 @@ def _is_kpis_only_payload(payload):
             if int(forecast.get("days_in_month") or 0) == 0:
                 return True
     return False
+
+
+def _get_stale_materialized_payload(
+    user_id,
+    view_type,
+    data_version,
+    filter_hash,
+    section_scope="all",
+):
+    try:
+        max_age_days = int(
+            getattr(settings, "DASHBOARD_STALE_MATERIALIZED_MAX_AGE_DAYS", 14)
+        )
+    except (TypeError, ValueError):
+        max_age_days = 14
+
+    stale = get_stale_materialized_summary(
+        user_id=user_id,
+        view_type=view_type,
+        current_data_version=data_version,
+        filter_hash=filter_hash,
+        section_scope=section_scope,
+        max_age_days=max_age_days,
+    )
+    if not stale:
+        return None
+
+    payload = stale.get("payload")
+    if _payload_needs_refresh(payload):
+        return None
+    if str(section_scope or "all").lower() != "overview" and _is_kpis_only_payload(payload):
+        return None
+
+    payload = deepcopy(payload)
+    payload["_cache_status"] = "stale"
+    payload["_stale_data_version"] = stale.get("data_version")
+    updated_at = stale.get("updated_at")
+    if hasattr(updated_at, "isoformat"):
+        payload["_stale_updated_at"] = updated_at.isoformat()
+    return payload
 
 
 def no_cache_for_htmx(view_func):
@@ -1341,6 +1474,27 @@ def _ensure_processed_tables_if_missing(data_owner):
         generate_flipkart_dashboard_data(data_owner)
 
 
+def _date_value_set(qs):
+    """
+    Fetch distinct date values without wrapping the date column in SQL functions.
+    Django QuerySet.dates() emits DATE(column), which prevents efficient use of
+    the (user, date, ...) indexes on the large raw/summary tables.
+    """
+    return {
+        value
+        for value in qs.values_list("date", flat=True).distinct().order_by("date")
+        if value
+    }
+
+
+def _compute_lock_wait_seconds():
+    try:
+        configured = float(getattr(settings, "DASHBOARD_COMPUTE_LOCK_WAIT_SECONDS", 4.0))
+    except (TypeError, ValueError):
+        configured = 4.0
+    return max(0.0, min(configured, 30.0))
+
+
 def get_dashboard_context(
     request,
     include_payload=True,
@@ -1378,35 +1532,41 @@ def get_dashboard_context(
     selected_filters = selected_filter_payload(filters)
 
     data_version_dates = cache.get(f"dashboard_data_version_{data_owner.id}", 0)
-    uploaded_dates_key = f"dashboard_uploaded_dates_v3_{data_owner.id}_{data_version_dates}"
-    pending_dates_key = f"dashboard_pending_dates_v3_{data_owner.id}_{data_version_dates}"
+    uploaded_dates_key = f"dashboard_uploaded_dates_v4_{data_owner.id}_{data_version_dates}"
+    pending_dates_key = f"dashboard_pending_dates_v4_{data_owner.id}_{data_version_dates}"
     uploaded_dates = cache.get(uploaded_dates_key)
     pending_dates = cache.get(pending_dates_key)
     if uploaded_dates is None or pending_dates is None:
-        from concurrent.futures import ThreadPoolExecutor
+        refresh_status_for_dates = _get_dashboard_refresh_status(data_owner.id)
+        should_check_raw_pending_dates = (
+            not include_payload
+            and refresh_status_for_dates.get("state") == "processing"
+        )
 
         def fetch_az_dates():
-            return set(DashboardDailySummary.objects.filter(user_id=data_owner.id, platform="Amazon").dates("date", "day"))
+            return _date_value_set(
+                DashboardDailySummary.objects.filter(user_id=data_owner.id, platform="Amazon")
+            )
 
         def fetch_fk_dates():
-            return set(DashboardDailySummary.objects.filter(user_id=data_owner.id, platform="Flipkart").dates("date", "day"))
+            return _date_value_set(
+                DashboardDailySummary.objects.filter(user_id=data_owner.id, platform="Flipkart")
+            )
 
         def fetch_raw_fk_dates():
-            return set(FlipkartSearchTraffic.objects.filter(user_id=data_owner.id).dates("date", "day"))
+            return _date_value_set(FlipkartSearchTraffic.objects.filter(user_id=data_owner.id))
 
         def fetch_raw_az_dates():
-            return set(SalesData.objects.filter(user_id=data_owner.id).dates("date", "day"))
+            return _date_value_set(SalesData.objects.filter(user_id=data_owner.id))
 
-        with ThreadPoolExecutor(max_workers=4) as executor:
-            f_az = executor.submit(fetch_az_dates)
-            f_fk = executor.submit(fetch_fk_dates)
-            f_raw_fk = executor.submit(fetch_raw_fk_dates)
-            f_raw_az = executor.submit(fetch_raw_az_dates)
-
-            az_dates = f_az.result()
-            fk_dates = f_fk.result()
-            raw_fk_dates = f_raw_fk.result()
-            raw_az_dates = f_raw_az.result()
+        az_dates = fetch_az_dates()
+        fk_dates = fetch_fk_dates()
+        if should_check_raw_pending_dates:
+            raw_fk_dates = fetch_raw_fk_dates()
+            raw_az_dates = fetch_raw_az_dates()
+        else:
+            raw_fk_dates = set()
+            raw_az_dates = set()
 
         all_processed_dates = az_dates | fk_dates
         all_raw_dates = raw_fk_dates | raw_az_dates
@@ -1440,9 +1600,85 @@ def get_dashboard_context(
     fk_qs = FlipkartProcessedDashboardData.objects.filter(user=data_owner)
 
     data_version = cache.get(f"dashboard_data_version_{data_owner.id}", 0)
-    cached_filter_metadata = _get_light_filter_metadata(data_owner.id, data_version)
+    cached_filter_metadata = None
     filter_key_str = cache_filter_string(filters)
     cache_hash = hashlib.md5(filter_key_str.encode("utf-8")).hexdigest()
+
+    view_type = cache_view_type or request.resolver_match.url_name or "shared"
+    if view_type in ["business-dashboard", "category-dashboard", "ceo-dashboard"]:
+        view_type = "ceo-dashboard"
+    normalized_section_scope = str(section_scope or "all").lower()
+    normalized_compute_scope = str(compute_scope or "full").lower()
+    use_shared_materialized = (
+        not include_full_payload
+        and normalized_section_scope == "all"
+        and normalized_compute_scope == "full"
+    )
+    use_persistent_materialized = not include_full_payload
+    cache_mode = "full" if include_full_payload else "lite"
+    cache_key = (
+        f"dashboard_payload_v{DASHBOARD_PAYLOAD_CACHE_VERSION}_"
+        f"s{DASHBOARD_CACHE_SCHEMA_VERSION}_"
+        f"{data_owner.id}_{view_type}_{section_scope}_{data_version}_{cache_hash}_{cache_mode}"
+    )
+
+    payload = cache.get(cache_key)
+    if payload and _payload_needs_refresh(payload):
+        payload = None
+    if payload and normalized_compute_scope == "full" and _is_kpis_only_payload(payload):
+        payload = None
+
+    if not payload and use_persistent_materialized:
+        payload = get_materialized_summary(
+            user_id=data_owner.id,
+            view_type=view_type,
+            data_version=data_version,
+            filter_hash=cache_hash,
+            section_scope=normalized_section_scope,
+        )
+        if payload and _payload_needs_refresh(payload):
+            payload = None
+        elif payload and normalized_compute_scope == "full" and _is_kpis_only_payload(payload):
+            payload = None
+
+    refresh_status_for_stale = None
+    if not payload and use_persistent_materialized:
+        refresh_status_for_stale = _get_dashboard_refresh_status(data_owner.id)
+        if refresh_status_for_stale.get("state") == "processing":
+            payload = _get_stale_materialized_payload(
+                data_owner.id,
+                view_type,
+                data_version,
+                cache_hash,
+                section_scope=normalized_section_scope,
+            )
+
+    if payload:
+        cache.set(
+            cache_key,
+            payload,
+            timeout=(
+                min(15, DASHBOARD_CACHE_TTL_LITE_SECONDS)
+                if payload.get("_cache_status") == "stale"
+                else DASHBOARD_CACHE_TTL_LITE_SECONDS
+            ),
+        )
+        if not include_full_payload:
+            payload = _trim_payload_for_initial_load(payload)
+        refresh_status = refresh_status_for_stale or _get_dashboard_refresh_status(data_owner.id)
+        return {
+            "logged_user": user,
+            "user_features": user_features,
+            "payload": _build_template_payload(payload),
+            "payload_json": _build_payload_json(payload),
+            "filters": filters,
+            "selected_filters": selected_filters,
+            "selected_filters_json": json.dumps(selected_filters),
+            "dashboard_refresh_status": refresh_status,
+            "dashboard_refresh_status_json": json.dumps(refresh_status),
+            "uploaded_dates_json": json.dumps(uploaded_dates),
+            "pending_dates_json": json.dumps(pending_dates),
+        }
 
     qs, fk_qs = apply_dashboard_entity_filters(qs, fk_qs, filters, user=data_owner)
 
@@ -1504,6 +1740,14 @@ def get_dashboard_context(
     view_type = cache_view_type or request.resolver_match.url_name or "shared"
     if view_type in ["business-dashboard", "category-dashboard", "ceo-dashboard"]:
         view_type = "ceo-dashboard"
+    normalized_section_scope = str(section_scope or "all").lower()
+    normalized_compute_scope = str(compute_scope or "full").lower()
+    use_shared_materialized = (
+        not include_full_payload
+        and normalized_section_scope == "all"
+        and normalized_compute_scope == "full"
+    )
+    use_persistent_materialized = not include_full_payload
     cache_mode = "full" if include_full_payload else "lite"
     cache_key = (
         f"dashboard_payload_v{DASHBOARD_PAYLOAD_CACHE_VERSION}_"
@@ -1515,22 +1759,41 @@ def get_dashboard_context(
     if payload and _payload_needs_refresh(payload):
         payload = None
 
-    if not payload and not include_full_payload:
+    if not payload and use_persistent_materialized:
         payload = get_materialized_summary(
             user_id=data_owner.id,
             view_type=view_type,
             data_version=data_version,
             filter_hash=cache_hash,
+            section_scope=normalized_section_scope,
         )
         if payload and _payload_needs_refresh(payload):
             payload = None
-        elif str(compute_scope or "full").lower() == "full" and _is_kpis_only_payload(payload):
+        elif normalized_compute_scope == "full" and _is_kpis_only_payload(payload):
             payload = None
+
+    is_shared_full_payload = use_shared_materialized
+    if not payload and use_persistent_materialized:
+        refresh_status_for_stale = _get_dashboard_refresh_status(data_owner.id)
+        if refresh_status_for_stale.get("state") == "processing":
+            payload = _get_stale_materialized_payload(
+                data_owner.id,
+                view_type,
+                data_version,
+                cache_hash,
+                section_scope=normalized_section_scope,
+            )
+            if payload:
+                cache.set(
+                    cache_key,
+                    payload,
+                    timeout=min(15, DASHBOARD_CACHE_TTL_LITE_SECONDS),
+                )
 
     if not payload:
         # For full-scope sections (visuals/details) share the lock across sections so
         # parallel page loads don't run the same heavy queries twice simultaneously.
-        is_shared_full_lock = not include_full_payload and str(compute_scope or "full").lower() == "full"
+        is_shared_full_lock = is_shared_full_payload
         if is_shared_full_lock:
             compute_lock_key = (
                 f"dashboard_compute_lock_v{DASHBOARD_PAYLOAD_CACHE_VERSION}_"
@@ -1540,22 +1803,26 @@ def get_dashboard_context(
             compute_lock_key = f"{cache_key}:lock"
         have_lock = cache.add(compute_lock_key, "1", timeout=300)
         if not have_lock:
-            # Another section is computing the same dataset; wait and reuse.
-            # With monthly summary the typical computation is 1–3 s, so reduce
-            # wait_sleep to 0.5 s and check materialized summary every 4 iterations
-            for _wi in range(400):
-                time.sleep(0.5)
+            # Another section is computing the same dataset; wait briefly and
+            # reuse if it finishes. Do not block an HTTP worker for minutes.
+            wait_deadline = time.monotonic() + _compute_lock_wait_seconds()
+            next_materialized_check = 0.0
+            while time.monotonic() < wait_deadline:
+                time.sleep(0.25)
                 payload = cache.get(cache_key)
                 if payload:
                     break
-                # Check shared materialized summary every 4 iterations (every 2 s)
-                # to avoid N×DashboardMaterializedSummary queries per waiting section.
-                if not payload and is_shared_full_lock and (_wi % 4 == 0):
+                # Check shared materialized summary at most once per second to
+                # avoid N×DashboardMaterializedSummary queries per waiting section.
+                now_mono = time.monotonic()
+                if not payload and use_persistent_materialized and now_mono >= next_materialized_check:
+                    next_materialized_check = now_mono + 1.0
                     payload = get_materialized_summary(
                         user_id=data_owner.id,
                         view_type=view_type,
                         data_version=data_version,
                         filter_hash=cache_hash,
+                        section_scope=normalized_section_scope,
                     )
                     if payload and _payload_needs_refresh(payload):
                         payload = None
@@ -1563,8 +1830,27 @@ def get_dashboard_context(
                         payload = None
                 if payload:
                     break
+            if not payload and use_persistent_materialized:
+                payload = _get_stale_materialized_payload(
+                    data_owner.id,
+                    view_type,
+                    data_version,
+                    cache_hash,
+                    section_scope=normalized_section_scope,
+                )
+                if payload:
+                    cache.set(
+                        cache_key,
+                        payload,
+                        timeout=min(15, DASHBOARD_CACHE_TTL_LITE_SECONDS),
+                    )
         if not payload:
             try:
+                if cached_filter_metadata is None:
+                    cached_filter_metadata = _get_light_filter_metadata(
+                        data_owner.id,
+                        data_version,
+                    )
                 payload = run_orm_computation(
                     qs,
                     fk_qs,
@@ -1581,13 +1867,15 @@ def get_dashboard_context(
                     section_scope=section_scope,
                     dashboard_view=(request.resolver_match.kwargs.get("view_name") if request.resolver_match else None),
                 )
-                if (not include_full_payload) and str(compute_scope or "full").lower() == "full":
+                payload = _mark_dashboard_payload(payload, normalized_section_scope)
+                if use_persistent_materialized:
                     try:
                         store_materialized_summary(
                             user_id=data_owner.id,
                             view_type=view_type,
                             data_version=data_version,
                             filter_hash=cache_hash,
+                            section_scope=normalized_section_scope,
                             normalized_filters=json.dumps(
                                 normalize_payload_filters(filters), sort_keys=True
                             ),
@@ -1791,6 +2079,18 @@ def dashboard_modal_rows_view(request, view_name, modal_key):
     filters = _strip_non_dashboard_filters(build_filters_from_querydict(request.GET))
     if modal_key == "npd-performance":
         filters = _apply_npd_modal_launch_filter_aliases(filters)
+    identity_search_only = (
+        modal_key == "inventory-health"
+        and request.GET.get("identity_search") == "1"
+    )
+    inventory_force_latest_date = (
+        modal_key == "inventory-health"
+        and request.GET.get("inventory_date_mode") == "latest"
+    )
+    if inventory_force_latest_date:
+        filters.pop("date_range", None)
+        filters.pop("start_date", None)
+        filters.pop("end_date", None)
     filter_hash = hashlib.md5(cache_filter_string(filters).encode("utf-8")).hexdigest()
 
     modal_rows_cache_key = (
@@ -1824,24 +2124,24 @@ def dashboard_modal_rows_view(request, view_name, modal_key):
     npd_trend = None
     npd_launch_dates = None
 
-    if modal_key == "inventory-health":
-        inventory_qs = _get_inventory_modal_queryset(data_owner, filters, query)
+    if modal_key == "inventory-health" and not dt_draw:
+        inventory_qs = _get_inventory_modal_queryset(
+            data_owner,
+            filters,
+            query,
+            identity_search_only=identity_search_only,
+            force_latest_date=inventory_force_latest_date,
+        )
         total = inventory_qs.count()
         row_qs = (
             inventory_qs
             if export_format in {"csv", "excel", "xlsx"}
             else inventory_qs[(page - 1) * page_size : page * page_size]
         )
-        # Build ASIN→msku and FSN→sku lookup maps for the SKU column
-        from apps.dashboard.models import CategoryMapping, FlipkartCategoryMap
-        _inv_msku_map = {}
-        for _r in CategoryMapping.objects.filter(user=data_owner).values("asin", "msku"):
-            if _r["asin"] and _r["msku"]:
-                _inv_msku_map[_r["asin"]] = _r["msku"]
-        for _r in FlipkartCategoryMap.objects.filter(user=data_owner).values("fsn", "sku"):
-            if _r["fsn"] and _r["sku"]:
-                _inv_msku_map[_r["fsn"]] = _r["sku"]
-        rows = [_inventory_summary_row_dict(row, msku_map=_inv_msku_map) for row in row_qs]
+        row_list, _inv_msku_map = _inventory_msku_map_for_summary_rows(data_owner, row_qs)
+        rows = [_inventory_summary_row_dict(row, msku_map=_inv_msku_map) for row in row_list]
+    elif dt_draw and modal_key == "inventory-health" and export_format not in {"csv", "excel", "xlsx"}:
+        rows = []
     elif dt_draw and modal_key == "npd-performance" and export_format not in {"csv", "excel", "xlsx"}:
         offset = (page - 1) * page_size
         npd_payload = _get_npd_modal_payload(
@@ -1878,11 +2178,15 @@ def dashboard_modal_rows_view(request, view_name, modal_key):
         # payload — top-products and declining-products store empty lists there.
         MATERIALIZED_MODAL_KEYS = {"cluster-performance", "category-growth"}
         if rows is None and modal_key in MATERIALIZED_MODAL_KEYS:
+            materialized_view_type = f"{view_name}-dashboard"
+            if materialized_view_type in ["business-dashboard", "category-dashboard", "ceo-dashboard"]:
+                materialized_view_type = "ceo-dashboard"
             mat_payload = get_materialized_summary(
                 user_id=data_owner.id,
-                view_type=f"{view_name}-dashboard",
+                view_type=materialized_view_type,
                 data_version=data_version,
                 filter_hash=filter_hash,
+                section_scope="all",
             )
             if mat_payload and not _payload_needs_refresh(mat_payload):
                 mat_rows = _resolve_payload_key(mat_payload, payload_key)
@@ -2078,23 +2382,24 @@ def dashboard_modal_rows_view(request, view_name, modal_key):
     # ── DataTables server-side path ──────────────────────────────────────────
     if dt_draw:
         if modal_key == "inventory-health":
-            # inventory-health uses ORM — apply ordering and re-slice
-            if order_field:
-                _orm_field = order_field
+            # inventory-health uses ORM-backed server-side pagination/search.
+            orm_order_field = _get_inventory_order_field(order_field)
+            inventory_qs = _get_inventory_modal_queryset(
+                data_owner,
+                filters,
+                query,
+                identity_search_only=identity_search_only,
+                force_latest_date=inventory_force_latest_date,
+            )
+            total = inventory_qs.count()
+            if orm_order_field:
+                _orm_field = orm_order_field
                 if order_dir == "desc":
-                    _orm_field = f"-{order_field}"
-                inventory_qs = _get_inventory_modal_queryset(data_owner, filters, query)
-                total = inventory_qs.count()
-                row_qs = inventory_qs.order_by(_orm_field)[(page - 1) * page_size : page * page_size]
-                from apps.dashboard.models import CategoryMapping, FlipkartCategoryMap
-                _inv_msku_map = {}
-                for _r in CategoryMapping.objects.filter(user=data_owner).values("asin", "msku"):
-                    if _r["asin"] and _r["msku"]:
-                        _inv_msku_map[_r["asin"]] = _r["msku"]
-                for _r in FlipkartCategoryMap.objects.filter(user=data_owner).values("fsn", "sku"):
-                    if _r["fsn"] and _r["sku"]:
-                        _inv_msku_map[_r["fsn"]] = _r["sku"]
-                rows = [_inventory_summary_row_dict(row, msku_map=_inv_msku_map) for row in row_qs]
+                    _orm_field = f"-{orm_order_field}"
+                inventory_qs = inventory_qs.order_by(_orm_field)
+            row_qs = inventory_qs[(page - 1) * page_size : page * page_size]
+            row_list, _inv_msku_map = _inventory_msku_map_for_summary_rows(data_owner, row_qs)
+            rows = [_inventory_summary_row_dict(row, msku_map=_inv_msku_map) for row in row_list]
             rows_total = total
             page_rows = rows
         else:
@@ -2120,6 +2425,8 @@ def dashboard_modal_rows_view(request, view_name, modal_key):
             request=request,
         )
         dt_data = _extract_dt_cells_from_html(html)
+        if rows_total == 0:
+            dt_data = []
         response_payload = {
             "draw": int(dt_draw),
             "recordsTotal": rows_total,
@@ -2207,24 +2514,24 @@ def dashboard_product_card_rows_view(request, view_name, card_key):
     data_version = cache.get(f"dashboard_data_version_{data_owner.id}", 0)
     filters = _strip_non_dashboard_filters(build_filters_from_querydict(request.GET))
     filter_hash = hashlib.md5(cache_filter_string(filters).encode("utf-8")).hexdigest()
+    limit_str = request.GET.get('limit')
+    limit = 10
+    if limit_str and limit_str.isdigit():
+        limit = int(limit_str)
+
     cache_key = (
         "dashboard_product_card_rows_v3_"
-        f"{data_owner.id}_{view_name}_{card_key}_{data_version}_{filter_hash}"
+        f"{data_owner.id}_{view_name}_{card_key}_{data_version}_{filter_hash}_{limit}"
     )
 
     cached_html = cache.get(cache_key)
     if cached_html:
         return HttpResponse(cached_html)
 
-    limit_str = request.GET.get('limit')
-    limit = 10
-    if limit_str and limit_str.isdigit():
-        limit = int(limit_str)
-
     if card_key == "top-products":
-        rows = _get_top_product_modal_rows(data_owner, filters)
+        rows = _get_top_product_modal_rows(data_owner, filters, limit=limit)
     elif card_key == "declining-products":
-        rows = _get_declining_product_modal_rows(data_owner, filters)
+        rows = _get_declining_product_modal_rows(data_owner, filters, limit=limit)
     elif card_key == "npd-performance":
         rows = _get_npd_modal_rows(data_owner, filters, limit=limit)
     else:
