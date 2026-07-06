@@ -53,6 +53,7 @@ def _enqueue_dashboard_warmup(
     skip_during_upload=True,
     filter_sets=None,
     view_types=None,
+    countdown=0,
 ):
     try:
         from django.conf import settings
@@ -70,15 +71,31 @@ def _enqueue_dashboard_warmup(
             return
         from apps.dashboard.tasks import warmup_dashboard_payloads_task
 
-        warmup_dashboard_payloads_task.delay(
-            data_owner_id=data_owner_id,
-            filter_sets=filter_sets,
-            view_types=view_types,
+        warmup_dashboard_payloads_task.apply_async(
+            kwargs={
+                "data_owner_id": data_owner_id,
+                "filter_sets": filter_sets,
+                "view_types": view_types,
+            },
+            countdown=max(int(countdown or 0), 0),
         )
     except Exception:
         logger.exception(
             "[UploadTask] Failed to enqueue dashboard warmup for user=%s", data_owner_id
         )
+
+
+def _dedupe_warmup_filter_sets(filter_sets):
+    seen = set()
+    deduped = []
+    for filters in filter_sets or []:
+        item = dict(filters or {})
+        key = tuple(sorted((str(k), str(v)) for k, v in item.items()))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return deduped
 
 
 def _enqueue_daily_summary_refresh(data_owner_id, affected_dates=None):
@@ -739,13 +756,33 @@ def _run_dashboard_refresh(
         affected_months = sorted({
             str(d)[:7] + "-01" for d in sorted_dates
         }) if sorted_dates else []
+        from apps.dashboard.services.cache_config import DEFAULT_WARMUP_FILTER_SETS
+
+        warmup_filter_sets = list(DEFAULT_WARMUP_FILTER_SETS)
+        if sorted_dates:
+            affected_range_filter = {
+                "start_date": str(sorted_dates[0]),
+                "end_date": str(sorted_dates[-1]),
+            }
+            warmup_filter_sets.insert(1, affected_range_filter)
+            warmup_filter_sets.insert(2, {"platform": "Amazon", **affected_range_filter})
+            warmup_filter_sets.insert(3, {"platform": "Flipkart", **affected_range_filter})
+        warmup_filter_sets = _dedupe_warmup_filter_sets(warmup_filter_sets)
+        warmup_scheduled = False
 
         if should_refresh_daily_summary:
             from apps.dashboard.services.daily_summary import rebuild_daily_summary_for_user
+            from apps.dashboard.services.mapping_dimension_summary import (
+                rebuild_mapping_filter_daily_summary_for_user,
+            )
             try:
                 rebuild_daily_summary_for_user(data_owner, only_dates=sorted_dates)
             except Exception as e:
                 logger.exception("Failed to rebuild daily summary synchronously")
+            try:
+                rebuild_mapping_filter_daily_summary_for_user(data_owner, only_dates=sorted_dates)
+            except Exception:
+                logger.exception("Failed to rebuild mapping filter summary synchronously")
             
             # Immediately invalidate the cache now that the daily summary is ready
             from apps.dashboard.services.invalidation import invalidate_dashboard_cache_for_user
@@ -753,11 +790,13 @@ def _run_dashboard_refresh(
 
         if should_refresh_inventory_summary or should_refresh_asin_monthly_summary or should_refresh_product_daily_summary:
             try:
+                from celery import chord as celery_chord
                 from celery import group as celery_group
                 from apps.dashboard.tasks import (
                     refresh_dashboard_inventory_summary_task,
                     refresh_dashboard_asin_monthly_summary_task,
                     refresh_dashboard_product_daily_summary_task,
+                    warmup_dashboard_payloads_task,
                 )
                 signatures = []
                 if should_refresh_product_daily_summary:
@@ -782,16 +821,26 @@ def _run_dashboard_refresh(
                         )
                     )
                 if signatures:
-                    celery_group(*signatures).apply_async()
+                    if should_enqueue_warmup:
+                        celery_chord(signatures)(
+                            warmup_dashboard_payloads_task.si(
+                                data_owner_id=data_owner.id,
+                                filter_sets=warmup_filter_sets,
+                            )
+                        )
+                        warmup_scheduled = True
+                    else:
+                        celery_group(*signatures).apply_async()
                     logger.info(
                         "[DashboardRefreshTask] Dispatched background summary tasks "
-                        "for owner=%s (dates=%d, months=%d, product_daily=%s, inventory=%s, monthly=%s)",
+                        "for owner=%s (dates=%d, months=%d, product_daily=%s, inventory=%s, monthly=%s, warmup=%s)",
                         data_owner.id,
                         len(sorted_dates),
                         len(affected_months),
                         should_refresh_product_daily_summary,
                         should_refresh_inventory_summary,
                         should_refresh_asin_monthly_summary,
+                        warmup_scheduled,
                     )
             except Exception:
                 logger.exception(
@@ -805,17 +854,12 @@ def _run_dashboard_refresh(
                 if should_refresh_product_daily_summary:
                     _enqueue_product_daily_summary_refresh(data_owner.id, affected_dates=sorted_dates)
 
-        if should_enqueue_warmup:
+        if should_enqueue_warmup and not warmup_scheduled:
             _enqueue_dashboard_warmup(
                 data_owner.id,
-                skip_during_upload=True,
-                filter_sets=[
-                    {},
-                    {"date_range": "last_7_days"},
-                    {"date_range": "last_month"},
-                    {"date_range": "last_3_months"},
-                    {"date_range": "last_6_months"}
-                ],
+                skip_during_upload=False,
+                filter_sets=warmup_filter_sets,
+                countdown=60,
             )
 
 

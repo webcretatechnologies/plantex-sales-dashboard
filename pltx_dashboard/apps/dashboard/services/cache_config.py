@@ -11,19 +11,22 @@ DASHBOARD_CACHE_TTL_LITE_SECONDS = 604800   # 7 days
 DASHBOARD_CACHE_TTL_FULL_SECONDS = 604800   # 7 days
 
 # Cache schema marker to prevent stale-key collisions after key format changes.
-DASHBOARD_CACHE_SCHEMA_VERSION = 11
+DASHBOARD_CACHE_SCHEMA_VERSION = 20
 
 DEFAULT_WARMUP_FILTER_SETS = (
     {},
     {"date_range": "last_7_days"},
-    {"date_range": "last_15_days"},
+    {"date_range": "last_month"},
     {"date_range": "last_3_months"},
     {"date_range": "last_6_months"},
-    {"date_range": "last_1_year"},
     {"platform": "Amazon"},
     {"platform": "Flipkart"},
+    {"platform": "Amazon", "date_range": "last_month"},
+    {"platform": "Flipkart", "date_range": "last_month"},
     {"platform": "Amazon", "date_range": "last_7_days"},
     {"platform": "Flipkart", "date_range": "last_7_days"},
+    {"date_range": "last_15_days"},
+    {"date_range": "last_1_year"},
     {"platform": "Amazon", "date_range": "last_3_months"},
     {"platform": "Flipkart", "date_range": "last_3_months"},
     {"platform": "Amazon", "date_range": "last_6_months"},

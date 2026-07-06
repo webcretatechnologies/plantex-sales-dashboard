@@ -8,6 +8,10 @@ from apps.accounts.models import Users
 from apps.dashboard.services.materialized_cache import cleanup_materialized_summaries
 from apps.dashboard.services.warmup import prime_dashboard_payloads_for_user
 from apps.dashboard.services.daily_summary import rebuild_daily_summary_for_user
+from apps.dashboard.services.mapping_dimension_summary import (
+    rebuild_mapping_filter_daily_summary_for_user,
+    rebuild_mapping_filter_monthly_activity_summary_for_user,
+)
 from apps.dashboard.services.inventory_summary import rebuild_inventory_summary_for_user
 from apps.dashboard.services.asin_monthly_summary import rebuild_asin_monthly_summary_for_user
 from apps.dashboard.services.product_daily_summary import (
@@ -21,6 +25,9 @@ def _daily_summary_lock_key(data_owner_id):
 
 def _product_daily_summary_lock_key(data_owner_id):
     return f"dashboard_product_daily_summary_task_lock_{data_owner_id}"
+
+def _mapping_dimension_summary_lock_key(data_owner_id):
+    return f"dashboard_mapping_dimension_summary_task_lock_{data_owner_id}"
 
 def _inventory_summary_lock_key(data_owner_id):
     return f"dashboard_inventory_summary_task_lock_{data_owner_id}"
@@ -56,7 +63,7 @@ def warmup_dashboard_payloads_task(data_owner_id, filter_sets=None, view_types=N
         )
         return {"computed": 0, "error": "user-not-found"}
 
-    max_filter_sets = getattr(settings, "DASHBOARD_WARMUP_MAX_FILTER_SETS", 7)
+    max_filter_sets = getattr(settings, "DASHBOARD_WARMUP_MAX_FILTER_SETS", 12)
     stats = prime_dashboard_payloads_for_user(
         user,
         filter_sets=filter_sets,
@@ -95,6 +102,40 @@ def refresh_dashboard_daily_summary_task(self, data_owner_id, only_dates=None):
 
 
 @shared_task(bind=True, max_retries=5)
+def refresh_dashboard_mapping_dimension_summary_task(self, data_owner_id, only_dates=None):
+    lock_key = _mapping_dimension_summary_lock_key(data_owner_id)
+    if not cache.add(lock_key, "1", timeout=1800):
+        logger.info("[DashboardMappingDimensionSummary] Lock held, retrying user=%s", data_owner_id)
+        raise self.retry(countdown=5 + self.request.retries * 10)
+
+    try:
+        try:
+            user = Users.objects.get(pk=data_owner_id)
+        except Users.DoesNotExist:
+            logger.warning(
+                "[DashboardMappingDimensionSummary] Skipping; user %s not found.",
+                data_owner_id,
+            )
+            return {"rows_written": 0, "error": "user-not-found"}
+
+        stats = rebuild_mapping_filter_daily_summary_for_user(user, only_dates=only_dates or [])
+        monthly_stats = rebuild_mapping_filter_monthly_activity_summary_for_user(
+            user,
+            only_dates=only_dates or [],
+        )
+        stats["monthly_activity_rows_written"] = monthly_stats.get("rows_written", 0)
+        stats["months_scoped"] = monthly_stats.get("months_scoped", [])
+
+        from apps.dashboard.services.invalidation import invalidate_dashboard_cache_for_user
+        invalidate_dashboard_cache_for_user(data_owner_id, clear_materialized=True)
+
+        logger.info("[DashboardMappingDimensionSummary] user=%s stats=%s", data_owner_id, stats)
+        return stats
+    finally:
+        cache.delete(lock_key)
+
+
+@shared_task(bind=True, max_retries=5)
 def refresh_dashboard_product_daily_summary_task(self, data_owner_id, only_dates=None):
     lock_key = _product_daily_summary_lock_key(data_owner_id)
     if not cache.add(lock_key, "1", timeout=1800):
@@ -111,6 +152,12 @@ def refresh_dashboard_product_daily_summary_task(self, data_owner_id, only_dates
             return {"rows_written": 0, "error": "user-not-found"}
 
         stats = rebuild_product_daily_summary_for_user(user, only_dates=only_dates or [])
+        monthly_stats = rebuild_mapping_filter_monthly_activity_summary_for_user(
+            user,
+            only_dates=only_dates or [],
+        )
+        stats["mapping_filter_monthly_activity_rows_written"] = monthly_stats.get("rows_written", 0)
+        stats["mapping_filter_months_scoped"] = monthly_stats.get("months_scoped", [])
         
         from apps.dashboard.services.invalidation import invalidate_dashboard_cache_for_user
         invalidate_dashboard_cache_for_user(data_owner_id, clear_materialized=True)
@@ -217,9 +264,26 @@ def refresh_all_dashboard_product_daily_summaries_task():
     for user in Users.objects.all().only("id").iterator(chunk_size=200):
         total_users += 1
         stats = rebuild_product_daily_summary_for_user(user, only_dates=[])
+        monthly_stats = rebuild_mapping_filter_monthly_activity_summary_for_user(user, only_dates=[])
         total_rows += int(stats.get("rows_written") or 0)
+        total_rows += int(monthly_stats.get("rows_written") or 0)
     result = {"users_processed": total_users, "rows_written": total_rows}
     logger.info("[DashboardProductDailySummaryAll] %s", result)
+    return result
+
+
+@shared_task
+def refresh_all_dashboard_mapping_dimension_summaries_task():
+    total_users = 0
+    total_rows = 0
+    for user in Users.objects.all().only("id").iterator(chunk_size=200):
+        total_users += 1
+        stats = rebuild_mapping_filter_daily_summary_for_user(user, only_dates=[])
+        monthly_stats = rebuild_mapping_filter_monthly_activity_summary_for_user(user, only_dates=[])
+        total_rows += int(stats.get("rows_written") or 0)
+        total_rows += int(monthly_stats.get("rows_written") or 0)
+    result = {"users_processed": total_users, "rows_written": total_rows}
+    logger.info("[DashboardMappingDimensionSummaryAll] %s", result)
     return result
 
 

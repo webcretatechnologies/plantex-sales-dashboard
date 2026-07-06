@@ -1,0 +1,360 @@
+<div class="ceo-card asin-fsn-datatable-card inventory-health-inline-card" id="{{ inventory_table_uid }}InventoryHealthCard">
+    <div class="ceo-card-header inventory-health-inline-header">
+        <div>
+            <span class="ceo-card-title">Inventory Health Breakdown (DOC)</span>
+            <div class="inventory-health-inline-subtitle">DOC = Total Stock / Same-Day Sales</div>
+        </div>
+        <div class="inventory-health-inline-toolbar">
+            <select id="{{ inventory_table_uid }}InventoryPlatformSelect" class="filter-select-top inventory-health-inline-select">
+                <option value="All" {% if request.GET.platform == "All" or not request.GET.platform %}selected{% endif %}>All Platforms</option>
+                <option value="Amazon" {% if request.GET.platform == "Amazon" %}selected{% endif %}>Amazon</option>
+                <option value="Flipkart" {% if request.GET.platform == "Flipkart" %}selected{% endif %}>Flipkart</option>
+            </select>
+            <select id="{{ inventory_table_uid }}InventoryDateRangeSelect" class="filter-select-top inventory-health-inline-select">
+                <option value="latest" selected>Latest Stock Date</option>
+                <option value="yesterday">Yesterday</option>
+                <option value="last_7_days">Last 7 Days</option>
+                <option value="last_15_days">Last 15 Days</option>
+                <option value="last_month">Last Month</option>
+                <option value="last_3_months">Last 3 Months</option>
+                <option value="last_6_months">Last 6 Months</option>
+                <option value="last_1_year">Last 1 Year</option>
+                <option value="custom">Custom Date Range</option>
+            </select>
+            <div id="{{ inventory_table_uid }}InventoryCustomDateGroup" class="inventory-health-inline-custom" style="display:none;">
+                <input type="date" id="{{ inventory_table_uid }}InventoryStartDate" class="filter-date-top" value="{{ request.GET.start_date }}">
+                <span>to</span>
+                <input type="date" id="{{ inventory_table_uid }}InventoryEndDate" class="filter-date-top" value="{{ request.GET.end_date }}">
+                <button type="button" id="{{ inventory_table_uid }}InventoryApplyDateBtn" class="btn-primary inventory-health-inline-apply">Apply</button>
+            </div>
+            <input type="search" id="{{ inventory_table_uid }}InventorySearchInput" class="inventory-health-inline-search" placeholder="Search SKU / ASIN / FSN...">
+            <button type="button" class="ceo-view-all-btn" id="{{ inventory_table_uid }}InventoryCsvBtn">Download CSV</button>
+            <button type="button" class="ceo-view-all-btn" id="{{ inventory_table_uid }}InventoryExcelBtn">Download Excel</button>
+        </div>
+    </div>
+    <div class="ceo-card-body no-pad inventory-health-inline-body">
+        <table class="ceo-table inventory-health-inline-table" id="{{ inventory_table_uid }}InventoryHealthTable" style="min-width:1320px;">
+            <thead>
+                <tr>
+                    <th data-field="date">Date</th>
+                    <th data-field="sku">Amazon SKU / Flipkart SKU</th>
+                    <th data-field="category">Category</th>
+                    <th class="num" data-field="amz_fba">AMZ FBA</th>
+                    <th class="num" data-field="amz_flex">AMZ Flex</th>
+                    <th class="num" data-field="total_amz_stock">Total AMZ Stock</th>
+                    <th class="num" data-field="fk_fbf">FK FBF</th>
+                    <th class="num" data-field="fk_flex">FK Flex</th>
+                    <th class="num" data-field="total_fk_stock">Total FK Stock</th>
+                    <th class="num">Total Stock</th>
+                    <th class="num">Total Sales</th>
+                    <th class="num">DOC</th>
+                    <th class="num" data-field="amz_revenue">AMZ Revenue</th>
+                    <th class="num" data-field="fk_revenue">FK Revenue</th>
+                    <th data-field="amz_status">AMZ Status</th>
+                    <th data-field="fk_status">FK Status</th>
+                    <th>Calculation</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td colspan="17" class="empty">Loading data...</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+(function () {
+    const endpoint = "{% url 'dashboard-modal-rows' inventory_view_name 'inventory-health' %}";
+    const uid = "{{ inventory_table_uid|escapejs }}";
+    const table = document.getElementById(uid + "InventoryHealthTable");
+    const platformSelect = document.getElementById(uid + "InventoryPlatformSelect");
+    const dateRangeSelect = document.getElementById(uid + "InventoryDateRangeSelect");
+    const customDateGroup = document.getElementById(uid + "InventoryCustomDateGroup");
+    const startDateInput = document.getElementById(uid + "InventoryStartDate");
+    const endDateInput = document.getElementById(uid + "InventoryEndDate");
+    const applyDateBtn = document.getElementById(uid + "InventoryApplyDateBtn");
+    const searchInput = document.getElementById(uid + "InventorySearchInput");
+    const csvBtn = document.getElementById(uid + "InventoryCsvBtn");
+    const excelBtn = document.getElementById(uid + "InventoryExcelBtn");
+    let dt = null;
+    let searchTimer = null;
+
+    if (!table || !platformSelect || !dateRangeSelect || !searchInput) return;
+
+    const tableConfigs = {
+        All: {
+            minWidth: "1320px",
+            emptyColspan: 17,
+            columns: [
+                ["Date", "date", ""],
+                ["Amazon SKU / Flipkart SKU", "sku", ""],
+                ["Category", "category", ""],
+                ["AMZ FBA", "amz_fba", "num"],
+                ["AMZ Flex", "amz_flex", "num"],
+                ["Total AMZ Stock", "total_amz_stock", "num"],
+                ["FK FBF", "fk_fbf", "num"],
+                ["FK Flex", "fk_flex", "num"],
+                ["Total FK Stock", "total_fk_stock", "num"],
+                ["Total Stock", "", "num"],
+                ["Total Sales", "", "num"],
+                ["DOC", "", "num"],
+                ["AMZ Revenue", "amz_revenue", "num"],
+                ["FK Revenue", "fk_revenue", "num"],
+                ["AMZ Status", "amz_status", ""],
+                ["FK Status", "fk_status", ""],
+                ["Calculation", "", ""]
+            ]
+        },
+        Amazon: {
+            minWidth: "980px",
+            emptyColspan: 11,
+            columns: [
+                ["Date", "date", ""],
+                ["SKU / ASIN", "az_sku", ""],
+                ["Category", "category", ""],
+                ["AMZ FBA", "amz_fba", "num"],
+                ["AMZ Flex", "amz_flex", "num"],
+                ["Total AMZ Stock", "total_amz_stock", "num"],
+                ["Sales", "amz_sales", "num"],
+                ["DOC", "amz_doc", "num"],
+                ["Revenue", "amz_revenue", "num"],
+                ["Status", "amz_status", ""],
+                ["Calculation", "", ""]
+            ]
+        },
+        Flipkart: {
+            minWidth: "980px",
+            emptyColspan: 11,
+            columns: [
+                ["Date", "date", ""],
+                ["SKU / FSN", "fk_sku", ""],
+                ["Category", "category", ""],
+                ["FK FBF", "fk_fbf", "num"],
+                ["FK Flex", "fk_flex", "num"],
+                ["Total FK Stock", "total_fk_stock", "num"],
+                ["Sales", "fk_sales", "num"],
+                ["DOC", "fk_doc", "num"],
+                ["Revenue", "fk_revenue", "num"],
+                ["Status", "fk_status", ""],
+                ["Calculation", "", ""]
+            ]
+        }
+    };
+
+    function currentPlatform() {
+        return tableConfigs[platformSelect.value] ? platformSelect.value : "All";
+    }
+
+    function currentConfig() {
+        return tableConfigs[currentPlatform()] || tableConfigs.All;
+    }
+
+    function escapeHtml(value) {
+        return String(value || "").replace(/[&<>"']/g, function (ch) {
+            return {
+                "&": "&amp;",
+                "<": "&lt;",
+                ">": "&gt;",
+                '"': "&quot;",
+                "'": "&#39;"
+            }[ch];
+        });
+    }
+
+    function destroyDataTable() {
+        if (dt) {
+            dt.destroy();
+            dt = null;
+        } else if (window.jQuery && $.fn.DataTable && $.fn.DataTable.isDataTable(table)) {
+            $(table).DataTable().destroy();
+        }
+    }
+
+    function setLoadingRow() {
+        const cfg = currentConfig();
+        const tbody = table.querySelector("tbody");
+        if (tbody) {
+            tbody.innerHTML = '<tr><td colspan="' + cfg.emptyColspan + '" class="empty">Loading data...</td></tr>';
+        }
+    }
+
+    function renderHeader() {
+        const cfg = currentConfig();
+        const thead = table.querySelector("thead");
+        if (!thead) return;
+        table.style.minWidth = cfg.minWidth;
+        thead.innerHTML = "<tr>" + cfg.columns.map(function (col) {
+            const field = col[1] ? ' data-field="' + escapeHtml(col[1]) + '"' : "";
+            const cls = col[2] ? ' class="' + escapeHtml(col[2]) + '"' : "";
+            return "<th" + cls + field + ">" + escapeHtml(col[0]) + "</th>";
+        }).join("") + "</tr>";
+    }
+
+    function cleanDashboardParams(params) {
+        [
+            "draw", "start", "length", "page", "page_size", "q", "all", "export",
+            "search[value]", "order_field", "order_dir", "identity_search",
+            "inventory_date_mode", "date_range", "start_date", "end_date", "_"
+        ].forEach(function (key) { params.delete(key); });
+        Array.from(params.keys()).forEach(function (key) {
+            if (key.indexOf("search[") === 0 || key.indexOf("order[") === 0 || key.indexOf("columns[") === 0) {
+                params.delete(key);
+            }
+        });
+        return params;
+    }
+
+    function applyLocalFilters(params) {
+        const platform = currentPlatform();
+        const dateMode = dateRangeSelect.value || "latest";
+        params.set("platform", platform);
+        params.set("identity_search", "1");
+
+        if (dateMode === "latest") {
+            params.set("inventory_date_mode", "latest");
+        } else if (dateMode === "custom") {
+            params.set("date_range", "custom");
+            if (startDateInput && startDateInput.value) params.set("start_date", startDateInput.value);
+            if (endDateInput && endDateInput.value) params.set("end_date", endDateInput.value);
+        } else {
+            params.set("date_range", dateMode);
+        }
+        return params;
+    }
+
+    function buildRequestParams(data) {
+        const params = applyLocalFilters(cleanDashboardParams(new URLSearchParams(window.location.search || "")));
+        if (data && data.draw) params.set("draw", data.draw);
+        if (data && data.start !== undefined) params.set("start", data.start);
+        if (data && data.length !== undefined) params.set("length", data.length);
+
+        const searchValue = (data && data.search && data.search.value) ? data.search.value : (searchInput.value || "");
+        if (searchValue.trim()) {
+            params.set("search[value]", searchValue.trim());
+        }
+
+        const order = data && data.order && data.order.length ? data.order[0] : null;
+        if (order) {
+            const headers = table.querySelectorAll("thead th");
+            const th = headers[Number(order.column)];
+            const field = th ? th.getAttribute("data-field") : "";
+            if (field) {
+                params.set("order_field", field);
+                params.set("order_dir", order.dir || "desc");
+            }
+        }
+        return params;
+    }
+
+    function nonOrderableTargets() {
+        return Array.from(table.querySelectorAll("thead th")).reduce(function (targets, th, index) {
+            if (!th.getAttribute("data-field")) targets.push(index);
+            return targets;
+        }, []);
+    }
+
+    function initDataTable() {
+        if (!window.jQuery || !$.fn.DataTable) {
+            const tbody = table.querySelector("tbody");
+            if (tbody) {
+                tbody.innerHTML = '<tr><td colspan="' + currentConfig().emptyColspan + '" class="empty">Table tools are still loading. Please refresh.</td></tr>';
+            }
+            return;
+        }
+
+        destroyDataTable();
+        renderHeader();
+        setLoadingRow();
+
+        dt = $(table).DataTable({
+            serverSide: true,
+            processing: true,
+            pageLength: 10,
+            lengthChange: true,
+            lengthMenu: [10, 25, 50, 100],
+            searching: true,
+            ordering: true,
+            order: [[0, "desc"]],
+            info: true,
+            autoWidth: false,
+            responsive: false,
+            dom: '<"dt-top"l>rt<"dt-bottom"ip>',
+            columnDefs: [{ targets: nonOrderableTargets(), orderable: false }],
+            ajax: function (data, callback) {
+                fetch(endpoint + "?" + buildRequestParams(data).toString(), {
+                    headers: { "X-Requested-With": "XMLHttpRequest" }
+                })
+                    .then(function (resp) {
+                        if (!resp.ok) throw new Error("HTTP " + resp.status);
+                        return resp.json();
+                    })
+                    .then(callback)
+                    .catch(function (err) {
+                        callback({
+                            draw: data.draw || 1,
+                            recordsTotal: 0,
+                            recordsFiltered: 0,
+                            data: []
+                        });
+                    });
+            },
+            language: {
+                processing: "Loading inventory...",
+                emptyTable: "No inventory data available for the selected filters",
+                zeroRecords: "No matching SKU, ASIN, or FSN found",
+                lengthMenu: "Show _MENU_ entries",
+                info: "Showing _START_ to _END_ of _TOTAL_ entries",
+                paginate: {
+                    previous: "Prev",
+                    next: "Next"
+                }
+            }
+        });
+    }
+
+    function redrawTable() {
+        if (dt) {
+            dt.ajax.reload(null, true);
+        } else {
+            initDataTable();
+        }
+    }
+
+    function syncCustomDateGroup() {
+        if (!customDateGroup) return;
+        customDateGroup.style.display = dateRangeSelect.value === "custom" ? "flex" : "none";
+    }
+
+    function downloadInventory(format) {
+        const params = applyLocalFilters(cleanDashboardParams(new URLSearchParams(window.location.search || "")));
+        const query = searchInput.value.trim();
+        if (query) params.set("q", query);
+        params.set("export", format);
+        window.location.href = endpoint + "?" + params.toString();
+    }
+
+    platformSelect.addEventListener("change", initDataTable);
+    dateRangeSelect.addEventListener("change", function () {
+        syncCustomDateGroup();
+        if (dateRangeSelect.value !== "custom") redrawTable();
+    });
+    if (applyDateBtn) applyDateBtn.addEventListener("click", redrawTable);
+    searchInput.addEventListener("input", function () {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(function () {
+            if (dt) {
+                dt.search(searchInput.value.trim()).draw();
+            } else {
+                initDataTable();
+            }
+        }, 300);
+    });
+    if (csvBtn) csvBtn.addEventListener("click", function () { downloadInventory("csv"); });
+    if (excelBtn) excelBtn.addEventListener("click", function () { downloadInventory("excel"); });
+
+    syncCustomDateGroup();
+    initDataTable();
+})();
+</script>

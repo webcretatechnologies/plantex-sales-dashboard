@@ -1,4 +1,5 @@
 from django.core.cache import cache
+from django.conf import settings
 import logging
 
 from apps.dashboard.services.materialized_cache import clear_materialized_summaries_for_user
@@ -32,7 +33,10 @@ def invalidate_dashboard_cache_for_user(user_id, *, clear_materialized=True):
         cache.delete(f"asin_meta_{version}_{user_id}")
         cache.delete(f"fsn_meta_{version}_{user_id}")
 
-    if clear_materialized:
+    # Keep previous materialized rows by default. Exact reads are still keyed by
+    # data_version, and older rows give the dashboard a fast stale fallback while
+    # the latest summaries are rebuilt after uploads.
+    if clear_materialized and getattr(settings, "DASHBOARD_DELETE_MATERIALIZED_ON_INVALIDATE", False):
         try:
             clear_materialized_summaries_for_user(user_id)
         except Exception:

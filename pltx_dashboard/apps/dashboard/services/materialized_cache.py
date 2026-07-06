@@ -43,11 +43,13 @@ def get_materialized_summary(
     view_type,
     data_version,
     filter_hash,
+    section_scope="all",
 ):
     row = (
         DashboardMaterializedSummary.objects.filter(
             user_id=user_id,
             view_type=view_type,
+            section_scope=section_scope or "all",
             data_version=data_version,
             filter_hash=filter_hash,
         )
@@ -59,6 +61,40 @@ def get_materialized_summary(
     return _unpack_payload(row.payload_blob)
 
 
+def get_stale_materialized_summary(
+    *,
+    user_id,
+    view_type,
+    current_data_version,
+    filter_hash,
+    section_scope="all",
+    max_age_days=14,
+):
+    """
+    Return the most recent matching payload from an older data version.
+
+    Exact-version reads remain the freshness contract. This helper is only used
+    as a fast fallback while a newer dashboard version is being rebuilt.
+    """
+    qs = DashboardMaterializedSummary.objects.filter(
+        user_id=user_id,
+        view_type=view_type,
+        section_scope=section_scope or "all",
+        filter_hash=filter_hash,
+    ).exclude(data_version=current_data_version)
+    if max_age_days:
+        qs = qs.filter(updated_at__gte=timezone.now() - timedelta(days=max_age_days))
+
+    row = qs.order_by("-updated_at", "-data_version").first()
+    if not row:
+        return None
+    return {
+        "payload": _unpack_payload(row.payload_blob),
+        "data_version": row.data_version,
+        "updated_at": row.updated_at,
+    }
+
+
 def store_materialized_summary(
     *,
     user_id,
@@ -67,6 +103,7 @@ def store_materialized_summary(
     filter_hash,
     normalized_filters,
     payload,
+    section_scope="all",
 ):
     payload_blob = _pack_payload(payload)
     max_retries = 3
@@ -75,6 +112,7 @@ def store_materialized_summary(
             DashboardMaterializedSummary.objects.update_or_create(
                 user_id=user_id,
                 view_type=view_type,
+                section_scope=section_scope or "all",
                 data_version=data_version,
                 filter_hash=filter_hash,
                 defaults={
@@ -132,20 +170,24 @@ def cleanup_materialized_summaries(retention_days=14, max_rows_per_view=800, dry
 
     overflow_deleted = 0
     grouped = (
-        DashboardMaterializedSummary.objects.values("user_id", "view_type")
+        DashboardMaterializedSummary.objects.values("user_id", "view_type", "section_scope")
         .annotate(row_count=Count("id"))
         .filter(row_count__gt=max_rows_per_view)
     )
 
     for group in grouped.iterator(chunk_size=200):
         scoped_qs = DashboardMaterializedSummary.objects.filter(
-            user_id=group["user_id"], view_type=group["view_type"]
+            user_id=group["user_id"],
+            view_type=group["view_type"],
+            section_scope=group["section_scope"],
         ).order_by("-updated_at", "-id")
         keep_ids = list(
             scoped_qs.values_list("id", flat=True)[:max_rows_per_view]
         )
         delete_qs = DashboardMaterializedSummary.objects.filter(
-            user_id=group["user_id"], view_type=group["view_type"]
+            user_id=group["user_id"],
+            view_type=group["view_type"],
+            section_scope=group["section_scope"],
         ).exclude(id__in=keep_ids)
         if dry_run:
             overflow_deleted += delete_qs.count()

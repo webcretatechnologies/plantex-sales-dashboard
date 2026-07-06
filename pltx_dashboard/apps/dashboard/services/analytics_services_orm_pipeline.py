@@ -1,8 +1,14 @@
 import datetime
 import calendar
+import logging
 import time
 
-from apps.dashboard.models import DashboardDailySummary, DashboardProductDailySummary
+from apps.dashboard.models import (
+    DashboardDailySummary,
+    DashboardMappingFilterDailySummary,
+    DashboardMappingFilterMonthlyActivitySummary,
+    DashboardProductDailySummary,
+)
 from apps.dashboard.services.analytics_services_orm import (
     generate_charts_data_orm,
 )
@@ -21,9 +27,14 @@ from apps.dashboard.services.filters import (
     get_filtered_mapping_querysets,
     has_launch_date_filter,
 )
+from django.conf import settings
+from django.core.exceptions import EmptyResultSet
 from django.core.cache import cache
+from django.db import connection
 from django.db.models import Sum, Max, Case, When, F, Value, Count, Q
 from django.utils import timezone
+
+logger = logging.getLogger(__name__)
 
 def safe_replace_year(d, year_offset=-1):
     try:
@@ -56,6 +67,16 @@ def _filter_values(value):
         return [str(item).strip() for item in value if str(item).strip()]
     item = str(value).strip()
     return [item] if item else []
+
+
+MAPPING_DIMENSION_SUMMARY_FIELDS = {
+    "category_manager",
+    "series_name",
+    "material",
+    "size",
+    "brand_name",
+    "finish",
+}
 
 
 def _apply_inventory_value_filter(qs, field_name, value):
@@ -302,8 +323,35 @@ def _continue_discontinue_metrics_from_summary(fk_summary_qs, fsn_meta):
         return counts, revenue
     fsn_meta = fsn_meta or {}
 
-    for row in fk_summary_qs.values("fsn").annotate(revenue=Sum("revenue")):
+    rows = _force_indexed_product_summary_sum_rows(
+        fk_summary_qs,
+        "fsn",
+        (("revenue", "revenue"),),
+    )
+    if rows is None:
+        rows = fk_summary_qs.values("fsn").annotate(revenue=Sum("revenue"))
+
+    for row in rows:
         fsn = str(row.get("fsn") or "").strip()
+        if not fsn:
+            continue
+        status = _fsn_status_bucket((fsn_meta.get(fsn) or {}).get("product_status"))
+        if not status:
+            status = "Unmapped"
+        counts[status] += 1
+        revenue[status] += _to_float(row.get("revenue"))
+    return counts, revenue
+
+
+def _continue_discontinue_metrics_from_monthly(monthly_fk_qs, fsn_meta):
+    counts = {"Continued": 0, "Discontinued": 0, "Unmapped": 0}
+    revenue = {"Continued": 0.0, "Discontinued": 0.0, "Unmapped": 0.0}
+    if monthly_fk_qs is None:
+        return counts, revenue
+    fsn_meta = fsn_meta or {}
+
+    for row in monthly_fk_qs.values("asin").annotate(revenue=Sum("revenue")):
+        fsn = str(row.get("asin") or "").strip()
         if not fsn:
             continue
         status = _fsn_status_bucket((fsn_meta.get(fsn) or {}).get("product_status"))
@@ -467,20 +515,32 @@ def _get_daily_summary_base_qs(user, filters):
     if _has_sku_filters(filters) or has_launch_date_filter(filters):
         return None
 
-    # DashboardDailySummary only stores category/portfolio/subcategory as dimensions.
-    # Filters on mapping-level fields (category_manager, series_name, material, size,
-    # brand_name, ratings, finish, parent_asin, sku) and inventory_health (resolved to
-    # per-ASIN allow-lists from DashboardInventoryHealthSummary) cannot be applied to
-    # the daily summary table — fall back to the per-ASIN path so those filters take effect.
-    _MAPPING_ONLY_FIELDS = {
-        "category_manager", "series_name", "material", "size",
-        "brand_name", "ratings", "finish", "parent_asin", "sku",
-        "inventory_health",  # resolved via DashboardInventoryHealthSummary → ASIN/FSN allow-lists
+    unsupported_mapping_fields = {
+        "parent_asin",
+        "ratings",
+        "sku",
+        "inventory_health",
     }
-    if any(filters.get(f) for f in _MAPPING_ONLY_FIELDS):
+    if any(filters.get(f) for f in unsupported_mapping_fields):
         return None
 
-    qs = DashboardDailySummary.objects.filter(user=user)
+    active_mapping_fields = [field for field in MAPPING_DIMENSION_SUMMARY_FIELDS if filters.get(field)]
+    has_base_dimension_filter = bool(
+        filters.get("category") or filters.get("portfolio") or filters.get("subcategory")
+    )
+    if len(active_mapping_fields) == 1 and not has_base_dimension_filter:
+        mapping_field = active_mapping_fields[0]
+        qs = DashboardMappingFilterDailySummary.objects.filter(
+            user=user,
+            filter_name=mapping_field,
+        )
+        qs = _apply_dimension_filter(qs, "filter_value", filters.get(mapping_field))
+        use_mapping_summary = False
+    elif active_mapping_fields:
+        return None
+    else:
+        use_mapping_summary = False
+        qs = DashboardDailySummary.objects.filter(user=user)
     platform_filter = (filters.get("platform") or "").strip()
     if platform_filter == "Amazon":
         qs = qs.filter(platform="Amazon")
@@ -490,6 +550,9 @@ def _get_daily_summary_base_qs(user, filters):
     qs = _apply_dimension_filter(qs, "category", filters.get("category"))
     qs = _apply_dimension_filter(qs, "portfolio", filters.get("portfolio"))
     qs = _apply_dimension_filter(qs, "subcategory", filters.get("subcategory"))
+    if use_mapping_summary:
+        for field in MAPPING_DIMENSION_SUMMARY_FIELDS:
+            qs = _apply_dimension_filter(qs, field, filters.get(field))
     return qs
 
 
@@ -507,8 +570,15 @@ def _get_product_daily_summary_querysets(user, filters, *, apply_date_filter=Tru
 
 def product_insights_need_exact_dates(filters):
     """Use daily product summaries whenever the UI date filter must be exact."""
+    date_range = str(filters.get("date_range") or "").strip()
+    monthly_safe_ranges = {
+        "last_month",
+        "last_3_months",
+        "last_6_months",
+        "last_1_year",
+    }
     return bool(
-        filters.get("date_range")
+        (date_range and date_range not in monthly_safe_ranges)
         or filters.get("start_date")
         or filters.get("end_date")
         or filters.get("compare_start_date")
@@ -774,6 +844,14 @@ def _build_kpi_cache_key(user_id, cache_identity):
     return f"dashboard_kpi_payload_v3_{user_id}_{data_version}_{filter_hash}"
 
 
+def _cache_lock_wait_seconds(setting_name, default):
+    try:
+        configured = float(getattr(settings, setting_name, default))
+    except (TypeError, ValueError):
+        configured = default
+    return max(0.0, min(configured, 30.0))
+
+
 def _batch_period_aggregates(base_qs, periods, rev_field="revenue", spend_field="total_spend"):
     """Compute revenue and spend for multiple periods in a single SQL query."""
     if base_qs is None:
@@ -801,6 +879,172 @@ def _batch_period_aggregates(base_qs, periods, rev_field="revenue", spend_field=
     return {k: float(v or 0) for k, v in result.items()}
 
 
+def _force_indexed_product_summary_sum_rows(qs, sku_field, sums):
+    """
+    MySQL can choose FSN/SKU-leading indexes for broad date-range GROUP BY
+    queries, scanning millions of rows before applying the date filter. Compile
+    Django's already-filtered queryset as a subquery and hint the date-leading
+    index only for this aggregation.
+    """
+    sums = tuple(sums or ())
+    index_by_field = {
+        "asin": "idx_dpds_u_p_d_asn",
+        "fsn": "idx_dpds_u_p_d_fsn",
+    }
+    index_name = index_by_field.get(sku_field)
+    if not index_name or qs is None or not sums:
+        return None
+    if connection.vendor != "mysql" or getattr(qs, "model", None) is not DashboardProductDailySummary:
+        return None
+
+    metric_fields = sorted({source for source, _alias in sums})
+    source_qs = (
+        qs.exclude(**{f"{sku_field}__isnull": True})
+        .exclude(**{sku_field: ""})
+        .values(sku_field, *metric_fields)
+    )
+    try:
+        source_sql, params = source_qs.query.sql_with_params()
+    except EmptyResultSet:
+        return []
+    except Exception:
+        logger.debug(
+            "[DashboardPerf] Could not compile product summary activity query",
+            exc_info=True,
+        )
+        return None
+
+    table_name = connection.ops.quote_name(DashboardProductDailySummary._meta.db_table)
+    from_clause = f"FROM {table_name}"
+    if from_clause not in source_sql:
+        return None
+    forced_source_sql = source_sql.replace(
+        from_clause,
+        f"{from_clause} FORCE INDEX ({connection.ops.quote_name(index_name)})",
+        1,
+    )
+
+    qn = connection.ops.quote_name
+    sum_sql = ",\n            ".join(
+        f"SUM({qn(source)}) AS {qn(alias)}" for source, alias in sums
+    )
+    sql = f"""
+        SELECT
+            {qn(sku_field)} AS {qn(sku_field)},
+            {sum_sql}
+        FROM ({forced_source_sql}) AS dpds_forced
+        GROUP BY {qn(sku_field)}
+    """
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(sql, params)
+            columns = [col[0] for col in cursor.description]
+            return [dict(zip(columns, row)) for row in cursor.fetchall()]
+    except Exception:
+        logger.debug(
+            "[DashboardPerf] Forced-index product summary activity query failed",
+            exc_info=True,
+        )
+        return None
+
+
+def _force_indexed_product_summary_activity_rows(qs, sku_field):
+    return _force_indexed_product_summary_sum_rows(
+        qs,
+        sku_field,
+        (
+            ("units_sold", "total_units"),
+            ("page_views", "total_pv"),
+            ("revenue", "total_rev"),
+            ("orders", "total_orders"),
+            ("ad_spend", "total_ad_spend"),
+        ),
+    )
+
+
+def _force_indexed_product_summary_period_rows(
+    qs,
+    sku_field,
+    *,
+    cm_start,
+    cm_end,
+    pm_start,
+    pm_end,
+):
+    index_by_field = {
+        "asin": "idx_dpds_u_p_d_asn",
+        "fsn": "idx_dpds_u_p_d_fsn",
+    }
+    index_name = index_by_field.get(sku_field)
+    if not index_name or qs is None:
+        return None
+    if connection.vendor != "mysql" or getattr(qs, "model", None) is not DashboardProductDailySummary:
+        return None
+
+    period_min = min(cm_start, pm_start)
+    period_max = max(cm_end, pm_end)
+    source_qs = (
+        qs.filter(date__gte=period_min, date__lte=period_max)
+        .exclude(**{f"{sku_field}__isnull": True})
+        .exclude(**{sku_field: ""})
+        .values(sku_field, "date", "revenue", "page_views")
+    )
+    try:
+        source_sql, source_params = source_qs.query.sql_with_params()
+    except EmptyResultSet:
+        return []
+    except Exception:
+        logger.debug(
+            "[DashboardPerf] Could not compile product summary period query",
+            exc_info=True,
+        )
+        return None
+
+    table_name = connection.ops.quote_name(DashboardProductDailySummary._meta.db_table)
+    from_clause = f"FROM {table_name}"
+    if from_clause not in source_sql:
+        return None
+    forced_source_sql = source_sql.replace(
+        from_clause,
+        f"{from_clause} FORCE INDEX ({connection.ops.quote_name(index_name)})",
+        1,
+    )
+
+    qn = connection.ops.quote_name
+    sql = f"""
+        SELECT
+            {qn(sku_field)} AS {qn(sku_field)},
+            SUM(CASE WHEN {qn("date")} BETWEEN %s AND %s THEN {qn("revenue")} ELSE 0 END) AS cm_r,
+            SUM(CASE WHEN {qn("date")} BETWEEN %s AND %s THEN {qn("revenue")} ELSE 0 END) AS pm_r,
+            SUM(CASE WHEN {qn("date")} BETWEEN %s AND %s THEN {qn("page_views")} ELSE 0 END) AS cm_pv,
+            SUM(CASE WHEN {qn("date")} BETWEEN %s AND %s THEN {qn("page_views")} ELSE 0 END) AS pm_pv
+        FROM ({forced_source_sql}) AS dpds_forced
+        GROUP BY {qn(sku_field)}
+    """
+    params = (
+        cm_start,
+        cm_end,
+        pm_start,
+        pm_end,
+        cm_start,
+        cm_end,
+        pm_start,
+        pm_end,
+        *source_params,
+    )
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(sql, params)
+            columns = [col[0] for col in cursor.description]
+            return [dict(zip(columns, row)) for row in cursor.fetchall()]
+    except Exception:
+        logger.debug(
+            "[DashboardPerf] Forced-index product summary period query failed",
+            exc_info=True,
+        )
+        return None
+
+
 def _compute_sku_activity_combined_from_summary(qs, sku_field):
     active = selling = zero_selling_count = zero_sales_pv = 0
     all_zero_skus = set()
@@ -808,18 +1052,22 @@ def _compute_sku_activity_combined_from_summary(qs, sku_field):
     if qs is None:
         return active, selling, zero_selling_count, zero_sales_pv, all_zero_skus, ad_spend_skus
 
-    for row in (
-        qs.exclude(**{f"{sku_field}__isnull": True})
-        .exclude(**{sku_field: ""})
-        .values(sku_field)
-        .annotate(
-            total_units=Sum("units_sold"),
-            total_pv=Sum("page_views"),
-            total_rev=Sum("revenue"),
-            total_orders=Sum("orders"),
-            total_ad_spend=Sum("ad_spend"),
+    rows = _force_indexed_product_summary_activity_rows(qs, sku_field)
+    if rows is None:
+        rows = (
+            qs.exclude(**{f"{sku_field}__isnull": True})
+            .exclude(**{sku_field: ""})
+            .values(sku_field)
+            .annotate(
+                total_units=Sum("units_sold"),
+                total_pv=Sum("page_views"),
+                total_rev=Sum("revenue"),
+                total_orders=Sum("orders"),
+                total_ad_spend=Sum("ad_spend"),
+            )
         )
-    ):
+
+    for row in rows:
         active += 1
         sku = str(row.get(sku_field) or "").strip()
         total_rev = _to_float(row.get("total_rev"))
@@ -833,6 +1081,1048 @@ def _compute_sku_activity_combined_from_summary(qs, sku_field):
         if (row.get("total_ad_spend") or 0) > 0 and sku:
             ad_spend_skus.add(sku)
     return active, selling, zero_selling_count, zero_sales_pv, all_zero_skus, ad_spend_skus
+
+
+def _compute_sku_activity_combined_from_monthly(qs):
+    active = selling = zero_selling_count = zero_sales_pv = 0
+    all_zero_skus = set()
+    ad_spend_skus = set()
+    if qs is None:
+        return active, selling, zero_selling_count, zero_sales_pv, all_zero_skus, ad_spend_skus
+
+    for row in (
+        qs.exclude(asin__isnull=True)
+        .exclude(asin="")
+        .values("asin")
+        .annotate(
+            total_units=Sum("units"),
+            total_pv=Sum("pageviews"),
+            total_rev=Sum("revenue"),
+            total_ad_spend=Sum("total_spend"),
+        )
+    ):
+        active += 1
+        sku = str(row.get("asin") or "").strip()
+        total_rev = _to_float(row.get("total_rev"))
+        if total_rev > 0:
+            selling += 1
+        elif total_rev == 0:
+            zero_selling_count += 1
+            zero_sales_pv += int(row.get("total_pv") or 0)
+            if sku:
+                all_zero_skus.add(sku)
+        if (row.get("total_ad_spend") or 0) > 0 and sku:
+            ad_spend_skus.add(sku)
+    return active, selling, zero_selling_count, zero_sales_pv, all_zero_skus, ad_spend_skus
+
+
+def _ad_spend_skus_from_summary(qs, sku_field):
+    if qs is None:
+        return set()
+    return {
+        str(sku).strip()
+        for sku in qs.filter(ad_spend__gt=0)
+        .exclude(**{f"{sku_field}__isnull": True})
+        .exclude(**{sku_field: ""})
+        .values_list(sku_field, flat=True)
+        .distinct()
+        if str(sku or "").strip()
+    }
+
+
+def _ad_spend_skus_from_monthly(qs):
+    if qs is None:
+        return set()
+    return {
+        str(sku).strip()
+        for sku in qs.filter(total_spend__gt=0)
+        .exclude(asin__isnull=True)
+        .exclude(asin="")
+        .values_list("asin", flat=True)
+        .distinct()
+        if str(sku or "").strip()
+    }
+
+
+def _clean_listing_id_set(values):
+    return {str(value or "").strip() for value in values if str(value or "").strip()}
+
+
+def _listing_ids_from_mapping_qs(qs, field_name):
+    if qs is None:
+        return set()
+    return _clean_listing_id_set(
+        qs.exclude(**{f"{field_name}__isnull": True})
+        .exclude(**{field_name: ""})
+        .values_list(field_name, flat=True)
+        .distinct()
+        .iterator(chunk_size=5000)
+    )
+
+
+def _listing_activity_counts_from_product_summary(qs, sku_field, universe):
+    detail = {
+        "selling_ids": set(),
+        "pageview_ids": set(),
+        "non_selling_pageview_ids": set(),
+        "non_selling_pageviews": 0,
+    }
+    if qs is None or not universe:
+        return detail
+
+    rows = _force_indexed_product_summary_activity_rows(qs, sku_field)
+    if rows is None:
+        rows = (
+            qs.exclude(**{f"{sku_field}__isnull": True})
+            .exclude(**{sku_field: ""})
+            .values(sku_field)
+            .annotate(
+                total_units=Sum("units_sold"),
+                total_pv=Sum("page_views"),
+            )
+            .iterator(chunk_size=5000)
+        )
+
+    for row in rows:
+        sku = str(row.get(sku_field) or "").strip()
+        if not sku or sku not in universe:
+            continue
+        units = int(row.get("total_units") or 0)
+        pageviews = int(row.get("total_pv") or 0)
+        if units > 0:
+            detail["selling_ids"].add(sku)
+        if pageviews > 0:
+            detail["pageview_ids"].add(sku)
+            if units <= 0:
+                detail["non_selling_pageview_ids"].add(sku)
+                detail["non_selling_pageviews"] += pageviews
+    return detail
+
+
+def _listing_activity_counts_from_monthly(qs, universe):
+    detail = {
+        "selling_ids": set(),
+        "pageview_ids": set(),
+        "non_selling_pageview_ids": set(),
+        "non_selling_pageviews": 0,
+    }
+    if qs is None or not universe:
+        return detail
+
+    rows = (
+        qs.exclude(asin__isnull=True)
+        .exclude(asin="")
+        .values("asin")
+        .annotate(
+            total_units=Sum("units"),
+            total_pv=Sum("pageviews"),
+        )
+        .iterator(chunk_size=5000)
+    )
+    for row in rows:
+        sku = str(row.get("asin") or "").strip()
+        if not sku or sku not in universe:
+            continue
+        units = int(row.get("total_units") or 0)
+        pageviews = int(row.get("total_pv") or 0)
+        if units > 0:
+            detail["selling_ids"].add(sku)
+        if pageviews > 0:
+            detail["pageview_ids"].add(sku)
+            if units <= 0:
+                detail["non_selling_pageview_ids"].add(sku)
+                detail["non_selling_pageviews"] += pageviews
+    return detail
+
+
+def _latest_inventory_summary_stocked_ids(user, platform):
+    from apps.dashboard.models import DashboardInventoryHealthSummary
+
+    latest = DashboardInventoryHealthSummary.objects.filter(user=user).aggregate(m=Max("date")).get("m")
+    if not latest:
+        return set()
+
+    if platform == "Amazon":
+        rows = (
+            DashboardInventoryHealthSummary.objects.filter(
+                user=user,
+                date=latest,
+                platform__in=["Amazon", "Combined"],
+            )
+            .filter(Q(stock_qty__gt=0) | Q(fba_qty__gt=0) | Q(flex_qty__gt=0))
+            .values("asin", "sku")
+            .iterator(chunk_size=5000)
+        )
+        return _clean_listing_id_set((row.get("asin") or row.get("sku")) for row in rows)
+
+    rows = (
+        DashboardInventoryHealthSummary.objects.filter(
+            user=user,
+            date=latest,
+            platform__in=["Flipkart", "Combined"],
+        )
+        .filter(Q(fk_stock_qty__gt=0) | Q(fk_fba_qty__gt=0) | Q(fk_flex_qty__gt=0))
+        .values("fsn", "sku")
+        .iterator(chunk_size=5000)
+    )
+    return _clean_listing_id_set((row.get("fsn") or row.get("sku")) for row in rows)
+
+
+def _latest_stocked_listing_ids(user, platform):
+    cache_key = f"latest_stocked_listing_ids_v1_{user.id}_{platform}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return set(cached)
+
+    stocked = _latest_inventory_summary_stocked_ids(user, platform)
+    if stocked:
+        cache.set(cache_key, list(stocked), timeout=300)
+        return stocked
+
+    if platform == "Amazon":
+        from apps.dashboard.models import FBAStockData, FlexStockData
+
+        latest_fba = FBAStockData.objects.filter(user=user).aggregate(m=Max("date")).get("m")
+        latest_flex = FlexStockData.objects.filter(user=user).aggregate(m=Max("date")).get("m")
+        if latest_fba:
+            stocked.update(
+                _clean_listing_id_set(
+                    FBAStockData.objects.filter(
+                        user=user,
+                        date=latest_fba,
+                        ending_warehouse_balance__gt=0,
+                    ).values_list("asin", flat=True).iterator(chunk_size=5000)
+                )
+            )
+        if latest_flex:
+            stocked.update(
+                _clean_listing_id_set(
+                    FlexStockData.objects.filter(
+                        user=user,
+                        date=latest_flex,
+                        qty__gt=0,
+                    ).values_list("asin", flat=True).iterator(chunk_size=5000)
+                )
+            )
+        cache.set(cache_key, list(stocked), timeout=300)
+        return stocked
+
+    from apps.dashboard.models import FlipkartInventoryStock, Flipkartfba
+
+    latest_fk_inv = FlipkartInventoryStock.objects.filter(user=user).aggregate(m=Max("date")).get("m")
+    latest_fk_fba = Flipkartfba.objects.filter(user=user).aggregate(m=Max("date")).get("m")
+    if latest_fk_inv:
+        stocked.update(
+            _clean_listing_id_set(
+                FlipkartInventoryStock.objects.filter(
+                    user=user,
+                    date=latest_fk_inv,
+                    qty__gt=0,
+                ).values_list("fsn", flat=True).iterator(chunk_size=5000)
+            )
+        )
+    if latest_fk_fba:
+        stocked.update(
+            _clean_listing_id_set(
+                Flipkartfba.objects.filter(
+                    user=user,
+                    date=latest_fk_fba,
+                    live_on_website__gt=0,
+                ).values_list("fsn", flat=True).iterator(chunk_size=5000)
+            )
+        )
+    cache.set(cache_key, list(stocked), timeout=300)
+    return stocked
+
+
+def _date_where_sql(alias, filters):
+    date_range = str(filters.get("date_range") or "").strip()
+    today = timezone.localdate()
+    start = end = None
+    if date_range and date_range != "custom":
+        if date_range == "yesterday":
+            start = end = today - datetime.timedelta(days=1)
+        elif date_range == "last_7_days":
+            start, end = today - datetime.timedelta(days=6), today
+        elif date_range == "last_15_days":
+            start, end = today - datetime.timedelta(days=14), today
+        elif date_range == "last_month":
+            first_day = today.replace(day=1)
+            end = first_day - datetime.timedelta(days=1)
+            start = end.replace(day=1)
+        elif date_range == "last_3_months":
+            start, end = today - datetime.timedelta(days=90), today
+        elif date_range == "last_6_months":
+            start, end = today - datetime.timedelta(days=180), today
+        elif date_range == "last_1_year":
+            start, end = today - datetime.timedelta(days=365), today
+
+    start = start or _parse_ymd_date(filters.get("start_date"))
+    end = end or _parse_ymd_date(filters.get("end_date"))
+    clauses = []
+    params = []
+    if start:
+        clauses.append(f"{alias}.date >= %s")
+        params.append(start)
+    if end:
+        clauses.append(f"{alias}.date <= %s")
+        params.append(end)
+    return clauses, params
+
+
+def _append_value_filter_sql(clauses, params, expression, value):
+    values = _filter_values(value)
+    if not values:
+        return
+    placeholders = ", ".join(["%s"] * len(values))
+    clauses.append(f"{expression} IN ({placeholders})")
+    params.extend(values)
+
+
+def _can_use_joined_mapping_activity(filters):
+    if not any(filters.get(field) for field in MAPPING_DIMENSION_SUMMARY_FIELDS):
+        return False
+    unsupported = {
+        "asin",
+        "fsn",
+        "parent_asin",
+        "sku",
+        "ratings",
+        "inventory_health",
+        "launch_date_range",
+        "launch_start_date",
+        "launch_end_date",
+    }
+    return not any(filters.get(field) for field in unsupported)
+
+
+def _active_single_mapping_filter_field(filters):
+    active = [field for field in MAPPING_DIMENSION_SUMMARY_FIELDS if filters.get(field)]
+    return active[0] if len(active) == 1 else None
+
+
+def _last_day_of_month(value):
+    return calendar.monthrange(value.year, value.month)[1]
+
+
+def _full_month_range(start, end):
+    if not start or not end:
+        return None
+    if end < start:
+        start, end = end, start
+    if start.day != 1:
+        return None
+    if end.day != _last_day_of_month(end):
+        return None
+    return start.replace(day=1), end.replace(day=1)
+
+
+def _mapping_activity_month_bounds(filters):
+    start_custom = _parse_ymd_date(filters.get("start_date"))
+    end_custom = _parse_ymd_date(filters.get("end_date"))
+    if start_custom or end_custom:
+        return _full_month_range(start_custom, end_custom)
+
+    date_range = str(filters.get("date_range") or "").strip()
+    if not date_range:
+        return "all", "all"
+
+    if date_range == "last_month":
+        today = timezone.localdate()
+        first_of_this_month = today.replace(day=1)
+        last_month_end = first_of_this_month - datetime.timedelta(days=1)
+        last_month_start = last_month_end.replace(day=1)
+        return last_month_start, last_month_start
+
+    return None
+
+
+def _mapping_activity_date_bounds(filters):
+    date_range = str(filters.get("date_range") or "").strip()
+    today = timezone.localdate()
+    start = end = None
+    if date_range and date_range != "custom":
+        if date_range == "yesterday":
+            start = end = today - datetime.timedelta(days=1)
+        elif date_range == "last_7_days":
+            start, end = today - datetime.timedelta(days=6), today
+        elif date_range == "last_15_days":
+            start, end = today - datetime.timedelta(days=14), today
+        elif date_range == "last_month":
+            first_day = today.replace(day=1)
+            end = first_day - datetime.timedelta(days=1)
+            start = end.replace(day=1)
+        elif date_range == "last_3_months":
+            start, end = today - datetime.timedelta(days=90), today
+        elif date_range == "last_6_months":
+            start, end = today - datetime.timedelta(days=180), today
+        elif date_range == "last_1_year":
+            start, end = today - datetime.timedelta(days=365), today
+
+    start = start or _parse_ymd_date(filters.get("start_date"))
+    end = end or _parse_ymd_date(filters.get("end_date"))
+    if not start and not end:
+        return None
+    if start and not end:
+        end = today
+    elif end and not start:
+        start = end
+    if end < start:
+        start, end = end, start
+    return start, end
+
+
+def _mapping_activity_range_parts(filters):
+    bounds = _mapping_activity_date_bounds(filters)
+    if bounds is None:
+        return {
+            "all_time": True,
+            "month_start": None,
+            "month_end": None,
+            "daily_ranges": [],
+        }
+
+    start, end = bounds
+    full_months = []
+    daily_ranges = []
+    cursor = start.replace(day=1)
+    while cursor <= end:
+        month_start = cursor
+        month_end = datetime.date(
+            cursor.year,
+            cursor.month,
+            calendar.monthrange(cursor.year, cursor.month)[1],
+        )
+        segment_start = max(start, month_start)
+        segment_end = min(end, month_end)
+        if segment_start == month_start and segment_end == month_end:
+            full_months.append(month_start)
+        else:
+            daily_ranges.append((segment_start, segment_end))
+        cursor = _next_month_start(cursor)
+
+    return {
+        "all_time": False,
+        "month_start": min(full_months) if full_months else None,
+        "month_end": max(full_months) if full_months else None,
+        "daily_ranges": daily_ranges,
+    }
+
+
+def _next_month_start(value):
+    if value.month == 12:
+        return datetime.date(value.year + 1, 1, 1)
+    return datetime.date(value.year, value.month + 1, 1)
+
+
+def _can_use_monthly_mapping_activity(filters):
+    mapping_field = _active_single_mapping_filter_field(filters)
+    if not mapping_field:
+        return False
+    unsupported = {
+        "asin",
+        "fsn",
+        "parent_asin",
+        "sku",
+        "ratings",
+        "inventory_health",
+        "launch_date_range",
+        "launch_start_date",
+        "launch_end_date",
+    }
+    if any(filters.get(field) for field in unsupported):
+        return False
+    parts = _mapping_activity_range_parts(filters)
+    return bool(parts["all_time"] or parts["month_start"])
+
+
+def _mapping_monthly_source_sql(user, filters, platform, mapping_field, parts):
+    tbl = DashboardMappingFilterMonthlyActivitySummary._meta.db_table
+    clauses = [
+        "user_id = %s",
+        "platform = %s",
+        "filter_name = %s",
+    ]
+    params = [user.id, platform, mapping_field]
+
+    _append_value_filter_sql(clauses, params, "filter_value", filters.get(mapping_field))
+
+    if not parts["all_time"]:
+        start_month = parts["month_start"]
+        end_month = parts["month_end"]
+        if not start_month or not end_month:
+            return None, []
+        clauses.append("`year_month` >= %s")
+        params.append(start_month)
+        clauses.append("`year_month` <= %s")
+        params.append(end_month)
+
+    for field in ("category", "portfolio", "subcategory"):
+        _append_value_filter_sql(clauses, params, field, filters.get(field))
+
+    where_sql = " AND ".join(clauses)
+    sql = f"""
+        SELECT
+            sku,
+            SUM(units) AS units,
+            SUM(pageviews) AS pageviews,
+            SUM(revenue) AS revenue,
+            SUM(total_spend) AS total_spend
+        FROM `{tbl}`
+        WHERE {where_sql}
+        GROUP BY sku
+    """
+    return sql, params
+
+
+def _mapping_daily_edge_source_sql(user, filters, platform, mapping_field, daily_ranges):
+    if not daily_ranges:
+        return None, []
+
+    from apps.dashboard.models import CategoryMapping, FlipkartCategoryMap
+
+    product_table = DashboardProductDailySummary._meta.db_table
+    if platform == "Amazon":
+        mapping_table = CategoryMapping._meta.db_table
+        sku_field = "asin"
+        product_sku_field = "asin"
+        product_index = "idx_dpds_u_p_asn_d"
+    else:
+        mapping_table = FlipkartCategoryMap._meta.db_table
+        sku_field = "fsn"
+        product_sku_field = "fsn"
+        product_index = "idx_dpds_u_p_fsn_d"
+
+    clauses = ["m.user_id = %s"]
+    params = [platform, user.id]
+
+    range_clauses = []
+    for start, end in daily_ranges:
+        range_clauses.append("(p.date >= %s AND p.date <= %s)")
+        params.extend([start, end])
+    clauses.append(f"({' OR '.join(range_clauses)})")
+
+    for field in ("category", "portfolio", "subcategory"):
+        _append_value_filter_sql(clauses, params, f"p.{field}", filters.get(field))
+    _append_value_filter_sql(clauses, params, f"m.{mapping_field}", filters.get(mapping_field))
+
+    where_sql = " AND ".join(clauses)
+    sql = f"""
+        SELECT
+            p.{product_sku_field} AS sku,
+            SUM(p.units_sold) AS units,
+            SUM(p.page_views) AS pageviews,
+            SUM(p.revenue) AS revenue,
+            SUM(p.ad_spend) AS total_spend
+        FROM `{mapping_table}` m
+        STRAIGHT_JOIN `{product_table}` p FORCE INDEX (`{product_index}`)
+            ON p.user_id = m.user_id
+            AND p.platform = %s
+            AND p.{product_sku_field} = m.{sku_field}
+        WHERE {where_sql}
+        GROUP BY p.{product_sku_field}
+    """
+    return sql, params
+
+
+def _mapping_activity_grouped_sql(user, filters, platform, mapping_field):
+    parts = _mapping_activity_range_parts(filters)
+    sources = []
+    params = []
+
+    if parts["all_time"] or parts["month_start"]:
+        monthly_sql, monthly_params = _mapping_monthly_source_sql(
+            user,
+            filters,
+            platform,
+            mapping_field,
+            parts,
+        )
+        if monthly_sql:
+            sources.append(monthly_sql)
+            params.extend(monthly_params)
+
+    if parts["daily_ranges"]:
+        daily_sql, daily_params = _mapping_daily_edge_source_sql(
+            user,
+            filters,
+            platform,
+            mapping_field,
+            parts["daily_ranges"],
+        )
+        if daily_sql:
+            sources.append(daily_sql)
+            params.extend(daily_params)
+
+    if not sources:
+        return None, []
+
+    union_sql = "\nUNION ALL\n".join(sources)
+    sql = f"""
+        SELECT
+            sku,
+            SUM(units) AS total_units,
+            SUM(pageviews) AS total_pv,
+            SUM(revenue) AS revenue,
+            SUM(total_spend) AS total_spend
+        FROM ({union_sql}) mapping_activity_parts
+        GROUP BY sku
+    """
+    return sql, params
+
+
+def _mapping_monthly_activity_sql(user, filters, platform, mapping_field):
+    return _mapping_activity_grouped_sql(user, filters, platform, mapping_field)
+
+
+def _mapping_monthly_grouped_revenue_sql(user, filters, platform, mapping_field):
+    grouped_sql, params = _mapping_activity_grouped_sql(user, filters, platform, mapping_field)
+    if not grouped_sql:
+        return None, []
+    return f"SELECT sku, revenue FROM ({grouped_sql}) mapping_activity_grouped", params
+
+
+def _mapping_monthly_ad_spend_skus(user, filters, platform):
+    if not _can_use_monthly_mapping_activity(filters):
+        return None
+
+    mapping_field = _active_single_mapping_filter_field(filters)
+    has_summary_rows = DashboardMappingFilterMonthlyActivitySummary.objects.filter(
+        user=user,
+        platform=platform,
+        filter_name=mapping_field,
+        total_spend__gt=0,
+    ).values("id")[:1].exists()
+    if not has_summary_rows:
+        return None
+
+    grouped_sql, params = _mapping_activity_grouped_sql(user, filters, platform, mapping_field)
+    if not grouped_sql:
+        return None
+    sql = f"SELECT sku FROM ({grouped_sql}) mapping_activity_grouped WHERE total_spend > 0"
+    with connection.cursor() as cursor:
+        cursor.execute(sql, params)
+        return _clean_listing_id_set(row[0] for row in cursor.fetchall())
+
+
+def _continue_discontinue_metrics_from_mapping_monthly(user, filters, fsn_meta):
+    counts = {"Continued": 0, "Discontinued": 0, "Unmapped": 0}
+    revenue = {"Continued": 0.0, "Discontinued": 0.0, "Unmapped": 0.0}
+    if str(filters.get("platform") or "").strip() == "Amazon":
+        return counts, revenue
+    if not _can_use_monthly_mapping_activity(filters):
+        return None
+
+    mapping_field = _active_single_mapping_filter_field(filters)
+    has_summary_rows = DashboardMappingFilterMonthlyActivitySummary.objects.filter(
+        user=user,
+        platform="Flipkart",
+        filter_name=mapping_field,
+    ).exclude(revenue=0).values("id")[:1].exists()
+    if not has_summary_rows:
+        return None
+
+    sql, params = _mapping_monthly_grouped_revenue_sql(
+        user,
+        filters,
+        "Flipkart",
+        mapping_field,
+    )
+    with connection.cursor() as cursor:
+        cursor.execute(sql, params)
+        rows = cursor.fetchall()
+
+    fsn_meta = fsn_meta or {}
+    for fsn, row_revenue in rows:
+        fsn = str(fsn or "").strip()
+        if not fsn:
+            continue
+        status = _fsn_status_bucket((fsn_meta.get(fsn) or {}).get("product_status"))
+        if not status:
+            status = "Unmapped"
+        counts[status] += 1
+        revenue[status] += _to_float(row_revenue)
+    return counts, revenue
+
+
+def _monthly_mapping_activity_detail(user, filters, platform, universe, stocked_ids, mapping_field):
+    detail = {
+        "selling_count": 0,
+        "pageview_count": 0,
+        "non_selling_pageview_count": 0,
+        "non_selling_pageviews": 0,
+        "zero_pageviews_in_stock_count": 0,
+    }
+    if not universe:
+        return detail
+
+    sql, params = _mapping_monthly_activity_sql(user, filters, platform, mapping_field)
+    stats_sql = f"""
+        SELECT
+            SUM(CASE WHEN total_units > 0 THEN 1 ELSE 0 END) AS selling_count,
+            SUM(CASE WHEN total_pv > 0 THEN 1 ELSE 0 END) AS pageview_count,
+            SUM(CASE WHEN total_pv > 0 AND total_units <= 0 THEN 1 ELSE 0 END) AS non_selling_pageview_count,
+            SUM(CASE WHEN total_pv > 0 AND total_units <= 0 THEN total_pv ELSE 0 END) AS non_selling_pageviews
+        FROM ({sql}) activity_rows
+    """
+    with connection.cursor() as cursor:
+        cursor.execute(stats_sql, params)
+        row = cursor.fetchone() or (0, 0, 0, 0)
+    detail.update({
+        "selling_count": int(row[0] or 0),
+        "pageview_count": int(row[1] or 0),
+        "non_selling_pageview_count": int(row[2] or 0),
+        "non_selling_pageviews": int(row[3] or 0),
+    })
+
+    stocked_ids = stocked_ids & universe
+    if stocked_ids:
+        pageview_sql = f"SELECT sku FROM ({sql}) activity_rows WHERE total_pv > 0"
+        with connection.cursor() as cursor:
+            cursor.execute(pageview_sql, params)
+            pageview_ids = _clean_listing_id_set(row[0] for row in cursor.fetchall())
+        detail["zero_pageviews_in_stock_count"] = len(stocked_ids - pageview_ids)
+
+    return detail
+
+
+def _compute_monthly_mapping_activity_metrics(user, filters, az_universe, fk_universe):
+    if not _can_use_monthly_mapping_activity(filters):
+        return None
+
+    mapping_field = _active_single_mapping_filter_field(filters)
+    has_summary_rows = DashboardMappingFilterMonthlyActivitySummary.objects.filter(
+        user=user,
+        filter_name=mapping_field,
+    ).values("id")[:1].exists()
+    if not has_summary_rows:
+        return None
+
+    platform_filter = str(filters.get("platform") or "").strip()
+    show_amazon = platform_filter != "Flipkart"
+    show_flipkart = platform_filter != "Amazon"
+
+    empty_detail = {
+        "selling_count": 0,
+        "pageview_count": 0,
+        "non_selling_pageview_count": 0,
+        "non_selling_pageviews": 0,
+        "zero_pageviews_in_stock_count": 0,
+    }
+    az_detail = (
+        _monthly_mapping_activity_detail(
+            user,
+            filters,
+            "Amazon",
+            az_universe,
+            _latest_stocked_listing_ids(user, "Amazon"),
+            mapping_field,
+        )
+        if show_amazon
+        else dict(empty_detail)
+    )
+    fk_detail = (
+        _monthly_mapping_activity_detail(
+            user,
+            filters,
+            "Flipkart",
+            fk_universe,
+            _latest_stocked_listing_ids(user, "Flipkart"),
+            mapping_field,
+        )
+        if show_flipkart
+        else dict(empty_detail)
+    )
+
+    az_non_selling = az_detail["non_selling_pageview_count"]
+    fk_non_selling = fk_detail["non_selling_pageview_count"]
+    return {
+        "active_asins": len(az_universe) + len(fk_universe),
+        "az_category_master_listing_count": len(az_universe),
+        "fk_category_master_listing_count": len(fk_universe),
+        "category_master_listing_count": len(az_universe) + len(fk_universe),
+        "selling_sku_count": az_detail["selling_count"] + fk_detail["selling_count"],
+        "az_selling_sku_count": az_detail["selling_count"],
+        "fk_selling_sku_count": fk_detail["selling_count"],
+        "listings_with_pageviews_count": az_detail["pageview_count"] + fk_detail["pageview_count"],
+        "az_listings_with_pageviews_count": az_detail["pageview_count"],
+        "fk_listings_with_pageviews_count": fk_detail["pageview_count"],
+        "zero_pageviews_in_stock_listing_count": (
+            az_detail["zero_pageviews_in_stock_count"] + fk_detail["zero_pageviews_in_stock_count"]
+        ),
+        "az_zero_pageviews_in_stock_listing_count": az_detail["zero_pageviews_in_stock_count"],
+        "fk_zero_pageviews_in_stock_listing_count": fk_detail["zero_pageviews_in_stock_count"],
+        "non_selling_with_pageviews_count": az_non_selling + fk_non_selling,
+        "az_non_selling_with_pageviews_count": az_non_selling,
+        "fk_non_selling_with_pageviews_count": fk_non_selling,
+        "zero_selling_sku_count": az_non_selling + fk_non_selling,
+        "az_zero_selling_sku_count": az_non_selling,
+        "fk_zero_selling_sku_count": fk_non_selling,
+        "zero_sales_pageviews": az_detail["non_selling_pageviews"] + fk_detail["non_selling_pageviews"],
+        "az_zero_sales_pageviews": az_detail["non_selling_pageviews"],
+        "fk_zero_sales_pageviews": fk_detail["non_selling_pageviews"],
+    }
+
+
+def _joined_mapping_activity_sql(user, filters, platform):
+    from apps.dashboard.models import CategoryMapping, FlipkartCategoryMap
+
+    product_table = DashboardProductDailySummary._meta.db_table
+    if platform == "Amazon":
+        mapping_table = CategoryMapping._meta.db_table
+        sku_field = "asin"
+        product_sku_field = "asin"
+        product_index = "idx_dpds_u_p_asn_d"
+    else:
+        mapping_table = FlipkartCategoryMap._meta.db_table
+        sku_field = "fsn"
+        product_sku_field = "fsn"
+        product_index = "idx_dpds_u_p_fsn_d"
+
+    clauses = ["m.user_id = %s"]
+    params = [user.id]
+    date_clauses, date_params = _date_where_sql("p", filters)
+    clauses.extend(date_clauses)
+    params.extend(date_params)
+
+    for field in ("category", "portfolio", "subcategory"):
+        _append_value_filter_sql(clauses, params, f"p.{field}", filters.get(field))
+    for field in MAPPING_DIMENSION_SUMMARY_FIELDS:
+        _append_value_filter_sql(clauses, params, f"m.{field}", filters.get(field))
+
+    where_sql = " AND ".join(clauses)
+    sql = f"""
+        SELECT
+            p.{product_sku_field} AS sku,
+            SUM(p.units_sold) AS total_units,
+            SUM(p.page_views) AS total_pv
+        FROM `{mapping_table}` m
+        STRAIGHT_JOIN `{product_table}` p FORCE INDEX (`{product_index}`)
+            ON p.user_id = m.user_id
+            AND p.platform = %s
+            AND p.{product_sku_field} = m.{sku_field}
+        WHERE {where_sql}
+        GROUP BY p.{product_sku_field}
+    """
+    return sql, [platform, *params]
+
+
+def _joined_mapping_activity_detail(user, filters, platform, universe, stocked_ids):
+    detail = {
+        "selling_count": 0,
+        "pageview_count": 0,
+        "non_selling_pageview_count": 0,
+        "non_selling_pageviews": 0,
+        "zero_pageviews_in_stock_count": 0,
+    }
+    if not universe:
+        return detail
+
+    sql, params = _joined_mapping_activity_sql(user, filters, platform)
+    stats_sql = f"""
+        SELECT
+            SUM(CASE WHEN total_units > 0 THEN 1 ELSE 0 END) AS selling_count,
+            SUM(CASE WHEN total_pv > 0 THEN 1 ELSE 0 END) AS pageview_count,
+            SUM(CASE WHEN total_pv > 0 AND total_units <= 0 THEN 1 ELSE 0 END) AS non_selling_pageview_count,
+            SUM(CASE WHEN total_pv > 0 AND total_units <= 0 THEN total_pv ELSE 0 END) AS non_selling_pageviews
+        FROM ({sql}) activity_rows
+    """
+    with connection.cursor() as cursor:
+        cursor.execute(stats_sql, params)
+        row = cursor.fetchone() or (0, 0, 0, 0)
+    detail.update({
+        "selling_count": int(row[0] or 0),
+        "pageview_count": int(row[1] or 0),
+        "non_selling_pageview_count": int(row[2] or 0),
+        "non_selling_pageviews": int(row[3] or 0),
+    })
+
+    stocked_ids = stocked_ids & universe
+    if stocked_ids:
+        pageview_ids = set()
+        pageview_sql = f"SELECT sku FROM ({sql}) activity_rows WHERE total_pv > 0"
+        with connection.cursor() as cursor:
+            cursor.execute(pageview_sql, params)
+            pageview_ids = _clean_listing_id_set(row[0] for row in cursor.fetchall())
+        detail["zero_pageviews_in_stock_count"] = len(stocked_ids - pageview_ids)
+
+    return detail
+
+
+def _compute_joined_mapping_activity_metrics(user, filters, az_universe, fk_universe):
+    if not _can_use_joined_mapping_activity(filters):
+        return None
+
+    platform_filter = str(filters.get("platform") or "").strip()
+    show_amazon = platform_filter != "Flipkart"
+    show_flipkart = platform_filter != "Amazon"
+
+    az_detail = (
+        _joined_mapping_activity_detail(
+            user,
+            filters,
+            "Amazon",
+            az_universe,
+            _latest_stocked_listing_ids(user, "Amazon"),
+        )
+        if show_amazon
+        else {
+            "selling_count": 0,
+            "pageview_count": 0,
+            "non_selling_pageview_count": 0,
+            "non_selling_pageviews": 0,
+            "zero_pageviews_in_stock_count": 0,
+        }
+    )
+    fk_detail = (
+        _joined_mapping_activity_detail(
+            user,
+            filters,
+            "Flipkart",
+            fk_universe,
+            _latest_stocked_listing_ids(user, "Flipkart"),
+        )
+        if show_flipkart
+        else {
+            "selling_count": 0,
+            "pageview_count": 0,
+            "non_selling_pageview_count": 0,
+            "non_selling_pageviews": 0,
+            "zero_pageviews_in_stock_count": 0,
+        }
+    )
+
+    az_non_selling = az_detail["non_selling_pageview_count"]
+    fk_non_selling = fk_detail["non_selling_pageview_count"]
+    return {
+        "active_asins": len(az_universe) + len(fk_universe),
+        "az_category_master_listing_count": len(az_universe),
+        "fk_category_master_listing_count": len(fk_universe),
+        "category_master_listing_count": len(az_universe) + len(fk_universe),
+        "selling_sku_count": az_detail["selling_count"] + fk_detail["selling_count"],
+        "az_selling_sku_count": az_detail["selling_count"],
+        "fk_selling_sku_count": fk_detail["selling_count"],
+        "listings_with_pageviews_count": az_detail["pageview_count"] + fk_detail["pageview_count"],
+        "az_listings_with_pageviews_count": az_detail["pageview_count"],
+        "fk_listings_with_pageviews_count": fk_detail["pageview_count"],
+        "zero_pageviews_in_stock_listing_count": (
+            az_detail["zero_pageviews_in_stock_count"] + fk_detail["zero_pageviews_in_stock_count"]
+        ),
+        "az_zero_pageviews_in_stock_listing_count": az_detail["zero_pageviews_in_stock_count"],
+        "fk_zero_pageviews_in_stock_listing_count": fk_detail["zero_pageviews_in_stock_count"],
+        "non_selling_with_pageviews_count": az_non_selling + fk_non_selling,
+        "az_non_selling_with_pageviews_count": az_non_selling,
+        "fk_non_selling_with_pageviews_count": fk_non_selling,
+        "zero_selling_sku_count": az_non_selling + fk_non_selling,
+        "az_zero_selling_sku_count": az_non_selling,
+        "fk_zero_selling_sku_count": fk_non_selling,
+        "zero_sales_pageviews": az_detail["non_selling_pageviews"] + fk_detail["non_selling_pageviews"],
+        "az_zero_sales_pageviews": az_detail["non_selling_pageviews"],
+        "fk_zero_sales_pageviews": fk_detail["non_selling_pageviews"],
+    }
+
+
+def _compute_listing_activity_metrics(
+    user,
+    filters,
+    *,
+    summary_az_qs=None,
+    summary_fk_qs=None,
+    monthly_az_qs=None,
+    monthly_fk_qs=None,
+):
+    az_map_qs, fk_map_qs = get_filtered_mapping_querysets(filters or {}, user)
+    az_universe = _listing_ids_from_mapping_qs(az_map_qs, "asin")
+    fk_universe = _listing_ids_from_mapping_qs(fk_map_qs, "fsn")
+
+    monthly_mapping_metrics = _compute_monthly_mapping_activity_metrics(
+        user,
+        filters or {},
+        az_universe,
+        fk_universe,
+    )
+    if monthly_mapping_metrics is not None:
+        return monthly_mapping_metrics
+
+    joined_metrics = _compute_joined_mapping_activity_metrics(user, filters or {}, az_universe, fk_universe)
+    if joined_metrics is not None:
+        return joined_metrics
+
+    if monthly_az_qs is not None:
+        az_detail = _listing_activity_counts_from_monthly(monthly_az_qs, az_universe)
+    else:
+        az_detail = _listing_activity_counts_from_product_summary(summary_az_qs, "asin", az_universe)
+
+    if monthly_fk_qs is not None:
+        fk_detail = _listing_activity_counts_from_monthly(monthly_fk_qs, fk_universe)
+    else:
+        fk_detail = _listing_activity_counts_from_product_summary(summary_fk_qs, "fsn", fk_universe)
+
+    az_stocked_zero_pv = (_latest_stocked_listing_ids(user, "Amazon") & az_universe) - az_detail["pageview_ids"]
+    fk_stocked_zero_pv = (_latest_stocked_listing_ids(user, "Flipkart") & fk_universe) - fk_detail["pageview_ids"]
+
+    az_non_selling = len(az_detail["non_selling_pageview_ids"])
+    fk_non_selling = len(fk_detail["non_selling_pageview_ids"])
+
+    return {
+        "active_asins": len(az_universe) + len(fk_universe),
+        "az_category_master_listing_count": len(az_universe),
+        "fk_category_master_listing_count": len(fk_universe),
+        "category_master_listing_count": len(az_universe) + len(fk_universe),
+        "selling_sku_count": len(az_detail["selling_ids"]) + len(fk_detail["selling_ids"]),
+        "az_selling_sku_count": len(az_detail["selling_ids"]),
+        "fk_selling_sku_count": len(fk_detail["selling_ids"]),
+        "listings_with_pageviews_count": len(az_detail["pageview_ids"]) + len(fk_detail["pageview_ids"]),
+        "az_listings_with_pageviews_count": len(az_detail["pageview_ids"]),
+        "fk_listings_with_pageviews_count": len(fk_detail["pageview_ids"]),
+        "zero_pageviews_in_stock_listing_count": len(az_stocked_zero_pv) + len(fk_stocked_zero_pv),
+        "az_zero_pageviews_in_stock_listing_count": len(az_stocked_zero_pv),
+        "fk_zero_pageviews_in_stock_listing_count": len(fk_stocked_zero_pv),
+        "non_selling_with_pageviews_count": az_non_selling + fk_non_selling,
+        "az_non_selling_with_pageviews_count": az_non_selling,
+        "fk_non_selling_with_pageviews_count": fk_non_selling,
+        "zero_selling_sku_count": az_non_selling + fk_non_selling,
+        "az_zero_selling_sku_count": az_non_selling,
+        "fk_zero_selling_sku_count": fk_non_selling,
+        "zero_sales_pageviews": az_detail["non_selling_pageviews"] + fk_detail["non_selling_pageviews"],
+        "az_zero_sales_pageviews": az_detail["non_selling_pageviews"],
+        "fk_zero_sales_pageviews": fk_detail["non_selling_pageviews"],
+    }
+
+
+LISTING_ACTIVITY_FIELD_KEYS = (
+    "category_master_listing_count",
+    "az_category_master_listing_count",
+    "fk_category_master_listing_count",
+    "listings_with_pageviews_count",
+    "az_listings_with_pageviews_count",
+    "fk_listings_with_pageviews_count",
+    "zero_pageviews_in_stock_listing_count",
+    "az_zero_pageviews_in_stock_listing_count",
+    "fk_zero_pageviews_in_stock_listing_count",
+    "non_selling_with_pageviews_count",
+    "az_non_selling_with_pageviews_count",
+    "fk_non_selling_with_pageviews_count",
+    "az_zero_sales_pageviews",
+    "fk_zero_sales_pageviews",
+)
+
+
+def _copy_listing_activity_fields(target, source):
+    for key in LISTING_ACTIVITY_FIELD_KEYS:
+        target[key] = source.get(key, 0)
+
+
+def _get_monthly_activity_querysets(user, filters):
+    try:
+        from apps.dashboard.services.asin_monthly_summary import get_ams_qs
+    except Exception:
+        return None, None
+
+    monthly_qs = get_ams_qs(user, filters)
+    if monthly_qs is None:
+        return None, None
+    return monthly_qs.filter(platform="Amazon"), monthly_qs.filter(platform="Flipkart")
 
 
 def _get_fsn_meta_cached(user):
@@ -877,6 +2167,27 @@ def _get_asin_meta_cached(user):
     return asin_meta
 
 
+def _advertised_listing_variant_counts(advertised_ids, id_to_parent=None, known_parent_ids=None):
+    """Count advertised parent listings and advertised variants within those parents."""
+    id_to_parent = id_to_parent or {}
+    known_parent_ids = known_parent_ids or set()
+    grouped_ids = {}
+
+    for raw_id in advertised_ids or set():
+        item_id = str(raw_id or "").strip()
+        if not item_id:
+            continue
+        parent_id = str(id_to_parent.get(item_id) or "").strip()
+        if not parent_id and item_id in known_parent_ids:
+            parent_id = item_id
+        group_key = f"parent:{parent_id}" if parent_id else f"item:{item_id}"
+        grouped_ids.setdefault(group_key, set()).add(item_id)
+
+    listing_count = len(grouped_ids)
+    variant_count = sum(max(len(items) - 1, 0) for items in grouped_ids.values())
+    return listing_count, variant_count
+
+
 
 
 
@@ -893,6 +2204,18 @@ def _empty_activity_metrics():
         "fk_zero_selling_sku_count": 0,
         "az_zero_sales_pageviews": 0,
         "fk_zero_sales_pageviews": 0,
+        "category_master_listing_count": 0,
+        "az_category_master_listing_count": 0,
+        "fk_category_master_listing_count": 0,
+        "listings_with_pageviews_count": 0,
+        "az_listings_with_pageviews_count": 0,
+        "fk_listings_with_pageviews_count": 0,
+        "zero_pageviews_in_stock_listing_count": 0,
+        "az_zero_pageviews_in_stock_listing_count": 0,
+        "fk_zero_pageviews_in_stock_listing_count": 0,
+        "non_selling_with_pageviews_count": 0,
+        "az_non_selling_with_pageviews_count": 0,
+        "fk_non_selling_with_pageviews_count": 0,
         "continue_sales_revenue": 0.0,
         "discontinue_sales_revenue": 0.0,
         "unmapped_fsn_revenue": 0.0,
@@ -1011,6 +2334,12 @@ def _build_period_filters(start, end):
     }
 
 
+def _is_complete_calendar_month(start, end):
+    if not start or not end or start.day != 1:
+        return False
+    return end.day == calendar.monthrange(end.year, end.month)[1] and start.year == end.year and start.month == end.month
+
+
 def _compute_unique_ad_spend_sku_counts(qs_f, fk_qs_f, user, asin_meta=None, fsn_meta=None, filters=None, az_asins=None, fk_fsns=None):
     if asin_meta is None:
         asin_meta = _get_asin_meta_cached(user)
@@ -1049,51 +2378,33 @@ def _compute_unique_ad_spend_sku_counts(qs_f, fk_qs_f, user, asin_meta=None, fsn
                 else set()
             )
 
-    children_by_parent = {}
-    for child_asin, meta in asin_meta.items():
-        child_asin = str(child_asin or "").strip()
-        parent_asin = str((meta or {}).get("parent_asin") or "").strip()
-        if child_asin and parent_asin:
-            children_by_parent.setdefault(parent_asin, set()).add(child_asin)
-
-    asin_to_fsns = {}
-    for fsn, meta in fsn_meta.items():
-        asin = str((meta or {}).get("asin") or "").strip()
-        if fsn and asin:
-            asin_to_fsns.setdefault(asin, set()).add(fsn)
-
-    advertised_parents = {
-        str((asin_meta.get(asin) or {}).get("parent_asin") or "").strip()
-        for asin in az_asins
+    known_parent_asins = {
+        str((meta or {}).get("parent_asin") or "").strip()
+        for meta in asin_meta.values()
+        if str((meta or {}).get("parent_asin") or "").strip()
     }
-    
-    fk_advertised_parents = set()
-    for fsn in fk_fsns:
-        asin = str((fsn_meta.get(fsn) or {}).get("asin") or "").strip()
-        if asin:
-            parent_asin = str((asin_meta.get(asin) or {}).get("parent_asin") or "").strip()
-            if parent_asin:
-                fk_advertised_parents.add(parent_asin)
-                
-    advertised_parents.discard("")
-    fk_advertised_parents.discard("")
+    asin_to_parent = {
+        str(asin or "").strip(): str((meta or {}).get("parent_asin") or "").strip()
+        for asin, meta in asin_meta.items()
+        if str(asin or "").strip()
+    }
+    fsn_to_parent = {}
+    for fsn, meta in fsn_meta.items():
+        fsn_id = str(fsn or "").strip()
+        asin = str((meta or {}).get("asin") or "").strip()
+        if not fsn_id:
+            continue
+        fsn_to_parent[fsn_id] = asin_to_parent.get(asin, "") or (asin if asin in known_parent_asins else "")
 
-    advertised_variants = set()
-    for parent_asin in advertised_parents:
-        advertised_variants.update(children_by_parent.get(parent_asin, set()))
-    advertised_variants.difference_update(az_asins)
-
-    fk_advertised_variants = set()
-    for parent_asin in fk_advertised_parents:
-        child_asins = children_by_parent.get(parent_asin, set())
-        for child_asin in child_asins:
-            fk_advertised_variants.update(asin_to_fsns.get(child_asin, set()))
-    fk_advertised_variants.difference_update(fk_fsns)
-
-    az_count = len(az_asins)
-    az_variant_count = len(advertised_variants)
-    fk_count = len(fk_fsns)
-    fk_variant_count = len(fk_advertised_variants)
+    az_count, az_variant_count = _advertised_listing_variant_counts(
+        az_asins,
+        id_to_parent=asin_to_parent,
+        known_parent_ids=known_parent_asins,
+    )
+    fk_count, fk_variant_count = _advertised_listing_variant_counts(
+        fk_fsns,
+        id_to_parent=fsn_to_parent,
+    )
     
     total_advertised_asin_count = az_count + fk_count
     total_variant_count = az_variant_count + fk_variant_count
@@ -1111,26 +2422,76 @@ def _compute_unique_ad_spend_sku_counts(qs_f, fk_qs_f, user, asin_meta=None, fsn
     }
 
 
-def _build_period_snapshot(qs, fk_qs, start, end, user, *, asin_meta=None, fsn_meta=None, include_activity_metrics=True):
-    period_filters = _build_period_filters(start, end)
+def _build_period_snapshot(qs, fk_qs, start, end, user, *, asin_meta=None, fsn_meta=None, include_activity_metrics=True, base_filters=None):
+    period_filters = dict(base_filters or {})
+    period_filters.update(_build_period_filters(start, end))
     qs_f = apply_global_filters_orm(qs, period_filters)
     fk_qs_f = apply_global_filters_orm(fk_qs, period_filters)
 
-    az_metrics = _aggregate_metrics(qs_f)
-    fk_metrics = _aggregate_metrics(fk_qs_f)
+    summary_base_qs = _get_daily_summary_base_qs(user, period_filters)
+    summary_qs_f = apply_global_filters_orm(summary_base_qs, period_filters)
+    summary_metrics = None
+    if summary_qs_f is not None:
+        summary_metrics = _summary_metrics_by_platform(summary_qs_f)
+        if not any(
+            summary_metrics[p]["units"]
+            or summary_metrics[p]["orders"]
+            or summary_metrics[p]["revenue"]
+            or summary_metrics[p]["pageviews"]
+            for p in ("Amazon", "Flipkart")
+        ):
+            summary_metrics = None
+
+    if summary_metrics:
+        az_metrics = summary_metrics["Amazon"]
+        fk_metrics = summary_metrics["Flipkart"]
+    else:
+        az_metrics = _aggregate_metrics(qs_f)
+        fk_metrics = _aggregate_metrics(fk_qs_f)
     totals = _combined_metrics(az_metrics, fk_metrics)
     
-    # Lightweight path: use _compute_sku_activity_combined_from_summary to get
-    # selling/zero-selling counts via a single GROUP BY per platform, instead of
-    # building the full BI table_data via generate_bi_data_orm.
+    monthly_az_qs = monthly_fk_qs = None
+    if _is_complete_calendar_month(start, end):
+        monthly_az_qs, monthly_fk_qs = _get_monthly_activity_querysets(user, period_filters)
+        if monthly_az_qs is None or monthly_fk_qs is None:
+            monthly_az_qs = monthly_fk_qs = None
+
+    # Lightweight path: use pre-aggregated product summaries to get spend sets
+    # and activity counts without building the full BI table_data.
     summary_az_qs, summary_fk_qs = _get_product_daily_summary_querysets(user, period_filters)
-    
-    az_active, az_selling, az_zero, az_zero_pv, _, az_asins = (
-        _compute_sku_activity_combined_from_summary(summary_az_qs, "asin")
-    )
-    fk_active, fk_selling, fk_zero, fk_zero_pv, _, fk_fsns = (
-        _compute_sku_activity_combined_from_summary(summary_fk_qs, "fsn")
-    )
+
+    mapping_az_ad_spend_skus = mapping_fk_ad_spend_skus = None
+    if include_activity_metrics:
+        mapping_az_ad_spend_skus = _mapping_monthly_ad_spend_skus(
+            user,
+            period_filters,
+            "Amazon",
+        )
+        mapping_fk_ad_spend_skus = _mapping_monthly_ad_spend_skus(
+            user,
+            period_filters,
+            "Flipkart",
+        )
+
+    if mapping_az_ad_spend_skus is not None and mapping_fk_ad_spend_skus is not None:
+        az_active = az_selling = az_zero = az_zero_pv = 0
+        fk_active = fk_selling = fk_zero = fk_zero_pv = 0
+        az_asins = mapping_az_ad_spend_skus
+        fk_fsns = mapping_fk_ad_spend_skus
+    elif monthly_az_qs is not None and monthly_fk_qs is not None:
+        az_active, az_selling, az_zero, az_zero_pv, _, az_asins = (
+            _compute_sku_activity_combined_from_monthly(monthly_az_qs)
+        )
+        fk_active, fk_selling, fk_zero, fk_zero_pv, _, fk_fsns = (
+            _compute_sku_activity_combined_from_monthly(monthly_fk_qs)
+        )
+    else:
+        az_active, az_selling, az_zero, az_zero_pv, _, az_asins = (
+            _compute_sku_activity_combined_from_summary(summary_az_qs, "asin")
+        )
+        fk_active, fk_selling, fk_zero, fk_zero_pv, _, fk_fsns = (
+            _compute_sku_activity_combined_from_summary(summary_fk_qs, "fsn")
+        )
     
     unique_counts = _compute_unique_ad_spend_sku_counts(
         qs_f, fk_qs_f, user, asin_meta=asin_meta, fsn_meta=fsn_meta, filters=period_filters,
@@ -1149,6 +2510,20 @@ def _build_period_snapshot(qs, fk_qs, start, end, user, *, asin_meta=None, fsn_m
         "az_zero_sales_pageviews": az_zero_pv,
         "fk_zero_sales_pageviews": fk_zero_pv,
     })
+    if include_activity_metrics:
+        try:
+            activity_metrics.update(
+                _compute_listing_activity_metrics(
+                    user,
+                    period_filters,
+                    summary_az_qs=summary_az_qs,
+                    summary_fk_qs=summary_fk_qs,
+                    monthly_az_qs=monthly_az_qs,
+                    monthly_fk_qs=monthly_fk_qs,
+                )
+            )
+        except Exception:
+            logger.debug("[DashboardPerf] Period listing activity metrics failed", exc_info=True)
 
     if not include_activity_metrics:
         activity_metrics = _empty_activity_metrics()
@@ -1200,9 +2575,15 @@ def _merge_previous_revenue_map(store, qs, sku_field):
     if qs is None:
         return
 
-    for row in (
-        qs.values(sku_field).annotate(revenue=Sum("revenue")).iterator(chunk_size=5000)
-    ):
+    rows = _force_indexed_product_summary_sum_rows(
+        qs,
+        sku_field,
+        (("revenue", "revenue"),),
+    )
+    if rows is None:
+        rows = qs.values(sku_field).annotate(revenue=Sum("revenue")).iterator(chunk_size=5000)
+
+    for row in rows:
         sku = str(row.get(sku_field) or "").strip()
         if not sku:
             continue
@@ -1214,11 +2595,27 @@ def _build_product_metric_map_from_summary(summary_qs, sku_field):
     if summary_qs is None:
         return rows_by_sku
 
-    for row in (
-        summary_qs.values(sku_field)
-        .annotate(revenue=Sum("revenue"), units=Sum("units_sold"), pageviews=Sum("page_views"))
-        .iterator(chunk_size=5000)
-    ):
+    rows = _force_indexed_product_summary_sum_rows(
+        summary_qs,
+        sku_field,
+        (
+            ("revenue", "revenue"),
+            ("units_sold", "units"),
+            ("page_views", "pageviews"),
+        ),
+    )
+    if rows is None:
+        rows = (
+            summary_qs.values(sku_field)
+            .annotate(
+                revenue=Sum("revenue"),
+                units=Sum("units_sold"),
+                pageviews=Sum("page_views"),
+            )
+            .iterator(chunk_size=5000)
+        )
+
+    for row in rows:
         sku = str(row.get(sku_field) or "").strip()
         if sku:
             rows_by_sku[sku] = row
@@ -1355,6 +2752,16 @@ def _build_declining_product_rows(
     def fetch_az_declining():
         if summary_qs is None:
             return []
+        rows = _force_indexed_product_summary_period_rows(
+            summary_qs,
+            "asin",
+            cm_start=cm_start,
+            cm_end=cm_end,
+            pm_start=pm_start,
+            pm_end=pm_end,
+        )
+        if rows is not None:
+            return rows
         return list(
             summary_qs.filter(date__gte=period_min, date__lte=period_max)
             .values("asin")
@@ -1369,6 +2776,16 @@ def _build_declining_product_rows(
     def fetch_fk_declining():
         if fk_summary_qs is None:
             return []
+        rows = _force_indexed_product_summary_period_rows(
+            fk_summary_qs,
+            "fsn",
+            cm_start=cm_start,
+            cm_end=cm_end,
+            pm_start=pm_start,
+            pm_end=pm_end,
+        )
+        if rows is not None:
+            return rows
         return list(
             fk_summary_qs.filter(date__gte=period_min, date__lte=period_max)
             .values("fsn")
@@ -1485,15 +2902,15 @@ def _build_declining_product_rows(
         r["pageviews"] = r["az_pageviews"] + r["fk_pageviews"]
         r["prev_pageviews"] = int(r.get("az_prev_pageviews") or 0) + int(r.get("fk_prev_pageviews") or 0)
         drop_pct = _safe_growth(r["revenue"], r["prev_revenue"])
-        if drop_pct < 0:
+        if r["prev_revenue"] > 0 and r["revenue"] < r["prev_revenue"] and drop_pct < 0:
             r["drop_pct"] = drop_pct
             r["impact"] = round(max(r["prev_revenue"] - r["revenue"], 0.0), 2)
             r["pv_drop_pct"] = _safe_growth(r["pageviews"], r.get("prev_pageviews", 0))
             r["pv_impact"] = round(max(r.get("prev_pageviews", 0) - r["pageviews"], 0), 2)
             rows.append(r)
 
-    # Sort by MoM Revenue Drop % ascending (most negative = largest decline first)
-    rows.sort(key=lambda item: _to_float(item.get("drop_pct")))
+    # Sort by MoM Revenue Impact descending (largest absolute revenue drop first).
+    rows.sort(key=lambda item: (_to_float(item.get("impact")), abs(_to_float(item.get("drop_pct")))), reverse=True)
     return rows if include_full_payload else rows[:10]
 
 
@@ -1523,7 +2940,11 @@ def run_kpi_only_computation(
 
         have_lock = cache.add(lock_key, "1", timeout=300)
         if not have_lock:
-            for _ in range(800):
+            wait_deadline = time.monotonic() + _cache_lock_wait_seconds(
+                "DASHBOARD_KPI_LOCK_WAIT_SECONDS",
+                4.0,
+            )
+            while time.monotonic() < wait_deadline:
                 time.sleep(0.15)
                 cached_payload = cache.get(cache_key)
                 if cached_payload:
@@ -1566,25 +2987,52 @@ def run_kpi_only_computation(
     if fk_qs_prod is None:
         fk_qs_prod = DashboardProductDailySummary.objects.none()
 
+    monthly_az_qs, monthly_fk_qs = _get_monthly_activity_querysets(user, filters)
+    use_monthly_activity = monthly_az_qs is not None and monthly_fk_qs is not None
+
     from concurrent.futures import ThreadPoolExecutor
 
-    def fetch_az_activity():
-        return _compute_sku_activity_combined_from_summary(az_qs_prod, "asin")
+    def fetch_az_ad_spend_skus():
+        if use_monthly_activity:
+            return _ad_spend_skus_from_monthly(monthly_az_qs)
+        mapping_monthly_skus = _mapping_monthly_ad_spend_skus(user, filters, "Amazon")
+        if mapping_monthly_skus is not None:
+            return mapping_monthly_skus
+        return _ad_spend_skus_from_summary(az_qs_prod, "asin")
 
-    def fetch_fk_activity():
-        return _compute_sku_activity_combined_from_summary(fk_qs_prod, "fsn")
+    def fetch_fk_ad_spend_skus():
+        if use_monthly_activity:
+            return _ad_spend_skus_from_monthly(monthly_fk_qs)
+        mapping_monthly_skus = _mapping_monthly_ad_spend_skus(user, filters, "Flipkart")
+        if mapping_monthly_skus is not None:
+            return mapping_monthly_skus
+        return _ad_spend_skus_from_summary(fk_qs_prod, "fsn")
 
-    with ThreadPoolExecutor(max_workers=3) as executor:
-        future_az_act = executor.submit(fetch_az_activity)
-        future_fk_act = executor.submit(fetch_fk_activity)
-        future_fk_status = executor.submit(
-            _continue_discontinue_metrics_from_summary,
+    def fetch_fk_status():
+        if use_monthly_activity:
+            return _continue_discontinue_metrics_from_monthly(
+                monthly_fk_qs,
+                fsn_meta if include_activity_metrics else None,
+            )
+        mapping_monthly_status = _continue_discontinue_metrics_from_mapping_monthly(
+            user,
+            filters,
+            fsn_meta if include_activity_metrics else None,
+        )
+        if mapping_monthly_status is not None:
+            return mapping_monthly_status
+        return _continue_discontinue_metrics_from_summary(
             fk_qs_f,
             fsn_meta if include_activity_metrics else None,
         )
 
-        az_active, az_selling, az_zero, az_zero_pv, _, az_asins = future_az_act.result()
-        fk_active, fk_selling, fk_zero, fk_zero_pv, _, fk_fsns = future_fk_act.result()
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        future_az_ad_spend = executor.submit(fetch_az_ad_spend_skus)
+        future_fk_ad_spend = executor.submit(fetch_fk_ad_spend_skus)
+        future_fk_status = executor.submit(fetch_fk_status)
+
+        az_asins = future_az_ad_spend.result()
+        fk_fsns = future_fk_ad_spend.result()
         _status_counts, _status_revenue = future_fk_status.result()
 
     unique_counts = _compute_unique_ad_spend_sku_counts(
@@ -1593,16 +3041,6 @@ def run_kpi_only_computation(
     )
     
     activity_metrics_extracted = _normalize_activity_metrics({
-        "active_asins": az_active + fk_active,
-        "selling_sku_count": az_selling + fk_selling,
-        "zero_selling_sku_count": az_zero + fk_zero,
-        "zero_sales_pageviews": az_zero_pv + fk_zero_pv,
-        "az_selling_sku_count": az_selling,
-        "fk_selling_sku_count": fk_selling,
-        "az_zero_selling_sku_count": az_zero,
-        "fk_zero_selling_sku_count": fk_zero,
-        "az_zero_sales_pageviews": az_zero_pv,
-        "fk_zero_sales_pageviews": fk_zero_pv,
         "continue_sales_revenue": round(_status_revenue["Continued"], 2),
         "discontinue_sales_revenue": round(_status_revenue["Discontinued"], 2),
         "unmapped_fsn_revenue": round(_status_revenue["Unmapped"], 2),
@@ -1610,6 +3048,20 @@ def run_kpi_only_computation(
         "discontinued_sku_count": _status_counts["Discontinued"],
         "unmapped_fsn_count": _status_counts["Unmapped"],
     })
+    if include_activity_metrics:
+        try:
+            activity_metrics_extracted.update(
+                _compute_listing_activity_metrics(
+                    user,
+                    filters,
+                    summary_az_qs=az_qs_prod,
+                    summary_fk_qs=fk_qs_prod,
+                    monthly_az_qs=monthly_az_qs if use_monthly_activity else None,
+                    monthly_fk_qs=monthly_fk_qs if use_monthly_activity else None,
+                )
+            )
+        except Exception:
+            logger.debug("[DashboardPerf] Listing activity metrics failed", exc_info=True)
     activity_metrics = activity_metrics_extracted if include_activity_metrics else _empty_activity_metrics()
 
     total_revenue = totals["revenue"]
@@ -1672,6 +3124,7 @@ def run_kpi_only_computation(
             + activity_metrics["unmapped_fsn_count"]
         ),
     }
+    _copy_listing_activity_fields(kpis, activity_metrics)
 
     # Previous-period KPI changes.
     qs_prev = get_prev_period_qs(qs, filters)
@@ -1758,10 +3211,12 @@ def run_kpi_only_computation(
     cm_snapshot = _build_period_snapshot(
         qs, fk_qs, cm_start, cm_end, user,
         asin_meta=asin_meta, fsn_meta=fsn_meta, include_activity_metrics=include_activity_metrics,
+        base_filters=filters,
     )
     pm_snapshot = _build_period_snapshot(
         qs, fk_qs, pm_start, pm_end, user,
         asin_meta=asin_meta, fsn_meta=fsn_meta, include_activity_metrics=include_activity_metrics,
+        base_filters=filters,
     )
 
     kpis.update(
@@ -1875,6 +3330,7 @@ def run_kpi_only_computation(
         "az_tacos": kpis.get("az_tacos", 0),
         "fk_tacos": kpis.get("fk_tacos", 0),
     }
+    _copy_listing_activity_fields(marketing, kpis)
     filter_meta = cached_filter_metadata or get_available_filters_orm(qs, fk_qs)
     payload = _empty_kpi_payload(kpis, marketing, filter_meta)
 
@@ -2314,21 +3770,22 @@ def run_orm_computation(
             "total_spend": _prev_total_spend,
         }
 
-    prev_portfolio_revenue = {}
-    _merge_portfolio_revenue_from_summary(
-        prev_portfolio_revenue,
-        get_prev_period_qs(product_summary_az_base, filters),
-        "asin",
-        _asin_meta,
-    )
-    _merge_portfolio_revenue_from_summary(
-        prev_portfolio_revenue,
-        get_prev_period_qs(product_summary_fk_base, filters),
-        "fsn",
-        _fsn_meta,
-    )
-    if prev_portfolio_revenue:
-        prev_rev_by_port = prev_portfolio_revenue
+    if not prev_rev_by_port:
+        prev_portfolio_revenue = {}
+        _merge_portfolio_revenue_from_summary(
+            prev_portfolio_revenue,
+            get_prev_period_qs(product_summary_az_base, filters),
+            "asin",
+            _asin_meta,
+        )
+        _merge_portfolio_revenue_from_summary(
+            prev_portfolio_revenue,
+            get_prev_period_qs(product_summary_fk_base, filters),
+            "fsn",
+            _fsn_meta,
+        )
+        if prev_portfolio_revenue:
+            prev_rev_by_port = prev_portfolio_revenue
 
     if use_summary_rollups:
         # Reuse kpis already computed inside run_kpi_only_computation — avoids
@@ -2402,7 +3859,7 @@ def run_orm_computation(
 
         if include_activity_metrics:
             _status_counts, _status_revenue = _continue_discontinue_metrics_from_summary(
-                fk_qs_f,
+                product_summary_fk_f,
                 _fsn_meta,
             )
             current_activity_metrics.update({
@@ -2413,6 +3870,21 @@ def run_orm_computation(
                 "discontinued_sku_count": _status_counts["Discontinued"],
                 "unmapped_fsn_count": _status_counts["Unmapped"],
             })
+            try:
+                monthly_az_qs, monthly_fk_qs = _get_monthly_activity_querysets(user, filters)
+                use_monthly_listing_activity = monthly_az_qs is not None and monthly_fk_qs is not None
+                current_activity_metrics.update(
+                    _compute_listing_activity_metrics(
+                        user,
+                        filters,
+                        summary_az_qs=product_summary_az_f,
+                        summary_fk_qs=product_summary_fk_f,
+                        monthly_az_qs=monthly_az_qs if use_monthly_listing_activity else None,
+                        monthly_fk_qs=monthly_fk_qs if use_monthly_listing_activity else None,
+                    )
+                )
+            except Exception:
+                logger.debug("[DashboardPerf] Full payload listing activity metrics failed", exc_info=True)
 
         current_unique_counts = _compute_unique_ad_spend_sku_counts(
             qs_f, fk_qs_f, user, asin_meta=_asin_meta, filters=filters,
@@ -2455,6 +3927,7 @@ def run_orm_computation(
                 + current_activity_metrics["unmapped_fsn_count"]
             ),
         })
+        _copy_listing_activity_fields(kpis, current_activity_metrics)
     else:
         # these will be overwritten below by summary_kpi_payload anyway
         kpis.update({
@@ -2567,10 +4040,12 @@ def run_orm_computation(
         cm_snapshot = _build_period_snapshot(
             qs, fk_qs, cm_start, cm_end, user,
             fsn_meta=_fsn_meta, include_activity_metrics=include_activity_metrics,
+            base_filters=filters,
         )
         pm_snapshot = _build_period_snapshot(
             qs, fk_qs, pm_start, pm_end, user,
             fsn_meta=_fsn_meta, include_activity_metrics=include_activity_metrics,
+            base_filters=filters,
         )
 
         kpis["mom_growth"] = _safe_growth(cm_rev, pm_rev)
@@ -2656,6 +4131,7 @@ def run_orm_computation(
             "az_tacos": kpis.get("az_tacos", 0),
             "fk_tacos": kpis.get("fk_tacos", 0),
         }
+        _copy_listing_activity_fields(marketing, kpis)
     else:
         marketing = {}
 
@@ -3218,18 +4694,27 @@ def run_orm_computation(
         }
 
     portfolio_revenue = {}
-    _merge_portfolio_revenue_from_summary(
-        portfolio_revenue,
-        product_summary_az_f,
-        "asin",
-        _asin_meta,
-    )
-    _merge_portfolio_revenue_from_summary(
-        portfolio_revenue,
-        product_summary_fk_f,
-        "fsn",
-        _fsn_meta,
-    )
+    if summary_qs_f is not None:
+        for _row in summary_qs_f.values("portfolio").annotate(revenue=Sum("revenue")):
+            portfolio = _clean_dimension_label(_row.get("portfolio"))
+            if portfolio:
+                portfolio_revenue[portfolio] = (
+                    portfolio_revenue.get(portfolio, 0.0)
+                    + _to_float(_row.get("revenue"))
+                )
+    else:
+        _merge_portfolio_revenue_from_summary(
+            portfolio_revenue,
+            product_summary_az_f,
+            "asin",
+            _asin_meta,
+        )
+        _merge_portfolio_revenue_from_summary(
+            portfolio_revenue,
+            product_summary_fk_f,
+            "fsn",
+            _fsn_meta,
+        )
     if portfolio_revenue:
         port_perf_dict = {
             portfolio: {"cluster": portfolio, "revenue": revenue}

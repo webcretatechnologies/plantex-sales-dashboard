@@ -1,4 +1,15 @@
+import datetime
+
+from django.conf import settings
+from django.core.cache import cache
 from django.utils import timezone
+
+
+def _today_bounds(today):
+    start = datetime.datetime.combine(today, datetime.time.min)
+    if getattr(settings, "USE_TZ", False):
+        start = timezone.make_aware(start, timezone.get_current_timezone())
+    return start, start + datetime.timedelta(days=1)
 
 
 def stock_upload_alert(request):
@@ -27,22 +38,26 @@ def stock_upload_alert(request):
         user = Users.objects.get(pk=user_id)
         data_owner = user.created_by if user.created_by else user
         today = timezone.localdate()
+        cache_key = f"stock_upload_alert_v2_{data_owner.id}_{today.isoformat()}"
+        cached = cache.get(cache_key)
+        if isinstance(cached, dict):
+            return cached
+        today_start, tomorrow_start = _today_bounds(today)
+
+        def successful_upload_today(upload_type):
+            return UploadLog.objects.filter(
+                data_owner=data_owner,
+                upload_type=upload_type,
+                status=UploadLog.STATUS_SUCCESS,
+                created_at__gte=today_start,
+                created_at__lt=tomorrow_start,
+            ).exists()
 
         # Amazon readiness (today's stock snapshot expected)
         has_fba_today = FBAStockData.objects.filter(user=data_owner, date=today).exists()
         has_flex_today = FlexStockData.objects.filter(user=data_owner, date=today).exists()
-        has_fba_upload_today = UploadLog.objects.filter(
-            data_owner=data_owner,
-            upload_type="FBA Stock File",
-            status=UploadLog.STATUS_SUCCESS,
-            created_at__date=today,
-        ).exists()
-        has_flex_upload_today = UploadLog.objects.filter(
-            data_owner=data_owner,
-            upload_type="Flex Stock File",
-            status=UploadLog.STATUS_SUCCESS,
-            created_at__date=today,
-        ).exists()
+        has_fba_upload_today = successful_upload_today("FBA Stock File")
+        has_flex_upload_today = successful_upload_today("Flex Stock File")
         amazon_ready = (has_fba_today or has_fba_upload_today) and (
             has_flex_today or has_flex_upload_today
         )
@@ -54,22 +69,12 @@ def stock_upload_alert(request):
         has_fk_fba_today = Flipkartfba.objects.filter(user=data_owner, date=today).exists()
         has_fk_inventory_rows = FlipkartInventoryStock.objects.filter(user=data_owner).exists()
 
-        has_fk_fba_upload_today = UploadLog.objects.filter(
-            data_owner=data_owner,
-            upload_type="FK FBA Stock File",
-            status=UploadLog.STATUS_SUCCESS,
-            created_at__date=today,
-        ).exists()
-        has_fk_inventory_upload_today = UploadLog.objects.filter(
-            data_owner=data_owner,
-            upload_type="FK Inventory File",
-            status=UploadLog.STATUS_SUCCESS,
-            created_at__date=today,
-        ).exists()
+        has_fk_fba_upload_today = successful_upload_today("FK FBA Stock File")
+        has_fk_inventory_upload_today = successful_upload_today("FK Inventory File")
 
         flipkart_ready = (has_fk_fba_today or has_fk_fba_upload_today) and has_fk_inventory_upload_today
 
-        return {
+        result = {
             "show_stock_upload_banner": not (amazon_ready and flipkart_ready),
             "stock_upload_banner_date": today,
             "has_fba_stock_today": has_fba_today,
@@ -81,6 +86,8 @@ def stock_upload_alert(request):
             "has_fk_fba_upload_today": has_fk_fba_upload_today,
             "has_fk_inventory_upload_today": has_fk_inventory_upload_today,
         }
+        cache.set(cache_key, result, timeout=60)
+        return result
     except Exception:
         return {
             "show_stock_upload_banner": False,

@@ -656,7 +656,7 @@ def build_declining_products_from_monthly(
         r["fk_prev_revenue"] = _to_float(r.get("fk_prev_revenue"))
         r["prev_revenue"] = _to_float(r.get("prev_revenue"))
         drop_pct = _safe_growth(r["revenue"], r["prev_revenue"])
-        if drop_pct < 0:
+        if r["prev_revenue"] > 0 and r["revenue"] < r["prev_revenue"] and drop_pct < 0:
             r["drop_pct"] = drop_pct
             r["impact"] = round(max(r["prev_revenue"] - r["revenue"], 0.0), 2)
             # Combined pv stats
